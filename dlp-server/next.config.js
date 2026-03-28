@@ -3,6 +3,7 @@ const nextConfig = {
   async headers() {
     return [
       {
+        // הגדרת כותרות CORS לכל נתיבי ה-API
         source: "/api/:path*",
         headers: [
           { key: "Access-Control-Allow-Origin", value: "*" },

@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "DLP Shield – Enterprise",
+  "version": "3.0.0",
+  "description": "הגנת DLP ארגונית – מונע הדבקת מידע רגיש לצ'אטבוטים של בינה מלאכותית",
+  "default_locale": "he",
+  "permissions": [
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "<all_urls>",
+    "http://localhost:3000/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "css": ["overlay.css"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "icons": {
+    "16":  "icons/icon16.png",
+    "48":  "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_title": "DLP Shield – Enterprise"
+  }
+}

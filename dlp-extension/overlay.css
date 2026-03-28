@@ -1,0 +1,392 @@
+/* ══════════════════════════════════════════════════════════
+   DLP Shield – Enterprise  |  overlay.css
+   כל הסגנונות והאנימציות של תוסף ה-DLP
+   ══════════════════════════════════════════════════════════ */
+
+/* ── אנימציות מפתח (Keyframes) ── */
+
+@keyframes dlp-fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes dlp-fadeOut {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+@keyframes dlp-slideUp {
+  from { opacity: 0; transform: translateY(40px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0)    scale(1);    }
+}
+
+@keyframes dlp-slideOut {
+  from { opacity: 1; transform: translateY(0)    scale(1);    }
+  to   { opacity: 0; transform: translateY(-30px) scale(0.96); }
+}
+
+@keyframes dlp-glow-pulse {
+  0%,100% { box-shadow: 0 0 6px 2px rgba(239, 68, 68, 0.6);  }
+  50%      { box-shadow: 0 0 18px 6px rgba(239, 68, 68, 1);   }
+}
+
+@keyframes dlp-shimmer {
+  0%   { background-position: -200% center; }
+  100% { background-position:  200% center; }
+}
+
+@keyframes dlp-morph-glow {
+  0%,100% { box-shadow: 0 0 8px 3px rgba(34, 197, 94, 0.5);  }
+  50%      { box-shadow: 0 0 20px 8px rgba(34, 197, 94, 0.9); }
+}
+
+@keyframes dlp-check-draw {
+  from { stroke-dashoffset: 50; }
+  to   { stroke-dashoffset: 0;  }
+}
+
+@keyframes dlp-progress {
+  from { width: 0%;    }
+  to   { width: 100%;  }
+}
+
+@keyframes dlp-resolve-glow {
+  0%   { box-shadow: 0 0 10px 4px rgba(34, 197, 94, 0.9); background: rgba(34,197,94,0.3); }
+  70%  { box-shadow: 0 0 10px 4px rgba(34, 197, 94, 0.9); background: rgba(34,197,94,0.3); }
+  100% { box-shadow: none; background: transparent; }
+}
+
+@keyframes dlp-card-in {
+  from { opacity: 0; transform: translateX(30px); }
+  to   { opacity: 1; transform: translateX(0);    }
+}
+
+@keyframes dlp-toast-in {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0);    }
+}
+
+@keyframes dlp-toast-out {
+  from { opacity: 1; transform: translateY(0);    }
+  to   { opacity: 0; transform: translateY(20px); }
+}
+
+/* ── רקע מטושטש (Backdrop) ── */
+
+.dlp-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: dlp-fadeIn 0.3s ease forwards;
+  direction: rtl;
+}
+
+.dlp-backdrop.dlp-closing {
+  animation: dlp-fadeOut 0.4s ease forwards;
+}
+
+/* ── פאנל ראשי ── */
+
+.dlp-panel {
+  background: linear-gradient(145deg, #1e1e2e 0%, #16213e 60%, #0f3460 100%);
+  border: 1px solid rgba(99, 179, 237, 0.25);
+  border-radius: 16px;
+  box-shadow: 0 25px 60px rgba(0, 0, 0, 0.7), 0 0 40px rgba(99, 179, 237, 0.1);
+  width: min(680px, 95vw);
+  max-height: 90vh;
+  overflow-y: auto;
+  direction: rtl;
+  animation: dlp-slideUp 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(99,179,237,0.3) transparent;
+}
+
+.dlp-panel.dlp-closing {
+  animation: dlp-slideOut 0.35s ease forwards;
+}
+
+/* ── כותרת הפאנל ── */
+
+.dlp-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid rgba(99, 179, 237, 0.15);
+}
+
+.dlp-shield-icon {
+  font-size: 32px;
+  line-height: 1;
+  transition: filter 0.5s ease;
+}
+
+.dlp-shield-icon.dlp-shield-safe {
+  filter: drop-shadow(0 0 8px rgba(34, 197, 94, 0.9));
+}
+
+.dlp-header-text {
+  flex: 1;
+}
+
+.dlp-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: #e2e8f0;
+  margin: 0;
+  letter-spacing: 0.3px;
+}
+
+.dlp-subtitle {
+  font-size: 13px;
+  color: #94a3b8;
+  margin: 4px 0 0;
+}
+
+/* ── checkmark SVG ── */
+
+.dlp-checkmark {
+  width: 36px;
+  height: 36px;
+  display: none;
+}
+
+.dlp-checkmark.dlp-visible {
+  display: block;
+}
+
+.dlp-checkmark circle {
+  fill: none;
+  stroke: #22c55e;
+  stroke-width: 3;
+}
+
+.dlp-checkmark path {
+  fill: none;
+  stroke: #22c55e;
+  stroke-width: 3;
+  stroke-dasharray: 50;
+  stroke-dashoffset: 50;
+}
+
+.dlp-checkmark.dlp-visible path {
+  animation: dlp-check-draw 0.5s ease forwards 0.1s;
+}
+
+/* ── גוף הפאנל ── */
+
+.dlp-body {
+  padding: 16px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ── כרטיס החלפה ── */
+
+.dlp-card {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(99, 179, 237, 0.15);
+  border-radius: 10px;
+  padding: 12px 16px;
+  opacity: 0;
+  animation: dlp-card-in 0.4s ease forwards;
+}
+
+.dlp-card-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.dlp-card-label {
+  font-size: 11px;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin-bottom: 6px;
+}
+
+/* ערך מקורי – מצב סכנה (אדום) */
+.dlp-original {
+  font-family: monospace;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  border-radius: 6px;
+  padding: 4px 10px;
+  animation: dlp-glow-pulse 1.2s ease-in-out infinite;
+  transition: all 0.6s ease;
+}
+
+/* ערך מקורי – מצב בטוח (ירוק לאחר מורפינג) */
+.dlp-original.dlp-morphed {
+  color: #86efac;
+  background: rgba(34, 197, 94, 0.12);
+  border-color: rgba(34, 197, 94, 0.35);
+  animation: dlp-morph-glow 1.5s ease-in-out infinite;
+}
+
+/* חץ */
+.dlp-arrow {
+  color: #475569;
+  font-size: 18px;
+  transition: color 0.5s ease;
+  transform: rotate(180deg); /* RTL */
+}
+
+.dlp-arrow.dlp-arrow-active {
+  color: #22c55e;
+}
+
+/* placeholder – שימר */
+.dlp-placeholder {
+  font-family: monospace;
+  font-size: 14px;
+  font-weight: 600;
+  color: #93c5fd;
+  background: linear-gradient(90deg,
+    rgba(99,179,237,0.1) 0%,
+    rgba(147,197,253,0.35) 40%,
+    rgba(99,179,237,0.1) 100%
+  );
+  background-size: 200% auto;
+  border: 1px solid rgba(99, 179, 237, 0.3);
+  border-radius: 6px;
+  padding: 4px 10px;
+  animation: dlp-shimmer 2s linear infinite;
+}
+
+/* ── תיבת תצוגה מקדימה ── */
+
+.dlp-preview-box {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(99, 179, 237, 0.2);
+  border-radius: 10px;
+  padding: 14px 16px;
+  font-family: monospace;
+  font-size: 13px;
+  color: #cbd5e1;
+  line-height: 1.7;
+  word-break: break-all;
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity 0.4s ease, transform 0.4s ease;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.dlp-preview-box.dlp-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.dlp-preview-box .dlp-highlight {
+  background: rgba(99, 179, 237, 0.2);
+  color: #93c5fd;
+  border-radius: 3px;
+  padding: 0 4px;
+}
+
+/* ── כותרת תצוגה מקדימה ── */
+
+.dlp-preview-label {
+  font-size: 12px;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin-bottom: 6px;
+}
+
+/* ── פוטר הפאנל ── */
+
+.dlp-footer {
+  padding: 14px 24px 20px;
+  border-top: 1px solid rgba(99, 179, 237, 0.1);
+}
+
+.dlp-status-text {
+  font-size: 13px;
+  color: #94a3b8;
+  margin-bottom: 10px;
+  text-align: center;
+}
+
+.dlp-status-text.dlp-status-done {
+  color: #86efac;
+  font-weight: 600;
+}
+
+/* ── פס התקדמות ── */
+
+.dlp-progress-track {
+  height: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.dlp-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #3b82f6, #22c55e);
+  border-radius: 2px;
+  width: 0%;
+  transition: width 0.3s ease;
+}
+
+/* ── Toast הודעה קטנה ── */
+
+.dlp-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%) translateY(0);
+  z-index: 2147483646;
+  background: rgba(15, 23, 42, 0.92);
+  border: 1px solid rgba(99, 179, 237, 0.3);
+  border-radius: 10px;
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #e2e8f0;
+  direction: rtl;
+  white-space: nowrap;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  animation: dlp-toast-in 0.3s ease forwards;
+}
+
+.dlp-toast.dlp-toast-success {
+  border-color: rgba(34, 197, 94, 0.5);
+  color: #86efac;
+}
+
+.dlp-toast.dlp-toast-warning {
+  border-color: rgba(234, 179, 8, 0.5);
+  color: #fde047;
+}
+
+.dlp-toast.dlp-toast-hiding {
+  animation: dlp-toast-out 0.3s ease forwards;
+}
+
+/* ── טוקן מפוענח (de-anonymized) ── */
+
+.dlp-resolved-token {
+  display: inline;
+  font-weight: 700;
+  color: #86efac;
+  background: rgba(34, 197, 94, 0.15);
+  border-radius: 4px;
+  padding: 0 3px;
+  cursor: default;
+  animation: dlp-resolve-glow 3s ease forwards;
+}

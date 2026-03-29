@@ -262,6 +262,23 @@ async function closeOverlay(overlayParts) {
 }
 
 /* ─────────────────────────────────────────────
+   setNativeValue – bypass React's synthetic value setter
+   Works for both <textarea> and <input> elements
+   ───────────────────────────────────────────── */
+function setNativeValue(element, value) {
+  const proto = element.tagName === "TEXTAREA"
+    ? window.HTMLTextAreaElement.prototype
+    : window.HTMLInputElement.prototype;
+  const nativeSetter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+  if (nativeSetter) {
+    nativeSetter.call(element, value);
+  } else {
+    element.value = value; // fallback (non-React pages)
+  }
+  element.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+/* ─────────────────────────────────────────────
    Insert text into the target field
    ───────────────────────────────────────────── */
 function insertTextIntoField(element, text) {
@@ -272,16 +289,17 @@ function insertTextIntoField(element, text) {
     return;
   }
 
-  const start = element.selectionStart ?? element.value.length;
-  const end   = element.selectionEnd   ?? element.value.length;
+  const start  = element.selectionStart ?? element.value.length;
+  const end    = element.selectionEnd   ?? element.value.length;
   const before = element.value.slice(0, start);
   const after  = element.value.slice(end);
-  element.value = before + text + after;
+
+  // Use native setter to avoid breaking React's internal state (e.g. ChatGPT)
+  setNativeValue(element, before + text + after);
 
   const newPos = start + text.length;
   element.setSelectionRange(newPos, newPos);
 
-  element.dispatchEvent(new Event("input",  { bubbles: true }));
   element.dispatchEvent(new Event("change", { bubbles: true }));
 }
 

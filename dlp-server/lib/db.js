@@ -11,6 +11,7 @@ const policies = new Map();      // organizationId → [ policy, ... ]
 const customKeywords = new Map();// organizationId → [ keyword, ... ]
 const alerts = new Map();        // alertId → alertData
 const apiKeys = new Map();       // apiKey → organizationId
+const users = new Map();         // email → userStatsObject
 
 // ── ברירת מחדל: ארגון "default-org" ──
 function seed() {
@@ -437,4 +438,77 @@ export function getPatternStats() {
 // ── recordRequest – global rate tracking (compat with main) ──
 export function recordRequest() {
   trackRequest("default-org");
+}
+
+// ── ניהול משתמשים (User Tracking) ──
+
+/**
+ * Calculate risk level based on block count and categories.
+ * @param {{ totalBlocks: number, categoryBreakdown: Record<string,number> }} user
+ * @returns {"low"|"medium"|"high"|"critical"}
+ */
+const CREDIT_CARD_CATEGORY = "CREDIT_CARD";
+
+export function calculateRiskLevel(user) {
+  const blocks = user.totalBlocks || 0;
+  let level;
+  if (blocks <= 5) level = "low";
+  else if (blocks <= 15) level = "medium";
+  else if (blocks <= 30) level = "high";
+  else level = "critical";
+
+  // bump up one level if any CREDIT_CARD blocks exist
+  const hasCreditCard = (user.categoryBreakdown?.[CREDIT_CARD_CATEGORY] || 0) > 0;
+  if (hasCreditCard) {
+    if (level === "low") level = "medium";
+    else if (level === "medium") level = "high";
+    else if (level === "high") level = "critical";
+  }
+  return level;
+}
+
+/**
+ * Record activity for a user (identified by email).
+ * @param {string} email
+ * @param {string} category  - PII category (e.g. "PHONE", "CREDIT_CARD")
+ * @param {object} [details] - optional extra details
+ */
+export function recordUserActivity(email, category, details = {}) {
+  if (!email) return;
+  const existing = users.get(email) || {
+    email,
+    totalBlocks: 0,
+    categoryBreakdown: {},
+    lastActivity: null,
+    firstSeen: new Date().toISOString(),
+  };
+
+  existing.totalBlocks += 1;
+  existing.categoryBreakdown[category] = (existing.categoryBreakdown[category] || 0) + 1;
+  existing.lastActivity = new Date().toISOString();
+  if (details.source) existing.lastSource = details.source;
+
+  // derive topCategory
+  const breakdown = existing.categoryBreakdown;
+  existing.topCategory = Object.keys(breakdown).sort((a, b) => breakdown[b] - breakdown[a])[0] || category;
+
+  existing.riskLevel = calculateRiskLevel(existing);
+
+  users.set(email, existing);
+  return existing;
+}
+
+/**
+ * Get stats for a single user.
+ * @param {string} email
+ */
+export function getUserStats(email) {
+  return users.get(email) || null;
+}
+
+/**
+ * Get all users sorted by totalBlocks descending.
+ */
+export function getAllUsers() {
+  return [...users.values()].sort((a, b) => b.totalBlocks - a.totalBlocks);
 }

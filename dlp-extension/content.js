@@ -290,21 +290,28 @@ function insertTextIntoField(element, text) {
    ───────────────────────────────────────────── */
 function setReactInputValue(element, newText) {
   try {
-    if (element.tagName === "TEXTAREA") {
+    if (element.isContentEditable) {
+      // For React-controlled contentEditable (e.g. ChatGPT's ProseMirror editor),
+      // use execCommand so the browser triggers real DOM mutation events that
+      // React's synthetic event system can detect – avoids ERR_QUIC_PROTOCOL_ERROR
+      // caused by React holding a stale internal value after a direct textContent write.
+      element.focus();
+      document.execCommand("selectAll", false, null);
+      document.execCommand("insertText", false, newText);
+    } else if (element.tagName === "TEXTAREA") {
       const nativeSetter = Object.getOwnPropertyDescriptor(
         window.HTMLTextAreaElement.prototype, "value"
       ).set;
       nativeSetter.call(element, newText);
       element.dispatchEvent(new Event("input", { bubbles: true }));
-    } else if (element.isContentEditable) {
-      element.textContent = newText;
-      element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+      element.dispatchEvent(new Event("change", { bubbles: true }));
     } else {
       const nativeSetter = Object.getOwnPropertyDescriptor(
         window.HTMLInputElement.prototype, "value"
       ).set;
       nativeSetter.call(element, newText);
       element.dispatchEvent(new Event("input", { bubbles: true }));
+      element.dispatchEvent(new Event("change", { bubbles: true }));
     }
   } catch (err) {
     console.error(`${DLP_PREFIX} שגיאה בעדכון ערך שדה:`, err);

@@ -1,18 +1,17 @@
 "use client";
 
-// הגדרות מדיניות עם מתג מותאם
-// קומפוננט מתג בנוי עם Tailwind בלבד (ללא ספרייה חיצונית)
-function ToggleSwitch({ enabled, onToggle }) {
+// הגדרות מדיניות עם מתג מותאם – מחובר ל-API אמיתי
+function ToggleSwitch({ enabled, onToggle, loading }) {
   return (
     <button
       onClick={onToggle}
       role="switch"
       aria-checked={enabled}
-      className={`relative inline-flex items-center w-12 h-6 rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-900 focus:ring-emerald-500 ${
+      disabled={loading}
+      className={`relative inline-flex items-center w-12 h-6 rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-900 focus:ring-emerald-500 disabled:opacity-60 ${
         enabled ? "bg-emerald-500" : "bg-slate-600"
       }`}
     >
-      {/* הנקודה המתנועעת */}
       <span
         className={`inline-block w-5 h-5 bg-white rounded-full shadow-md transform transition-transform duration-200 ${
           enabled ? "translate-x-6" : "translate-x-1"
@@ -22,11 +21,12 @@ function ToggleSwitch({ enabled, onToggle }) {
   );
 }
 
-// כותרת קטגוריה
 function CategoryHeader({ category }) {
   const labels = {
     PII: "מידע אישי מזהה (PII)",
     KEYWORDS: "מילות מפתח",
+    CONTEXT: "זיהוי מהקשר",
+    CUSTOM: "כללים מותאמים",
   };
   return (
     <div className="flex items-center gap-3 mb-3 mt-6 first:mt-0">
@@ -41,12 +41,28 @@ function CategoryHeader({ category }) {
 export default function PolicySettings({ policies, onToggle }) {
   if (!policies || policies.length === 0) return null;
 
-  // קיבוץ לפי קטגוריה
   const grouped = policies.reduce((acc, policy) => {
     if (!acc[policy.category]) acc[policy.category] = [];
     acc[policy.category].push(policy);
     return acc;
   }, {});
+
+  async function handleToggle(id, currentEnabled) {
+    // optimistic update via parent
+    if (onToggle) onToggle(id);
+
+    // persist to API
+    try {
+      await fetch("/api/policies", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, enabled: !currentEnabled }),
+      });
+    } catch {
+      // revert on error by toggling again
+      if (onToggle) onToggle(id);
+    }
+  }
 
   return (
     <div className="bg-slate-900 border border-slate-700/50 rounded-xl p-6 shadow-lg">
@@ -61,15 +77,12 @@ export default function PolicySettings({ policies, onToggle }) {
                 className="flex items-center justify-between p-4 bg-slate-800/50 border border-slate-700/30 rounded-xl hover:bg-slate-800 transition-colors"
               >
                 <div className="flex-1 min-w-0 ml-4">
-                  {/* כותרת מדיניות */}
                   <p className="text-white font-medium text-sm">{policy.label}</p>
-                  {/* תיאור */}
                   <p className="text-slate-400 text-xs mt-0.5 truncate">{policy.description}</p>
                 </div>
-                {/* מתג */}
                 <ToggleSwitch
                   enabled={policy.enabled}
-                  onToggle={() => onToggle && onToggle(policy.id)}
+                  onToggle={() => handleToggle(policy.id, policy.enabled)}
                 />
               </div>
             ))}

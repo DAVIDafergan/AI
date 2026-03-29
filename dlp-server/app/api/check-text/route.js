@@ -140,9 +140,9 @@ export async function POST(request) {
     for (const { id, regex, label, policyId } of ALL_PATTERNS) {
       if (!isPolicyEnabled(orgPolicies, policyId)) continue;
 
-      // Reset lastIndex לכל regex
-      regex.lastIndex = 0;
-      const matches = [...text.matchAll(regex)];
+      // יצירת מופע regex חדש בכל פעם למניעת בעיות state עם lastIndex
+      const freshRegex = new RegExp(regex.source, regex.flags);
+      const matches = [...text.matchAll(freshRegex)];
 
       for (const match of matches) {
         const original = match[0];

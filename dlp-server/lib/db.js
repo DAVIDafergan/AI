@@ -378,3 +378,60 @@ export function trackRequest(organizationId) {
   requestCounts.set(organizationId, times);
   return times.length;
 }
+
+// ── compat alias: getMappingBySynthetic (used by restore-batch route) ──
+export function getMappingBySynthetic(syntheticValue) {
+  const doc = getMappingByTag(syntheticValue);
+  if (!doc) return null;
+  // normalize to the shape expected by restore-batch
+  return {
+    synthetic: doc.tag,
+    original: doc.originalText,
+    category: doc.category,
+    label: doc.label,
+    timestamp: doc.createdAt,
+    source: doc.source,
+  };
+}
+
+// ── כללים מותאמים (Custom Rules) – compat with main's custom-rules route ──
+const customRules = new Map(); // id → { id, word, category, replacement, createdAt }
+
+export function getCustomRules() {
+  return [...customRules.values()];
+}
+
+export function saveCustomRule({ word, category = "CUSTOM", replacement }) {
+  const id = randomUUID();
+  const rule = { id, word, category, replacement: replacement || word, createdAt: new Date().toISOString() };
+  customRules.set(id, rule);
+  return rule;
+}
+
+export function deleteCustomRule(id) {
+  const rule = customRules.get(id);
+  if (!rule) return null;
+  customRules.delete(id);
+  return rule;
+}
+
+// ── סטטיסטיקות תבניות (Pattern Stats) – compat with patterns-insights route ──
+const patternStats = new Map(); // label → { label, count, lastSeen }
+
+export function recordPatternHit(label) {
+  const existing = patternStats.get(label) || { label, count: 0 };
+  patternStats.set(label, {
+    ...existing,
+    count: existing.count + 1,
+    lastSeen: new Date().toISOString(),
+  });
+}
+
+export function getPatternStats() {
+  return [...patternStats.values()].sort((a, b) => b.count - a.count);
+}
+
+// ── recordRequest – global rate tracking (compat with main) ──
+export function recordRequest() {
+  trackRequest("default-org");
+}

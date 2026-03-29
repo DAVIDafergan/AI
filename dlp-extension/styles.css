@@ -1,0 +1,64 @@
+/* DLP Shield - Visual styling for restored (de-anonymized) data */
+
+.dlp-restored {
+  color: #60a5fa; /* כחול זוהר */
+  text-decoration: underline;
+  text-decoration-style: dashed;
+  text-decoration-color: #3b82f6;
+  text-underline-offset: 3px;
+  cursor: help;
+  position: relative;
+  transition: all 0.2s ease;
+  border-radius: 2px;
+  padding: 0 2px;
+}
+
+.dlp-restored:hover {
+  background-color: rgba(59, 130, 246, 0.15);
+  color: #93c5fd;
+  text-decoration-color: #60a5fa;
+}
+
+/* Tooltip on hover */
+.dlp-restored::after {
+  content: attr(title);
+  position: absolute;
+  bottom: 125%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1e293b;
+  color: #e2e8f0;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+  border: 1px solid #334155;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  z-index: 99999;
+}
+
+.dlp-restored:hover::after {
+  opacity: 1;
+}
+
+/* Shield icon indicator */
+.dlp-restored::before {
+  content: "🛡️";
+  font-size: 10px;
+  margin-right: 2px;
+  opacity: 0.7;
+}
+
+/* Animation when first restored */
+@keyframes dlp-glow {
+  0% { box-shadow: 0 0 5px rgba(59, 130, 246, 0.5); }
+  50% { box-shadow: 0 0 15px rgba(59, 130, 246, 0.3); }
+  100% { box-shadow: 0 0 5px rgba(59, 130, 246, 0.1); }
+}
+
+.dlp-restored-new {
+  animation: dlp-glow 1.5s ease-out;
+}

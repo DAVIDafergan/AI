@@ -15,6 +15,7 @@ import OrganizationSelector from "./components/OrganizationSelector";
 import ThreatScoreGauge from "./components/ThreatScoreGauge";
 import CustomKeywordsManager from "./components/CustomKeywordsManager";
 import ExportPdfButton from "./components/ExportPdfButton";
+import UsersTable from "./components/UsersTable";
 
 // מסך טעינה – שלד אנימטיבי
 function LoadingSkeleton() {
@@ -39,6 +40,7 @@ const TABS = [
   { id: "overview",  label: "סקירה כללית", icon: BarChart3  },
   { id: "trends",    label: "מגמות",       icon: TrendingUp },
   { id: "alerts",    label: "התראות",      icon: Bell       },
+  { id: "users",     label: "משתמשים",     icon: Users      },
   { id: "settings",  label: "הגדרות",      icon: Settings   },
   { id: "keywords",  label: "מילים מותאמות", icon: Tag      },
 ];
@@ -307,6 +309,11 @@ export default function AdminDashboard() {
             {/* ── טאב: התראות ── */}
             {activeTab === "alerts" && (
               <AlertsPanel />
+            )}
+
+            {/* ── טאב: משתמשים ── */}
+            {activeTab === "users" && (
+              <UsersTable />
             )}
 
             {/* ── טאב: הגדרות ── */}

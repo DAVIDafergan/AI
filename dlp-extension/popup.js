@@ -1,34 +1,113 @@
-// DLP Shield - Popup Script
-// Manages settings, stats display, and server connectivity check
+// DLP Shield - Popup Script v3
+// Manages settings, personal stats display, and server connectivity check
 
-const DEFAULT_SERVER = "http://localhost:3000";
+const DEFAULT_SERVER = "https://ai-production-ffa9.up.railway.app";
 
-const restoredCountEl = document.getElementById("restored-count");
-const statusDot = document.getElementById("status-dot");
-const statusText = document.getElementById("status-text");
-const serverUrlInput = document.getElementById("server-url");
-const enabledToggle = document.getElementById("enabled-toggle");
-const saveBtn = document.getElementById("save-btn");
-const clearBtn = document.getElementById("clear-btn");
-const saveMsg = document.getElementById("save-msg");
+const userEmailEl       = document.getElementById("user-email");
+const restoredCountEl   = document.getElementById("restored-count");
+const interceptedCountEl = document.getElementById("intercepted-count");
+const riskLevelEl       = document.getElementById("risk-level");
+const totalBlocksEl     = document.getElementById("total-blocks");
+const statusDot         = document.getElementById("status-dot");
+const statusText        = document.getElementById("status-text");
+const serverUrlInput    = document.getElementById("server-url");
+const enabledToggle     = document.getElementById("enabled-toggle");
+const saveBtn           = document.getElementById("save-btn");
+const clearBtn          = document.getElementById("clear-btn");
+const testBtn           = document.getElementById("test-btn");
+const saveMsg           = document.getElementById("save-msg");
+const lastActivityEl    = document.getElementById("last-activity");
+
+const RISK_LABELS = {
+  low:      "נמוך 🟢",
+  medium:   "בינוני 🟡",
+  high:     "גבוה 🟠",
+  critical: "קריטי 🔴",
+};
+
+const RISK_CLASSES = {
+  low:      "risk-low",
+  medium:   "risk-medium",
+  high:     "risk-high",
+  critical: "risk-critical",
+};
 
 // ── Load settings and stats on open ──────────────────────────────────────────
-chrome.storage.local.get(["restoredCount", "serverUrl", "enabled"], (data) => {
-  restoredCountEl.textContent = data.restoredCount || 0;
-  serverUrlInput.value = data.serverUrl || DEFAULT_SERVER;
-  enabledToggle.checked = data.enabled !== false;
+chrome.runtime.sendMessage({ type: "GET_STATS" }, (data) => {
+  if (chrome.runtime.lastError || !data) return;
+
+  restoredCountEl.textContent   = data.restoredCount    || 0;
+  interceptedCountEl.textContent = data.interceptedCount || 0;
+  serverUrlInput.value          = data.serverUrl || DEFAULT_SERVER;
+  enabledToggle.checked         = data.enabled !== false;
+
+  // Display user email
+  const email = data.userEmail || null;
+  if (email) {
+    userEmailEl.textContent = email;
+    loadPersonalStats(email, data);
+  } else {
+    // Request email from identity API
+    chrome.runtime.sendMessage({ type: "GET_USER_EMAIL" }, (res) => {
+      if (chrome.runtime.lastError) return;
+      const resolvedEmail = res?.email || "anonymous@unknown.com";
+      userEmailEl.textContent = resolvedEmail;
+      loadPersonalStats(resolvedEmail, data);
+    });
+  }
+
   checkConnection(data.serverUrl || DEFAULT_SERVER);
 });
 
+function loadPersonalStats(email, storageData) {
+  const userStats = storageData.userStats || {};
+  const myStats   = userStats[email];
+
+  if (myStats) {
+    totalBlocksEl.textContent = myStats.blockCount || 0;
+    if (myStats.lastActivity) {
+      lastActivityEl.textContent = `פעילות אחרונה: ${relativeTime(myStats.lastActivity)}`;
+    }
+  }
+
+  // Fetch server-side risk level for this user
+  const serverUrl = storageData.serverUrl || DEFAULT_SERVER;
+  fetch(`${serverUrl}/api/stats?view=user&email=${encodeURIComponent(email)}`)
+    .then((r) => r.ok ? r.json() : null)
+    .then((data) => {
+      if (!data) return;
+      totalBlocksEl.textContent = data.totalBlocks || 0;
+      const level = data.riskLevel || "low";
+      riskLevelEl.textContent = RISK_LABELS[level] || level;
+      // Reset all risk classes then set correct one
+      riskLevelEl.className = `stat-value small ${RISK_CLASSES[level] || ""}`;
+      if (data.lastActivity) {
+        lastActivityEl.textContent = `פעילות אחרונה: ${relativeTime(data.lastActivity)}`;
+      }
+    })
+    .catch(() => { /* server may not have data yet */ });
+}
+
+function relativeTime(isoString) {
+  if (!isoString) return "—";
+  const diff = Date.now() - new Date(isoString).getTime();
+  const s = Math.floor(diff / 1000);
+  if (s < 60) return `לפני ${s} שניות`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `לפני ${m} דקות`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `לפני ${h} שעות`;
+  return `לפני ${Math.floor(h / 24)} ימים`;
+}
+
 // ── Save settings ─────────────────────────────────────────────────────────────
 saveBtn.addEventListener("click", () => {
-  const url = serverUrlInput.value.trim() || DEFAULT_SERVER;
+  const url     = serverUrlInput.value.trim() || DEFAULT_SERVER;
   const enabled = enabledToggle.checked;
   chrome.storage.local.set({ serverUrl: url, enabled }, () => {
     saveMsg.textContent = "✅ הגדרות נשמרו";
     setTimeout(() => { saveMsg.textContent = ""; }, 2000);
     checkConnection(url);
-    // Notify content scripts
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       if (tabs[0]) {
         chrome.tabs.sendMessage(tabs[0].id, { type: "SETTINGS_UPDATED", serverUrl: url, enabled }).catch(() => {});
@@ -45,10 +124,17 @@ enabledToggle.addEventListener("change", () => {
 // ── Clear cache ────────────────────────────────────────────────────────────────
 clearBtn.addEventListener("click", () => {
   chrome.runtime.sendMessage({ type: "CLEAR_CACHE" }, () => {
-    restoredCountEl.textContent = "0";
+    restoredCountEl.textContent   = "0";
+    interceptedCountEl.textContent = "0";
     saveMsg.textContent = "✅ מטמון נוקה";
     setTimeout(() => { saveMsg.textContent = ""; }, 2000);
   });
+});
+
+// ── Test Connection button ─────────────────────────────────────────────────────
+testBtn.addEventListener("click", () => {
+  const url = serverUrlInput.value.trim() || DEFAULT_SERVER;
+  checkConnection(url);
 });
 
 // ── Test server connection ────────────────────────────────────────────────────
@@ -57,7 +143,7 @@ async function checkConnection(serverUrl) {
   statusText.textContent = "בודק חיבור...";
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3000);
+    const timeout = setTimeout(() => controller.abort(), 4000);
     const res = await fetch(`${serverUrl}/api/stats`, { signal: controller.signal });
     clearTimeout(timeout);
     if (res.ok) {

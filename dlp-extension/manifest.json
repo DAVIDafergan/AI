@@ -6,11 +6,26 @@
   "default_locale": "he",
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
+      "matches": [
+        "<all_urls>",
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*",
+        "https://claude.ai/*",
+        "https://gemini.google.com/*"
+      ],
       "js": ["content.js"],
-      "css": ["overlay.css"],
+      "css": ["overlay.css", "styles.css"],
       "run_at": "document_idle"
     }
   ],
-  "permissions": ["storage"]
+  "permissions": ["storage", "identity", "identity.email"],
+  "host_permissions": [
+    "*://ai-production-ffa9.up.railway.app/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  }
 }

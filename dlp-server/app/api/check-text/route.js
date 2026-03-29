@@ -11,6 +11,7 @@ import {
   getStats,
   saveAlert,
   trackRequest,
+  recordUserActivity,
 } from "../../../lib/db.js";
 import { getDefaultPolicies, SEVERITY_SCORES } from "../../../lib/policies.js";
 
@@ -114,7 +115,7 @@ export async function POST(request) {
     const { organizationId } = auth;
 
     const body = await request.json();
-    const { text, source = "api", mode = "paste" } = body;
+    const { text, source = "api", mode = "paste", userEmail = "anonymous@unknown.com" } = body;
 
     if (!text || typeof text !== "string") {
       return NextResponse.json({ error: "text is required" }, { status: 400 });
@@ -223,6 +224,11 @@ export async function POST(request) {
       saveMappings(organizationId, mappingEntries);
     }
 
+    // ── 7b. רישום פעילות משתמש ──
+    for (const rep of replacements) {
+      recordUserActivity(userEmail, rep.category, { source });
+    }
+
     // סוג מידע עיקרי
     const primaryType =
       replacements.length > 0
@@ -234,6 +240,7 @@ export async function POST(request) {
       synthetic: replacements[0]?.synthetic || "",
       originalText: replacements[0]?.original || "",
       source,
+      userEmail,
       status: replacements.length > 0 ? "blocked" : "clean",
       threatScore,
       detectionCount: replacements.length,
@@ -257,15 +264,24 @@ export async function POST(request) {
       });
     }
 
-    return NextResponse.json({
-      safe: replacements.length === 0,
-      redactedText,
-      replacements: replacements.map(({ original: _o, ...rest }) => rest),
-      threatScore,
-      detectionCount: replacements.length,
-      timestamp: new Date().toISOString(),
-      organizationId,
-    });
+    return NextResponse.json(
+      {
+        safe: replacements.length === 0,
+        redactedText,
+        replacements: replacements.map(({ original: _o, ...rest }) => rest),
+        threatScore,
+        detectionCount: replacements.length,
+        timestamp: new Date().toISOString(),
+        organizationId,
+        userEmail,
+      },
+      {
+        headers: {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Headers": "Content-Type, x-api-key",
+        },
+      }
+    );
   } catch (err) {
     if (err.status === 401) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -275,33 +291,58 @@ export async function POST(request) {
   }
 }
 
-// ── GET: שחזור ערך מקורי לפי ערך סינתטי ──
+// ── GET: שחזור ערך מקורי לפי ערך סינתטי (tag) ──
 export async function GET(request) {
+  const corsHeaders = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "Content-Type, x-api-key",
+  };
   try {
     const { searchParams } = new URL(request.url);
-    const synthetic = searchParams.get("synthetic");
+    // Support both "tag" (primary) and legacy "synthetic" param
+    const tag = searchParams.get("tag") || searchParams.get("synthetic");
 
-    if (!synthetic) {
-      return NextResponse.json({ error: "synthetic param is required" }, { status: 400 });
+    if (!tag) {
+      return NextResponse.json(
+        { error: "tag param is required" },
+        { status: 400, headers: corsHeaders }
+      );
     }
 
-    const mapping = getMappingByTag(synthetic);
+    const mapping = getMappingByTag(tag);
     if (!mapping) {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
+      return NextResponse.json(
+        { found: false, originalText: tag },
+        { status: 200, headers: corsHeaders }
+      );
     }
 
-    return NextResponse.json({
-      synthetic: mapping.tag,
-      original: mapping.originalText,
-      category: mapping.category,
-      label: mapping.label,
-      createdAt: mapping.createdAt,
-    });
+    return NextResponse.json(
+      {
+        found: true,
+        originalText: mapping.originalText,
+        synthetic: mapping.tag,
+        category: mapping.category,
+        label: mapping.label,
+        createdAt: mapping.createdAt,
+      },
+      { headers: corsHeaders }
+    );
   } catch (err) {
-    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Internal Server Error" },
+      { status: 500, headers: corsHeaders }
+    );
   }
 }
 
 export async function OPTIONS() {
-  return new NextResponse(null, { status: 204 });
+  return new NextResponse(null, {
+    status: 204,
+    headers: {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, x-api-key",
+    },
+  });
 }

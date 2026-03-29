@@ -1,5 +1,8 @@
 // DLP Shield - Background Service Worker
-// Manages stats, badge updates, and configuration
+// Manages stats, badge updates, configuration, and user identity
+
+// ── Cached email ──────────────────────────────────────────────────────────────
+let cachedEmail = null;
 
 // ── Listen for messages from content.js ──────────────────────────────────────
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -12,14 +15,55 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true; // async
   }
   if (message.type === "CLEAR_CACHE") {
-    chrome.storage.local.set({ restoredCount: 0, sessionStart: Date.now() });
+    chrome.storage.local.set({ restoredCount: 0, interceptedCount: 0, sessionStart: Date.now() });
     sendResponse({ ok: true });
   }
   if (message.type === "SAVE_SETTINGS") {
     chrome.storage.local.set(message.settings, () => sendResponse({ ok: true }));
     return true;
   }
+  // ── Get user email via Chrome identity API ──
+  if (message.type === "GET_USER_EMAIL") {
+    if (cachedEmail) {
+      sendResponse({ email: cachedEmail });
+      return;
+    }
+    try {
+      chrome.identity.getProfileUserInfo({ accountStatus: "SYNC" }, (userInfo) => {
+        const email = userInfo?.email || "anonymous@unknown.com";
+        cachedEmail = email;
+        chrome.storage.local.set({ userEmail: email });
+        sendResponse({ email });
+      });
+    } catch {
+      sendResponse({ email: "anonymous@unknown.com" });
+    }
+    return true; // async
+  }
+  // ── Track per-user interception stats ──
+  if (message.type === "INTERCEPTION_REPORT") {
+    handleInterceptionReport(message);
+    sendResponse({ ok: true });
+  }
 });
+
+// ── Handle interception report from content script ────────────────────────────
+function handleInterceptionReport(message) {
+  chrome.storage.local.get(["dlp_user_stats", "interceptedCount"], (data) => {
+    const userStats = data.dlp_user_stats || {};
+    const email = message.userEmail || "anonymous@unknown.com";
+
+    if (!userStats[email]) {
+      userStats[email] = { email, blockCount: 0, lastActivity: null };
+    }
+    userStats[email].blockCount += (message.count || 1);
+    userStats[email].lastActivity = new Date().toISOString();
+
+    const newInterceptedCount = (data.interceptedCount || 0) + (message.count || 1);
+    chrome.storage.local.set({ dlp_user_stats: userStats, interceptedCount: newInterceptedCount });
+    updateBadge(newInterceptedCount);
+  });
+}
 
 // ── Increment restored count and update badge ─────────────────────────────────
 function incrementRestoredCount(delta = 1) {
@@ -39,14 +83,20 @@ function updateBadge(count) {
 // ── Get current stats ─────────────────────────────────────────────────────────
 async function getStats() {
   return new Promise((resolve) => {
-    chrome.storage.local.get(["restoredCount", "sessionStart", "serverUrl", "enabled"], (data) => {
-      resolve({
-        restoredCount: data.restoredCount || 0,
-        sessionStart: data.sessionStart || Date.now(),
-        serverUrl: data.serverUrl || "http://localhost:3000",
-        enabled: data.enabled !== false,
-      });
-    });
+    chrome.storage.local.get(
+      ["restoredCount", "interceptedCount", "sessionStart", "serverUrl", "enabled", "userEmail", "dlp_user_stats"],
+      (data) => {
+        resolve({
+          restoredCount: data.restoredCount || 0,
+          interceptedCount: data.interceptedCount || 0,
+          sessionStart: data.sessionStart || Date.now(),
+          serverUrl: data.serverUrl || "https://ai-production-ffa9.up.railway.app",
+          enabled: data.enabled !== false,
+          userEmail: data.userEmail || null,
+          userStats: data.dlp_user_stats || {},
+        });
+      }
+    );
   });
 }
 
@@ -54,8 +104,9 @@ async function getStats() {
 chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.set({
     restoredCount: 0,
+    interceptedCount: 0,
     sessionStart: Date.now(),
-    serverUrl: "http://localhost:3000",
+    serverUrl: "https://ai-production-ffa9.up.railway.app",
     enabled: true,
   });
   chrome.action.setBadgeText({ text: "" });

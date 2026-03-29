@@ -413,31 +413,48 @@ export async function POST(request) {
   }
 }
 
-// ── GET: reverse lookup ───────────────────────────────────────────────────────
+// ── GET: reverse lookup (de-anonymization) ────────────────────────────────────
 export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url);
-    const synthetic = searchParams.get("synthetic");
+    // Accept both ?tag= (new, used by content.js) and ?synthetic= (legacy)
+    const tag = searchParams.get("tag") || searchParams.get("synthetic");
 
-    if (!synthetic) {
-      return NextResponse.json({ error: "synthetic parameter is required" }, { status: 400 });
+    if (!tag) {
+      return NextResponse.json({ error: "tag parameter is required" }, { status: 400 });
     }
 
-    const entry = getMappingBySynthetic(synthetic);
+    const entry = getMappingBySynthetic(tag);
     if (!entry) {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
+      // Return the tag itself so the extension can display it as-is
+      return NextResponse.json({ found: false, originalText: tag });
     }
 
     return NextResponse.json({
-      synthetic: entry.synthetic,
-      original: entry.original,
+      found: true,
+      originalText: entry.original,
       category: entry.category,
       label: entry.label,
+      // keep legacy fields for backward compatibility
+      synthetic: entry.synthetic,
+      original: entry.original,
       timestamp: entry.timestamp,
     });
   } catch (err) {
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
+}
+
+// ── OPTIONS: preflight for CORS ───────────────────────────────────────────────
+export async function OPTIONS() {
+  return new NextResponse(null, {
+    status: 204,
+    headers: {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, x-api-key, x-dlp-extension",
+    },
+  });
 }
 
 // ── Utilities ─────────────────────────────────────────────────────────────────

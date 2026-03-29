@@ -1,463 +1,307 @@
+// ── מנוע זיהוי PII מתקדם עם נתונים סינתטיים וזיהוי קונטקסטואלי ──
 import { NextResponse } from "next/server";
+import { authenticateRequest } from "../../../lib/middleware.js";
+import { generateSynthetic } from "../../../lib/synthetic.js";
 import {
   saveMappings,
-  getMappingBySynthetic,
+  getMappingByTag,
   saveLog,
-  getCustomRules,
-  isPolicyEnabled,
-  recordRequest,
-  recordPatternHit,
+  getPolicies,
+  getCustomKeywords,
+  getStats,
   saveAlert,
-} from "@/lib/db";
+  trackRequest,
+} from "../../../lib/db.js";
+import { getDefaultPolicies, SEVERITY_SCORES } from "../../../lib/policies.js";
 
-// ── Synthetic data generators ────────────────────────────────────────────────
-function randInt(min, max) {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
-}
-
-function syntheticPhone() {
-  const prefixes = ["050", "052", "053", "054", "055", "056", "057", "058"];
-  const prefix = prefixes[randInt(0, prefixes.length - 1)];
-  const num = String(randInt(1000000, 9999999));
-  return `${prefix}-${num}`;
-}
-
-function syntheticLandline() {
-  const areaCodes = ["02", "03", "04", "08", "09"];
-  const area = areaCodes[randInt(0, areaCodes.length - 1)];
-  const num = String(randInt(1000000, 9999999));
-  return `${area}-${num}`;
-}
-
-function syntheticID() {
-  return String(randInt(300000000, 399999999));
-}
-
-function syntheticEmail() {
-  return `user_${randInt(100, 999)}@gmail.com`;
-}
-
-function syntheticCreditCard() {
-  const g = () => String(randInt(1000, 9999));
-  return `4${String(randInt(100, 999))} ${g()} ${g()} ${g()}`;
-}
-
-function syntheticIBAN() {
-  const num = String(randInt(10, 99)) + String(randInt(100000000000000000, 999999999999999999));
-  return `IL${num}`.slice(0, 23);
-}
-
-function syntheticIP() {
-  return `${randInt(10, 199)}.${randInt(0, 255)}.${randInt(0, 255)}.${randInt(1, 254)}`;
-}
-
-function syntheticPassport() {
-  return `${randInt(10000000, 39999999)}`;
-}
-
-function syntheticVehicle() {
-  return `${randInt(10, 99)}-${randInt(100, 999)}-${randInt(10, 99)}`;
-}
-
-function syntheticBirthdate() {
-  const d = String(randInt(1, 28)).padStart(2, "0");
-  const m = String(randInt(1, 12)).padStart(2, "0");
-  const y = randInt(1960, 2000);
-  return `${d}/${m}/${y}`;
-}
-
-const KEYWORD_REPLACEMENTS = {
-  "פרויקט סודי": ["פרויקט אלפא", "פרויקט בטא", "פרויקט גמא"],
-  "דוח כספי": ["דוח רבעוני", "דוח שנתי", "דוח תקציבי"],
-  "תוכנית אסטרטגית": ["תוכנית עבודה", "תוכנית פיתוח", "תוכנית שנתית"],
-};
-
-function syntheticKeyword(keyword) {
-  const options = KEYWORD_REPLACEMENTS[keyword] || ["מידע פנימי"];
-  return options[randInt(0, options.length - 1)];
-}
-
-function syntheticContextValue(type) {
-  switch (type) {
-    case "ADDRESS": return `רחוב הרצל ${randInt(1, 120)}, תל אביב`;
-    case "FULL_NAME": return `ישראל ישראלי`;
-    case "PASSWORD": return `P@ss${randInt(1000, 9999)}!`;
-    case "BANK_ACCOUNT": return `${randInt(10, 99)}-${randInt(100000, 999999)}`;
-    default: return `[REDACTED]`;
-  }
-}
-
-// ── Patterns (extended) ──────────────────────────────────────────────────────
-const PATTERNS = [
-  {
-    id: "CREDIT_CARD",
-    policyId: "credit_card",
-    regex: /\b4\d{3}[ -]?\d{4}[ -]?\d{4}[ -]?\d{4}\b|\b(?:5[1-5]\d{2}|2[2-7]\d{2})[ -]?\d{4}[ -]?\d{4}[ -]?\d{4}\b|\b3[47]\d{2}[ -]?\d{6}[ -]?\d{5}\b/g,
-    label: "כרטיס אשראי",
-    generate: syntheticCreditCard,
-    riskScore: 40,
-  },
-  {
-    id: "EMAIL",
-    policyId: "email",
-    regex: /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g,
-    label: "אימייל",
-    generate: syntheticEmail,
-    riskScore: 15,
-  },
-  {
-    id: "PHONE",
-    policyId: "phone",
-    regex: /\b05\d[- ]?\d{3}[- ]?\d{4}\b/g,
-    label: "טלפון נייד",
-    generate: syntheticPhone,
-    riskScore: 20,
-  },
-  {
-    id: "LANDLINE",
-    policyId: "phone",
-    regex: /\b0[2348][- ]?\d{3}[- ]?\d{4}\b|\b09[- ]?\d{3}[- ]?\d{4}\b/g,
-    label: "טלפון נייח",
-    generate: syntheticLandline,
-    riskScore: 15,
-  },
-  {
-    id: "IBAN",
-    policyId: "iban",
-    regex: /\bIL\d{2}[0-9]{4}[0-9]{4}[0-9]{4}[0-9]{4}[0-9]{2,4}\b/g,
-    label: "IBAN",
-    generate: syntheticIBAN,
-    riskScore: 35,
-  },
-  {
-    id: "IP_ADDRESS",
-    policyId: "ip_address",
-    regex: /\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b/g,
-    label: "כתובת IP",
-    generate: syntheticIP,
-    riskScore: 10,
-  },
-  {
-    id: "PASSPORT",
-    policyId: "passport",
-    regex: /\b[1-3][0-9]{7}\b/g,
-    label: "דרכון",
-    generate: syntheticPassport,
-    riskScore: 30,
-  },
-  {
-    id: "VEHICLE",
-    policyId: "vehicle",
-    regex: /\b\d{2}-\d{3}-\d{2}\b|\b\d{3}-\d{2}-\d{3}\b/g,
-    label: "מספר רכב",
-    generate: syntheticVehicle,
-    riskScore: 10,
-  },
-  {
-    id: "BIRTHDATE",
-    policyId: "birthdate",
-    regex: /\b(0?[1-9]|[12]\d|3[01])[\/\-.](0?[1-9]|1[0-2])[\/\-.](19|20)\d{2}\b/g,
-    label: "תאריך לידה",
-    generate: syntheticBirthdate,
-    riskScore: 20,
-  },
-  // ID last – wide pattern, only when >= 9 digits and doesn't overlap others
-  {
-    id: "ID",
-    policyId: "israeli_id",
-    regex: /\b\d{9}\b/g,
-    label: "תעודת זהות",
-    generate: syntheticID,
-    riskScore: 30,
-  },
+// ── תבניות Regex לזיהוי PII ──
+const ALL_PATTERNS = [
+  { id: "PHONE",          regex: /\b05\d[- ]?\d{3}[- ]?\d{4}\b/g,                                              label: "טלפון נייד",     policyId: "phone"     },
+  { id: "LANDLINE",       regex: /\b0(?:2|3|4|8|9)[- ]?\d{3}[- ]?\d{4}\b/g,                                     label: "טלפון נייח",     policyId: "landline"  },
+  { id: "CREDIT_CARD",    regex: /\b(?:4\d{3}|5[1-5]\d{2}|2[2-7]\d{2}|3[47]\d{2})[ -]?\d{4}[ -]?\d{4}[ -]?\d{4}\b|\b3[47]\d{2}[ -]?\d{6}[ -]?\d{5}\b/g, label: "כרטיס אשראי",    policyId: "credit_card"},
+  { id: "EMAIL",          regex: /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g,                           label: "אימייל",          policyId: "email"     },
+  { id: "ID",             regex: /\b\d{9}\b/g,                                                                   label: "תעודת זהות",     policyId: "israeli_id"},
+  { id: "IBAN",           regex: /\bIL\d{2}[ -]?\d{4}[ -]?\d{4}[ -]?\d{4}[ -]?\d{4}[ -]?\d{2,4}\b/gi,        label: "IBAN",            policyId: "iban"      },
+  { id: "IP_ADDRESS",     regex: /\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b/g, label: "כתובת IP",    policyId: "ip_address"},
+  { id: "VEHICLE",        regex: /\b\d{2,3}[- ]\d{2,3}[- ]\d{2,3}\b/g,                                         label: "מלוחית",         policyId: "vehicle"   },
+  { id: "BIRTHDATE",      regex: /\b(?:0[1-9]|[12]\d|3[01])[\/.\-](?:0[1-9]|1[0-2])[\/.\-](?:19|20)\d{2}\b/g, label: "תאריך לידה",    policyId: "birthdate" },
+  { id: "AWS_KEY",        regex: /\b(?:AKIA|ABIA|ACCA|ASIA)[0-9A-Z]{16}\b/g,                                    label: "מפתח AWS",       policyId: "api_key"   },
+  { id: "OPENAI_KEY",     regex: /\bsk-[a-zA-Z0-9]{20,}\b/g,                                                    label: "מפתח OpenAI",    policyId: "api_key"   },
 ];
 
-const KEYWORDS = [
-  { keyword: "פרויקט סודי",      category: "PROJECT",  label: "מילות מפתח", policyId: "keywords", generate: () => syntheticKeyword("פרויקט סודי"),      riskScore: 25 },
-  { keyword: "דוח כספי",          category: "FINANCE",  label: "מילות מפתח", policyId: "keywords", generate: () => syntheticKeyword("דוח כספי"),          riskScore: 30 },
-  { keyword: "תוכנית אסטרטגית",  category: "STRATEGY", label: "מילות מפתח", policyId: "keywords", generate: () => syntheticKeyword("תוכנית אסטרטגית"),  riskScore: 25 },
+// מילות מפתח ברירת מחדל
+const DEFAULT_KEYWORDS = [
+  { keyword: "פרויקט סודי",       category: "PROJECT",  label: "מילות מפתח", policyId: "keywords" },
+  { keyword: "דוח כספי",          category: "FINANCE",  label: "מילות מפתח", policyId: "keywords" },
+  { keyword: "תוכנית אסטרטגית",   category: "STRATEGY", label: "מילות מפתח", policyId: "keywords" },
+  { keyword: "מידע סודי",         category: "SECRET",   label: "מילות מפתח", policyId: "keywords" },
+  { keyword: "נתוני לקוחות",      category: "CLIENTS",  label: "מילות מפתח", policyId: "keywords" },
+  { keyword: "חוזה סודי",         category: "CONTRACT", label: "מילות מפתח", policyId: "keywords" },
 ];
 
-// ── Context-aware detection ───────────────────────────────────────────────────
+// ── זיהוי קונטקסטואלי (NLP פשוט) ──
 const CONTEXT_PATTERNS = [
-  { regex: /(?:הכתובת\s+שלי\s+היא|אני\s+גר\s+ב[ה]?|כתובת\s*:)\s*([^\n,\.]{5,60})/gi,    type: "ADDRESS",      label: "כתובת",       riskScore: 15 },
-  { regex: /(?:שם\s+מלא\s*:|השם\s+שלי\s+הוא|שמי)\s*([^\n,\.]{3,40})/gi,                  type: "FULL_NAME",    label: "שם מלא",      riskScore: 20 },
-  { regex: /(?:סיסמ[הא]\s*:|password\s*:|הסיסמ[הא]\s+שלי)\s*(\S{4,})/gi,                  type: "PASSWORD",     label: "סיסמה",       riskScore: 50 },
-  { regex: /(?:מספר\s+חשבון|חשבון\s+בנק)\s*[:\-]?\s*(\d[\d\- ]{5,20})/gi,                  type: "BANK_ACCOUNT", label: "חשבון בנק",   riskScore: 35 },
+  {
+    triggers: [/הכתובת שלי היא\s+/i, /אני גר ב[- ]?/i, /כתובת:\s*/i, /מגורים:\s*/i],
+    category: "ADDRESS",
+    label: "כתובת",
+    policyId: "address",
+    capture: /(.{5,60})/,
+  },
+  {
+    triggers: [/השם שלי הוא\s+/i, /שם מלא:\s*/i, /שמי\s+/i, /קוראים לי\s+/i],
+    category: "FULL_NAME",
+    label: "שם מלא",
+    policyId: "full_name",
+    capture: /([\u05D0-\u05EA\s"'-]{3,30})/,
+  },
+  {
+    triggers: [/סיסמה:\s*/i, /password:\s*/i, /הסיסמה שלי\s*(היא)?\s*/i, /pwd:\s*/i, /pass:\s*/i],
+    category: "PASSWORD",
+    label: "סיסמה",
+    policyId: "password",
+    capture: /(\S{4,32})/,
+  },
+  {
+    triggers: [/מספר חשבון[: ]+/i, /חשבון בנק[: ]+/i, /account number:\s*/i],
+    category: "BANK_ACCOUNT",
+    label: "חשבון בנק",
+    policyId: "bank_account",
+    capture: /([\d\-]{5,20})/,
+  },
+  {
+    triggers: [/מפתח api[: ]+/i, /api key:\s*/i, /token:\s*/i, /bearer\s+/i, /secret:\s*/i],
+    category: "API_SECRET",
+    label: "מפתח API",
+    policyId: "api_key",
+    capture: /(\S{8,64})/,
+  },
+  {
+    triggers: [/דרכון[: ]+/i, /passport[: ]+/i, /מספר דרכון[: ]*/i],
+    category: "PASSPORT",
+    label: "דרכון",
+    policyId: "passport",
+    capture: /(\d{8})/,
+  },
 ];
 
-function detectFromContext(text) {
-  if (!isPolicyEnabled("context")) return [];
-  const hits = [];
-  for (const { regex, type, label, riskScore } of CONTEXT_PATTERNS) {
-    let m;
-    regex.lastIndex = 0;
-    while ((m = regex.exec(text)) !== null) {
-      const captured = m[1]?.trim();
-      if (captured) {
-        hits.push({ original: captured, fullMatch: m[0], type, label, riskScore });
-      }
-    }
-  }
-  return hits;
+// ── בדיקה האם מדיניות מסוימת מופעלת ──
+function isPolicyEnabled(policies, policyId) {
+  const p = policies.find((pol) => pol.id === policyId);
+  return p ? p.enabled : true; // ברירת מחדל: מופעל
 }
 
-// ── Threat score calculator ───────────────────────────────────────────────────
-function calcThreatScore(replacements) {
-  if (!replacements.length) return 0;
+// ── חישוב ציון איום ──
+function calcThreatScore(replacements, policies) {
+  if (replacements.length === 0) return 0;
   let score = 0;
   const seen = new Set();
   for (const r of replacements) {
-    score += r.riskScore || 10;
+    const policy = policies.find((p) => p.id === r.policyId);
+    const severity = policy?.severity || "medium";
+    score += SEVERITY_SCORES[severity] || 10;
     seen.add(r.category);
   }
-  // multiplier for diversity
-  if (seen.size >= 3) score = Math.round(score * 1.5);
-  else if (seen.size === 2) score = Math.round(score * 1.2);
-  return Math.min(100, score);
+  // בונוס לגיוון קטגוריות
+  score += (seen.size - 1) * 5;
+  return Math.min(100, Math.round(score));
 }
 
-// ── Main POST handler ─────────────────────────────────────────────────────────
+// ── POST: זיהוי והחלפת PII ──
 export async function POST(request) {
   try {
+    const auth = await authenticateRequest(request);
+    const { organizationId } = auth;
+
     const body = await request.json();
-    const { text, mode = "paste", source = "api" } = body;
+    const { text, source = "api", mode = "paste" } = body;
 
     if (!text || typeof text !== "string") {
       return NextResponse.json({ error: "text is required" }, { status: 400 });
     }
 
-    recordRequest();
+    // טעינת מדיניות הארגון
+    let orgPolicies = getPolicies(organizationId);
+    if (!orgPolicies) {
+      orgPolicies = getDefaultPolicies(organizationId);
+    }
+
+    // מילות מפתח מותאמות
+    const customKws = getCustomKeywords(organizationId);
+
+    // מטמון עקביות: אותו ערך מקורי → אותו סינתטי
+    const consistencyCache = new Map();
 
     let redactedText = text;
     const replacements = [];
-    // consistency cache: original → synthetic (within this request)
-    const cache = new Map();
-    // track replaced ranges to avoid double-replacing
-    const replacedRanges = [];
+    const mappingEntries = [];
 
-    function overlaps(start, end) {
-      return replacedRanges.some(([rangeStart, rangeEnd]) => start < rangeEnd && end > rangeStart);
-    }
+    // ── 1. זיהוי Regex ──
+    for (const { id, regex, label, policyId } of ALL_PATTERNS) {
+      if (!isPolicyEnabled(orgPolicies, policyId)) continue;
 
-    // ── 1. Regex-based patterns ──────────────────────────────────────────────
-    for (const pattern of PATTERNS) {
-      if (!isPolicyEnabled(pattern.policyId)) continue;
+      // יצירת מופע regex חדש בכל פעם למניעת בעיות state עם lastIndex
+      const freshRegex = new RegExp(regex.source, regex.flags);
+      const matches = [...text.matchAll(freshRegex)];
 
-      // typing mode: skip short ambiguous numbers
-      if (mode === "typing" && pattern.id === "ID") continue;
+      for (const match of matches) {
+        const original = match[0];
+        // מניעת כפילויות
+        if (replacements.some((r) => r.original === original)) continue;
 
-      const matches = [];
-      let m;
-      const re = new RegExp(pattern.regex.source, pattern.regex.flags);
-      while ((m = re.exec(text)) !== null) {
-        matches.push({ original: m[0], index: m.index });
-      }
-
-      for (const { original, index } of matches) {
-        const end = index + original.length;
-        if (overlaps(index, end)) continue;
-
-        // consistency: same original → same synthetic
-        let synthetic = cache.get(original);
-        if (!synthetic) {
-          synthetic = pattern.generate();
-          cache.set(original, synthetic);
-        }
-
-        replacedRanges.push([index, end]);
-        replacements.push({ original, synthetic, label: pattern.label, category: pattern.id, riskScore: pattern.riskScore, index, end });
-        recordPatternHit(pattern.label);
+        const synthetic = generateSynthetic(id, original, consistencyCache);
+        replacements.push({ original, synthetic, label, category: id, policyId });
+        mappingEntries.push({ tag: synthetic, originalText: original, category: id, label, source });
       }
     }
 
-    // ── 2. Keyword patterns ──────────────────────────────────────────────────
-    if (isPolicyEnabled("keywords")) {
-      for (const kw of KEYWORDS) {
-        const re = new RegExp(kw.keyword, "gi");
+    // ── 2. זיהוי קונטקסטואלי ──
+    for (const { triggers, category, label, policyId, capture } of CONTEXT_PATTERNS) {
+      if (!isPolicyEnabled(orgPolicies, policyId)) continue;
+
+      for (const trigger of triggers) {
+        const combined = new RegExp(trigger.source + capture.source, "gi");
         let m;
-        while ((m = re.exec(text)) !== null) {
-          const original = m[0];
-          const index = m.index;
-          const end = index + original.length;
-          if (overlaps(index, end)) continue;
+        while ((m = combined.exec(text)) !== null) {
+          const original = m[1]?.trim();
+          if (!original || original.length < 2) continue;
+          if (replacements.some((r) => r.original === original)) continue;
 
-          let synthetic = cache.get(original.toLowerCase());
-          if (!synthetic) {
-            synthetic = kw.generate();
-            cache.set(original.toLowerCase(), synthetic);
-          }
-
-          replacedRanges.push([index, end]);
-          replacements.push({ original, synthetic, label: kw.label, category: kw.category, riskScore: kw.riskScore, index, end });
-          recordPatternHit(kw.label);
+          const synthetic = generateSynthetic(category, original, consistencyCache);
+          replacements.push({ original, synthetic, label, category, policyId });
+          mappingEntries.push({ tag: synthetic, originalText: original, category, label, source });
         }
       }
     }
 
-    // ── 3. Context-aware detection ───────────────────────────────────────────
-    const contextHits = detectFromContext(text);
-    for (const hit of contextHits) {
-      const index = text.indexOf(hit.original);
-      if (index === -1) continue;
-      const end = index + hit.original.length;
-      if (overlaps(index, end)) continue;
-
-      let synthetic = cache.get(hit.original);
-      if (!synthetic) {
-        synthetic = syntheticContextValue(hit.type);
-        cache.set(hit.original, synthetic);
-      }
-
-      replacedRanges.push([index, end]);
-      replacements.push({ original: hit.original, synthetic, label: hit.label, category: hit.type, riskScore: hit.riskScore, index, end });
-      recordPatternHit(hit.label);
-    }
-
-    // ── 4. Custom rules ──────────────────────────────────────────────────────
-    if (isPolicyEnabled("custom")) {
-      const customRules = getCustomRules();
-      for (const rule of customRules) {
-        const re = new RegExp(escapeRegex(rule.word), "gi");
-        let m;
-        while ((m = re.exec(text)) !== null) {
-          const original = m[0];
-          const index = m.index;
-          const end = index + original.length;
-          if (overlaps(index, end)) continue;
-
-          const synthetic = rule.replacement || `[${rule.category}_CUSTOM]`;
-          replacedRanges.push([index, end]);
-          replacements.push({ original, synthetic, label: rule.word, category: "CUSTOM", riskScore: 20, index, end });
-          recordPatternHit("כלל מותאם");
+    // ── 3. מילות מפתח ברירת מחדל ──
+    if (isPolicyEnabled(orgPolicies, "keywords")) {
+      for (const { keyword, category, label, policyId } of DEFAULT_KEYWORDS) {
+        const kwRegex = new RegExp(keyword, "gi");
+        const matches = [...text.matchAll(kwRegex)];
+        for (const match of matches) {
+          const original = match[0];
+          if (replacements.some((r) => r.original === original)) continue;
+          const synthetic = generateSynthetic(category, original, consistencyCache);
+          replacements.push({ original, synthetic, label, category, policyId });
+          mappingEntries.push({ tag: synthetic, originalText: original, category, label, source });
         }
       }
     }
 
-    // ── 5. Apply replacements by building result from segments ───────────────
-    if (replacements.length) {
-      // sort by start position ascending
-      const sorted = [...replacements].sort((a, b) => a.index - b.index);
-      let result = "";
-      let cursor = 0;
-      for (const r of sorted) {
-        if (r.index < cursor) continue; // skip overlapping (already covered)
-        result += text.slice(cursor, r.index);
-        result += r.synthetic;
-        cursor = r.end;
-      }
-      result += text.slice(cursor);
-      redactedText = result;
-    }
-
-    // ── 6. Compute threat score ───────────────────────────────────────────────
-    const threatScore = calcThreatScore(replacements);
-
-    // ── 7. Save to store ──────────────────────────────────────────────────────
-    if (replacements.length) {
-      saveMappings(
-        replacements.map(r => ({
-          synthetic: r.synthetic,
-          original: r.original,
-          category: r.category,
-          label: r.label,
-          timestamp: new Date().toISOString(),
-          source,
-        }))
-      );
-
-      for (const r of replacements) {
-        saveLog({
-          type: r.label,
-          category: r.category,
-          synthetic: r.synthetic,
-          source,
-          status: "blocked",
-          threatScore,
-        });
-      }
-
-      // high-threat alert
-      if (threatScore >= 80) {
-        saveAlert({
-          type: "HIGH_RISK",
-          message: `בקשה בסיכון גבוה זוהתה (ציון: ${threatScore}). ${replacements.length} פריטים נחסמו.`,
-          severity: "high",
-        });
+    // ── 4. מילות מפתח מותאמות לארגון ──
+    for (const kw of customKws) {
+      const kwRegex = new RegExp(kw.word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+      const matches = [...text.matchAll(kwRegex)];
+      for (const match of matches) {
+        const original = match[0];
+        if (replacements.some((r) => r.original === original)) continue;
+        const synthetic = kw.replacement
+          ? kw.replacement
+          : generateSynthetic("CUSTOM", original, consistencyCache);
+        replacements.push({ original, synthetic, label: kw.category, category: kw.category, policyId: "keywords" });
+        mappingEntries.push({ tag: synthetic, originalText: original, category: kw.category, label: kw.category, source });
       }
     }
 
-    // ── 8. Build backward-compatible mapping object ───────────────────────────
-    const mapping = {};
-    for (const r of replacements) {
-      mapping[r.synthetic] = r.original;
+    // ── 5. החלפה כירורגית ──
+    // מיון לפי אורך (ארוך ראשון) למניעת החלפות חופפות
+    const sortedReplacements = [...replacements].sort(
+      (a, b) => b.original.length - a.original.length
+    );
+    for (const { original, synthetic } of sortedReplacements) {
+      // החלפת כל המופעים של original
+      const escaped = original.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      redactedText = redactedText.replace(new RegExp(escaped, "g"), synthetic);
+    }
+
+    // ── 6. חישוב ציון איום ──
+    const threatScore = calcThreatScore(replacements, orgPolicies);
+
+    // ── 7. שמירת מיפויים ולוג ──
+    if (mappingEntries.length > 0) {
+      saveMappings(organizationId, mappingEntries);
+    }
+
+    // סוג מידע עיקרי
+    const primaryType =
+      replacements.length > 0
+        ? replacements[0].label
+        : "ניקי";
+
+    saveLog(organizationId, {
+      type: primaryType,
+      synthetic: replacements[0]?.synthetic || "",
+      originalText: replacements[0]?.original || "",
+      source,
+      status: replacements.length > 0 ? "blocked" : "clean",
+      threatScore,
+      detectionCount: replacements.length,
+      replacements,
+    });
+
+    // ── 8. זיהוי אנומליה ──
+    const reqPerMinute = trackRequest(organizationId);
+    if (reqPerMinute > 30) {
+      saveAlert(organizationId, {
+        type: "RATE_SPIKE",
+        message: `זוהה קצב בקשות חריג: ${reqPerMinute} בקשות בדקה`,
+        severity: "high",
+      });
+    }
+    if (threatScore >= 80) {
+      saveAlert(organizationId, {
+        type: "HIGH_THREAT",
+        message: `ציון איום קריטי: ${threatScore}/100 – ${replacements.length} פריטי PII זוהו`,
+        severity: "critical",
+      });
     }
 
     return NextResponse.json({
       safe: replacements.length === 0,
       redactedText,
-      replacements: replacements.map(r => ({
-        original: r.original,
-        placeholder: r.synthetic,
-        synthetic: r.synthetic,
-        label: r.label,
-        category: r.category,
-      })),
-      mapping,
+      replacements: replacements.map(({ original: _o, ...rest }) => rest),
       threatScore,
+      detectionCount: replacements.length,
       timestamp: new Date().toISOString(),
+      organizationId,
     });
   } catch (err) {
+    if (err.status === 401) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
     console.error("[check-text] Error:", err);
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
 }
 
-// ── GET: reverse lookup (de-anonymization) ────────────────────────────────────
+// ── GET: שחזור ערך מקורי לפי ערך סינתטי ──
 export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url);
-    // Accept both ?tag= (new, used by content.js) and ?synthetic= (legacy)
-    const tag = searchParams.get("tag") || searchParams.get("synthetic");
+    const synthetic = searchParams.get("synthetic");
 
-    if (!tag) {
-      return NextResponse.json({ error: "tag parameter is required" }, { status: 400 });
+    if (!synthetic) {
+      return NextResponse.json({ error: "synthetic param is required" }, { status: 400 });
     }
 
-    const entry = getMappingBySynthetic(tag);
-    if (!entry) {
-      // Return the tag itself so the extension can display it as-is
-      return NextResponse.json({ found: false, originalText: tag });
+    const mapping = getMappingByTag(synthetic);
+    if (!mapping) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
     return NextResponse.json({
-      found: true,
-      originalText: entry.original,
-      category: entry.category,
-      label: entry.label,
-      // keep legacy fields for backward compatibility
-      synthetic: entry.synthetic,
-      original: entry.original,
-      timestamp: entry.timestamp,
+      synthetic: mapping.tag,
+      original: mapping.originalText,
+      category: mapping.category,
+      label: mapping.label,
+      createdAt: mapping.createdAt,
     });
   } catch (err) {
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
 }
 
-// ── OPTIONS: preflight for CORS ───────────────────────────────────────────────
 export async function OPTIONS() {
-  return new NextResponse(null, {
-    status: 204,
-    headers: {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, x-api-key, x-dlp-extension",
-    },
-  });
-}
-
-// ── Utilities ─────────────────────────────────────────────────────────────────
-function escapeRegex(str) {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new NextResponse(null, { status: 204 });
 }

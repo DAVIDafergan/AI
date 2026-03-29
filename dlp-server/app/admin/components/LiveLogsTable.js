@@ -1,175 +1,230 @@
 "use client";
 
-import { useState, useMemo } from "react";
-import { Search, Filter } from "lucide-react";
+// טבלת לוגים חיים עם חיפוש, פילטור, עימוד ואפשרות גילוי ערך מקורי
+import { useState } from "react";
+import { Eye, EyeOff, ChevronRight, ChevronLeft } from "lucide-react";
 
-// צבעי נקודה לפי סוג מידע
 const TYPE_COLORS = {
-  "כרטיס אשראי": "#f43f5e",
-  "תעודת זהות": "#8b5cf6",
-  "אימייל": "#3b82f6",
-  "טלפון נייד": "#22c55e",
-  "טלפון נייח": "#10b981",
-  "מילות מפתח": "#f59e0b",
-  "IBAN": "#06b6d4",
-  "כתובת IP": "#ec4899",
-  "דרכון": "#a78bfa",
-  "מספר רכב": "#fb923c",
-  "תאריך לידה": "#84cc16",
-  "כתובת": "#e879f9",
-  "שם מלא": "#38bdf8",
-  "סיסמה": "#ef4444",
-  "חשבון בנק": "#fbbf24",
-  "כלל מותאם": "#94a3b8",
+  "כרטיס אשראי":  "#f43f5e",
+  "תעודת זהות":   "#8b5cf6",
+  "אימייל":        "#3b82f6",
+  "טלפון נייד":   "#22c55e",
+  "טלפון נייח":   "#06b6d4",
+  "IBAN":          "#f97316",
+  "כתובת IP":     "#a855f7",
+  "דרכון":        "#ec4899",
+  "מלוחית":       "#14b8a6",
+  "תאריך לידה":   "#84cc16",
+  "מפתח AWS":     "#ef4444",
+  "מפתח OpenAI":  "#10b981",
+  "מפתח API":     "#6366f1",
+  "כתובת":        "#0ea5e9",
+  "שם מלא":       "#d946ef",
+  "סיסמה":        "#dc2626",
+  "חשבון בנק":    "#b45309",
+  "מילות מפתח":   "#f59e0b",
 };
+
+const PAGE_SIZE = 10;
 
 function formatTime(timestamp) {
   try {
-    const date = new Date(timestamp);
-    return date.toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit" });
+    const d = new Date(timestamp);
+    return d.toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
   } catch {
     return timestamp;
   }
 }
 
-function ThreatBadge({ score }) {
-  if (score == null) return null;
-  const color = score >= 70 ? "bg-rose-500/20 text-rose-400" : score >= 40 ? "bg-amber-500/20 text-amber-400" : "bg-emerald-500/20 text-emerald-400";
+// שורה בטבלה עם כפתור גילוי
+function LogRow({ log, rowNum }) {
+  const [revealed, setRevealed] = useState(false);
+  const [originalText, setOriginalText] = useState(null);
+  const [loadingReveal, setLoadingReveal] = useState(false);
+
+  async function handleReveal() {
+    if (revealed) { setRevealed(false); return; }
+    const syntheticVal = log.placeholder || log.synthetic;
+    if (!syntheticVal) return;
+
+    setLoadingReveal(true);
+    try {
+      const res = await fetch(`/api/check-text?synthetic=${encodeURIComponent(syntheticVal)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setOriginalText(data.original || "—");
+      } else {
+        setOriginalText("(לא נמצא)");
+      }
+    } catch {
+      setOriginalText("(שגיאת רשת)");
+    } finally {
+      setLoadingReveal(false);
+      setRevealed(true);
+    }
+  }
+
   return (
-    <span className={`text-xs font-mono px-1.5 py-0.5 rounded ${color}`}>
-      {score}
-    </span>
+    <tr className="border-b border-slate-700/30 hover:bg-slate-800/50 transition-colors">
+      <td className="px-4 py-3 text-slate-500 text-sm">{rowNum}</td>
+      <td className="px-4 py-3 text-slate-400 text-sm whitespace-nowrap">
+        {formatTime(log.timestamp)}
+      </td>
+      <td className="px-4 py-3">
+        <div className="flex items-center gap-2">
+          <span
+            className="inline-block w-2 h-2 rounded-full flex-shrink-0"
+            style={{ backgroundColor: TYPE_COLORS[log.type] || "#94a3b8" }}
+          />
+          <span className="text-white text-sm whitespace-nowrap">{log.type}</span>
+        </div>
+      </td>
+      <td className="px-4 py-3">
+        <div className="flex items-center gap-2">
+          <code className="text-xs bg-slate-800 text-amber-400 px-2 py-1 rounded font-mono">
+            {log.placeholder || log.synthetic || "—"}
+          </code>
+          {/* כפתור גילוי ערך מקורי */}
+          <button
+            onClick={handleReveal}
+            title={revealed ? "הסתר" : "הצג ערך מקורי"}
+            className="text-slate-500 hover:text-rose-400 transition-colors flex-shrink-0"
+            disabled={loadingReveal}
+          >
+            {loadingReveal ? (
+              <span className="text-xs text-slate-500">...</span>
+            ) : revealed ? (
+              <EyeOff className="w-4 h-4" />
+            ) : (
+              <Eye className="w-4 h-4" />
+            )}
+          </button>
+        </div>
+        {/* ערך מקורי שנחשף */}
+        {revealed && originalText && (
+          <div className="mt-1 text-xs text-rose-300 bg-rose-500/10 border border-rose-500/20 rounded px-2 py-1 font-mono">
+            🔓 {originalText}
+          </div>
+        )}
+      </td>
+      <td className="px-4 py-3 text-slate-400 text-sm whitespace-nowrap">
+        {log.source}
+      </td>
+      {log.threatScore !== undefined && (
+        <td className="px-4 py-3">
+          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+            log.threatScore >= 80 ? "bg-rose-500/20 text-rose-400" :
+            log.threatScore >= 50 ? "bg-orange-500/20 text-orange-400" :
+            log.threatScore >= 20 ? "bg-yellow-500/20 text-yellow-400" :
+            "bg-emerald-500/20 text-emerald-400"
+          }`}>
+            {log.threatScore}
+          </span>
+        </td>
+      )}
+      <td className="px-4 py-3">
+        {log.status === "blocked" ? (
+          <span className="text-xs font-medium px-2 py-1 rounded-full bg-rose-500/20 text-rose-400">
+            נחסם
+          </span>
+        ) : (
+          <span className="text-xs font-medium px-2 py-1 rounded-full bg-emerald-500/20 text-emerald-400">
+            נקי
+          </span>
+        )}
+      </td>
+    </tr>
   );
 }
 
-export default function LiveLogsTable({ logs }) {
-  const [search, setSearch] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState("all");
-
-  // unique categories
-  const categories = useMemo(() => {
-    if (!logs) return [];
-    const set = new Set(logs.map(l => l.type || l.category).filter(Boolean));
-    return Array.from(set);
-  }, [logs]);
-
-  const filtered = useMemo(() => {
-    if (!logs) return [];
-    return logs.filter(log => {
-      const matchesSearch = !search || [log.type, log.synthetic, log.placeholder, log.source]
-        .filter(Boolean)
-        .some(v => v.toLowerCase().includes(search.toLowerCase()));
-      const matchesCat = categoryFilter === "all" || (log.type || log.category) === categoryFilter;
-      return matchesSearch && matchesCat;
-    });
-  }, [logs, search, categoryFilter]);
+export default function LiveLogsTable({ logs, searchQuery = "", categoryFilter = "all" }) {
+  const [page, setPage] = useState(1);
 
   if (!logs || logs.length === 0) {
     return (
       <div className="bg-slate-900 border border-slate-700/50 rounded-xl p-6 text-center text-slate-400">
-        אין לוגים להצגה – לאחר שתשלח טקסט דרך ה-API, הנתונים יופיעו כאן.
+        אין לוגים להצגה
       </div>
     );
   }
 
+  // פילטור לפי חיפוש וקטגוריה
+  const filtered = logs.filter((log) => {
+    const matchSearch =
+      !searchQuery ||
+      log.type?.includes(searchQuery) ||
+      log.source?.includes(searchQuery) ||
+      (log.placeholder || log.synthetic || "").includes(searchQuery);
+    const matchCat =
+      categoryFilter === "all" || log.type === categoryFilter;
+    return matchSearch && matchCat;
+  });
+
+  // עימוד
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const paginated = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
+  const hasThreatScore = logs.some((l) => l.threatScore !== undefined);
+
   return (
     <div className="bg-slate-900 border border-slate-700/50 rounded-xl overflow-hidden shadow-lg">
-      {/* Header + Filters */}
-      <div className="p-6 border-b border-slate-700/50 space-y-3">
+      <div className="p-6 border-b border-slate-700/50 flex items-center justify-between">
         <h3 className="text-white font-semibold text-lg">לוגים אחרונים</h3>
-        <div className="flex flex-col sm:flex-row gap-2">
-          {/* Search */}
-          <div className="relative flex-1">
-            <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-            <input
-              type="text"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="חיפוש בלוגים..."
-              className="w-full bg-slate-800 border border-slate-700 rounded-lg pr-9 pl-3 py-2 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-rose-500/50"
-            />
-          </div>
-          {/* Category filter */}
-          <div className="relative">
-            <Filter className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none" />
-            <select
-              value={categoryFilter}
-              onChange={e => setCategoryFilter(e.target.value)}
-              className="bg-slate-800 border border-slate-700 rounded-lg pr-9 pl-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-rose-500/50 appearance-none"
-            >
-              <option value="all">כל הקטגוריות</option>
-              {categories.map(c => (
-                <option key={c} value={c}>{c}</option>
-              ))}
-            </select>
-          </div>
-        </div>
-        {filtered.length !== logs.length && (
-          <p className="text-slate-500 text-xs">מציג {filtered.length} מתוך {logs.length} לוגים</p>
-        )}
+        <span className="text-xs text-slate-400">
+          {filtered.length} רשומות
+        </span>
       </div>
 
-      {filtered.length === 0 ? (
-        <div className="p-6 text-center text-slate-500 text-sm">אין תוצאות לחיפוש זה</div>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-slate-700/50">
-                <th className="text-right text-slate-400 text-xs font-medium px-4 py-3">#</th>
-                <th className="text-right text-slate-400 text-xs font-medium px-4 py-3">זמן</th>
-                <th className="text-right text-slate-400 text-xs font-medium px-4 py-3">סוג מידע</th>
-                <th className="text-right text-slate-400 text-xs font-medium px-4 py-3">נתון סינתטי</th>
-                <th className="text-right text-slate-400 text-xs font-medium px-4 py-3">מקור</th>
-                <th className="text-right text-slate-400 text-xs font-medium px-4 py-3">סיכון</th>
-                <th className="text-right text-slate-400 text-xs font-medium px-4 py-3">סטטוס</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((log) => (
-                <tr
-                  key={log.id}
-                  className="border-b border-slate-700/30 hover:bg-slate-800/50 transition-colors"
-                >
-                  <td className="px-4 py-3 text-slate-500 text-sm">{log.id}</td>
-                  <td className="px-4 py-3 text-slate-400 text-sm whitespace-nowrap">
-                    {formatTime(log.timestamp)}
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <span
-                        className="inline-block w-2 h-2 rounded-full flex-shrink-0"
-                        style={{ backgroundColor: TYPE_COLORS[log.type] || "#94a3b8" }}
-                      />
-                      <span className="text-white text-sm whitespace-nowrap">{log.type}</span>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <code className="text-xs bg-slate-800 text-amber-400 px-2 py-1 rounded font-mono">
-                      {log.synthetic || log.placeholder}
-                    </code>
-                  </td>
-                  <td className="px-4 py-3 text-slate-400 text-sm whitespace-nowrap">
-                    {log.source || "—"}
-                  </td>
-                  <td className="px-4 py-3">
-                    <ThreatBadge score={log.threatScore} />
-                  </td>
-                  <td className="px-4 py-3">
-                    {log.status === "blocked" ? (
-                      <span className="text-xs font-medium px-2 py-1 rounded-full bg-rose-500/20 text-rose-400">
-                        נחסם
-                      </span>
-                    ) : (
-                      <span className="text-xs font-medium px-2 py-1 rounded-full bg-emerald-500/20 text-emerald-400">
-                        מותר
-                      </span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      <div className="overflow-x-auto">
+        <table className="w-full">
+          <thead>
+            <tr className="border-b border-slate-700/50">
+              <th className="text-right text-slate-400 text-xs font-medium px-4 py-3">#</th>
+              <th className="text-right text-slate-400 text-xs font-medium px-4 py-3">זמן</th>
+              <th className="text-right text-slate-400 text-xs font-medium px-4 py-3">סוג מידע</th>
+              <th className="text-right text-slate-400 text-xs font-medium px-4 py-3">ערך סינתטי</th>
+              <th className="text-right text-slate-400 text-xs font-medium px-4 py-3">מקור</th>
+              {hasThreatScore && (
+                <th className="text-right text-slate-400 text-xs font-medium px-4 py-3">ציון איום</th>
+              )}
+              <th className="text-right text-slate-400 text-xs font-medium px-4 py-3">סטטוס</th>
+            </tr>
+          </thead>
+          <tbody>
+            {paginated.map((log, i) => (
+              <LogRow
+                key={log.id || i}
+                log={log}
+                rowNum={(safePage - 1) * PAGE_SIZE + i + 1}
+              />
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* עימוד */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between px-6 py-3 border-t border-slate-700/50">
+          <button
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={safePage === 1}
+            className="flex items-center gap-1 text-sm text-slate-400 hover:text-white disabled:opacity-40 transition-colors"
+          >
+            <ChevronRight className="w-4 h-4" />
+            הקודם
+          </button>
+          <span className="text-sm text-slate-400">
+            עמוד {safePage} מתוך {totalPages}
+          </span>
+          <button
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            disabled={safePage === totalPages}
+            className="flex items-center gap-1 text-sm text-slate-400 hover:text-white disabled:opacity-40 transition-colors"
+          >
+            הבא
+            <ChevronLeft className="w-4 h-4" />
+          </button>
         </div>
       )}
     </div>

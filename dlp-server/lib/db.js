@@ -21,8 +21,11 @@ function seed() {
     createdAt: new Date().toISOString(),
     settings: { language: "he", timezone: "Asia/Jerusalem" },
   });
-  apiKeys.set("dev-api-key-12345", defaultOrgId);
-  apiKeys.set("test-api-key-99999", defaultOrgId);
+  // הוסף מפתחות פיתוח רק בסביבת dev/test
+  if (process.env.NODE_ENV !== "production") {
+    apiKeys.set("dev-api-key-12345", defaultOrgId);
+    apiKeys.set("test-api-key-99999", defaultOrgId);
+  }
 }
 seed();
 

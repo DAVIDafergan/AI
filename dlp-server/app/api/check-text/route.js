@@ -17,8 +17,8 @@ import { getDefaultPolicies, SEVERITY_SCORES } from "../../../lib/policies.js";
 // ── תבניות Regex לזיהוי PII ──
 const ALL_PATTERNS = [
   { id: "PHONE",          regex: /\b05\d[- ]?\d{3}[- ]?\d{4}\b/g,                                              label: "טלפון נייד",     policyId: "phone"     },
-  { id: "LANDLINE",       regex: /\b0[2-9][- ]?\d{3}[- ]?\d{4}\b/g,                                            label: "טלפון נייח",     policyId: "landline"  },
-  { id: "CREDIT_CARD",    regex: /\b(?:\d[ -]*?){13,16}\b/g,                                                    label: "כרטיס אשראי",    policyId: "credit_card"},
+  { id: "LANDLINE",       regex: /\b0(?:2|3|4|8|9)[- ]?\d{3}[- ]?\d{4}\b/g,                                     label: "טלפון נייח",     policyId: "landline"  },
+  { id: "CREDIT_CARD",    regex: /\b(?:4\d{3}|5[1-5]\d{2}|2[2-7]\d{2}|3[47]\d{2})[ -]?\d{4}[ -]?\d{4}[ -]?\d{4}\b|\b3[47]\d{2}[ -]?\d{6}[ -]?\d{5}\b/g, label: "כרטיס אשראי",    policyId: "credit_card"},
   { id: "EMAIL",          regex: /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g,                           label: "אימייל",          policyId: "email"     },
   { id: "ID",             regex: /\b\d{9}\b/g,                                                                   label: "תעודת זהות",     policyId: "israeli_id"},
   { id: "IBAN",           regex: /\bIL\d{2}[ -]?\d{4}[ -]?\d{4}[ -]?\d{4}[ -]?\d{4}[ -]?\d{2,4}\b/gi,        label: "IBAN",            policyId: "iban"      },

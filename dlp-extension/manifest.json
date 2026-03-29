@@ -1,43 +1,16 @@
 {
   "manifest_version": 3,
-  "name": "DLP Shield - Data Protection",
-  "description": "Protects sensitive data when using AI chatbots by replacing PII with synthetic data and restoring originals in responses",
+  "name": "AI DLP Firewall – חומת אש למניעת דליפת מידע",
+  "description": "מונע מעובדים להדביק מידע רגיש של החברה בצ'אטבוטים של AI.",
   "version": "1.0.0",
-  "permissions": ["activeTab", "storage"],
-  "host_permissions": [
-    "https://chat.openai.com/*",
-    "https://chatgpt.com/*",
-    "https://claude.ai/*",
-    "https://gemini.google.com/*",
-    "http://localhost:3000/*"
-  ],
+  "default_locale": "he",
   "content_scripts": [
     {
-      "matches": [
-        "https://chat.openai.com/*",
-        "https://chatgpt.com/*",
-        "https://claude.ai/*",
-        "https://gemini.google.com/*"
-      ],
+      "matches": ["<all_urls>"],
       "js": ["content.js"],
-      "css": ["styles.css"],
+      "css": ["overlay.css"],
       "run_at": "document_idle"
     }
   ],
-  "background": {
-    "service_worker": "background.js"
-  },
-  "action": {
-    "default_popup": "popup.html",
-    "default_icon": {
-      "16": "icons/icon16.png",
-      "48": "icons/icon48.png",
-      "128": "icons/icon128.png"
-    }
-  },
-  "icons": {
-    "16": "icons/icon16.png",
-    "48": "icons/icon48.png",
-    "128": "icons/icon128.png"
-  }
+  "permissions": ["storage"]
 }

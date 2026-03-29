@@ -1,0 +1,352 @@
+/* ═══════════════════════════════════════════════════════
+   AI DLP Overlay – Animated Redaction UI
+   ═══════════════════════════════════════════════════════ */
+
+/* ── Keyframe Animations ── */
+
+@keyframes dlp-fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes dlp-slideUp {
+  from { opacity: 0; transform: translateY(30px) scale(0.95); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes dlp-slideOut {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to   { opacity: 0; transform: translateY(-20px) scale(0.95); }
+}
+
+@keyframes dlp-glow-pulse {
+  0%, 100% { box-shadow: 0 0 8px rgba(255, 59, 48, 0.4); }
+  50%      { box-shadow: 0 0 25px rgba(255, 59, 48, 0.8); }
+}
+
+@keyframes dlp-shimmer {
+  0%   { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+
+@keyframes dlp-morph-glow {
+  0%   { box-shadow: 0 0 5px rgba(52, 199, 89, 0.3);  }
+  50%  { box-shadow: 0 0 30px rgba(52, 199, 89, 0.9); }
+  100% { box-shadow: 0 0 10px rgba(52, 199, 89, 0.5); }
+}
+
+@keyframes dlp-check-draw {
+  from { stroke-dashoffset: 24; }
+  to   { stroke-dashoffset: 0; }
+}
+
+@keyframes dlp-progress {
+  from { width: 0%; }
+  to   { width: 100%; }
+}
+
+/* ── Backdrop ── */
+
+.dlp-overlay-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483646;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: dlp-fadeIn 0.3s ease forwards;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.dlp-overlay-backdrop.dlp-closing {
+  animation: dlp-fadeIn 0.3s ease reverse forwards;
+}
+
+/* ── Main Panel ── */
+
+.dlp-overlay-panel {
+  position: relative;
+  z-index: 2147483647;
+  width: 580px;
+  max-width: 92vw;
+  max-height: 85vh;
+  background: linear-gradient(145deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 20px;
+  box-shadow:
+    0 25px 60px rgba(0, 0, 0, 0.5),
+    0 0 40px rgba(15, 52, 96, 0.3);
+  overflow: hidden;
+  direction: rtl;
+  font-family: 'Segoe UI', 'Arial', 'Helvetica', sans-serif;
+  animation: dlp-slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.dlp-overlay-panel.dlp-closing {
+  animation: dlp-slideOut 0.35s ease forwards;
+}
+
+/* ── Header ── */
+
+.dlp-overlay-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.dlp-overlay-shield {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #FF3B30, #FF6B6B);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  box-shadow: 0 4px 15px rgba(255, 59, 48, 0.3);
+  flex-shrink: 0;
+}
+
+.dlp-overlay-shield.dlp-safe {
+  background: linear-gradient(135deg, #34C759, #30D158);
+  box-shadow: 0 4px 15px rgba(52, 199, 89, 0.3);
+}
+
+.dlp-overlay-title-block {
+  flex: 1;
+}
+
+.dlp-overlay-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: #FFFFFF;
+  margin: 0 0 2px;
+}
+
+.dlp-overlay-subtitle {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.45);
+  margin: 0;
+}
+
+/* ── Body ── */
+
+.dlp-overlay-body {
+  padding: 20px 24px;
+  overflow-y: auto;
+  max-height: 50vh;
+}
+
+.dlp-overlay-section-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: rgba(255, 255, 255, 0.35);
+  margin: 0 0 12px;
+}
+
+/* ── Replacement Cards ── */
+
+.dlp-replacement-card {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  padding: 14px 18px;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  opacity: 0;
+  transform: translateX(20px);
+  /* animated via JS */
+}
+
+.dlp-replacement-card.dlp-card-visible {
+  opacity: 1;
+  transform: translateX(0);
+  transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Original text (before morph) */
+.dlp-original-text {
+  flex: 1;
+  display: inline-block;
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #FF6B6B;
+  background: rgba(255, 59, 48, 0.1);
+  border: 1px solid rgba(255, 59, 48, 0.2);
+  animation: dlp-glow-pulse 1.5s ease-in-out infinite;
+  transition: all 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+  text-align: center;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.dlp-original-text.dlp-morphing {
+  color: #34C759;
+  background: rgba(52, 199, 89, 0.1);
+  border-color: rgba(52, 199, 89, 0.3);
+  animation: dlp-morph-glow 0.8s ease forwards;
+}
+
+/* Arrow */
+.dlp-arrow {
+  font-size: 20px;
+  color: rgba(255, 255, 255, 0.3);
+  flex-shrink: 0;
+  transition: color 0.4s ease;
+}
+
+.dlp-arrow.dlp-arrow-done {
+  color: #34C759;
+}
+
+/* Placeholder (after morph) */
+.dlp-placeholder-text {
+  flex: 1;
+  display: inline-block;
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 700;
+  font-family: 'SF Mono', 'Consolas', 'Monaco', monospace;
+  color: rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px dashed rgba(255, 255, 255, 0.1);
+  text-align: center;
+  min-width: 0;
+  transition: all 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.dlp-placeholder-text.dlp-placeholder-active {
+  color: #34C759;
+  background: rgba(52, 199, 89, 0.1);
+  border: 1px solid rgba(52, 199, 89, 0.3);
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(52, 199, 89, 0.15) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: dlp-shimmer 1.5s ease infinite;
+}
+
+/* ── Redacted Preview ── */
+
+.dlp-preview-box {
+  margin-top: 16px;
+  padding: 16px;
+  border-radius: 12px;
+  background: rgba(52, 199, 89, 0.06);
+  border: 1px solid rgba(52, 199, 89, 0.15);
+  opacity: 0;
+  transform: translateY(10px);
+  transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.dlp-preview-box.dlp-preview-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.dlp-preview-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: #34C759;
+  margin: 0 0 8px;
+}
+
+.dlp-preview-text {
+  font-size: 14px;
+  line-height: 1.7;
+  color: rgba(255, 255, 255, 0.8);
+  direction: rtl;
+  word-break: break-word;
+  margin: 0;
+}
+
+.dlp-preview-text .dlp-highlight {
+  color: #34C759;
+  font-weight: 700;
+  font-family: 'SF Mono', 'Consolas', 'Monaco', monospace;
+  background: rgba(52, 199, 89, 0.1);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+/* ── Footer / Progress ── */
+
+.dlp-overlay-footer {
+  padding: 16px 24px 20px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.dlp-progress-bar-container {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.dlp-progress-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #34C759, #30D158);
+  width: 0%;
+  transition: width 0.4s ease;
+}
+
+.dlp-status-text {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+  white-space: nowrap;
+  min-width: 80px;
+  text-align: left;
+}
+
+/* ── Success check icon ── */
+
+.dlp-success-icon {
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+
+.dlp-success-icon.dlp-show {
+  display: flex;
+}
+
+.dlp-success-icon svg {
+  width: 22px;
+  height: 22px;
+}
+
+.dlp-success-icon svg circle {
+  fill: #34C759;
+}
+
+.dlp-success-icon svg polyline {
+  stroke: #fff;
+  stroke-width: 2.5;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 24;
+  stroke-dashoffset: 24;
+  animation: dlp-check-draw 0.4s ease forwards;
+}

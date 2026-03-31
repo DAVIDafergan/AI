@@ -1,784 +1,650 @@
 "use client";
 
-// דף ראשי של ה-Admin Dashboard – CISO Enterprise Dashboard
-import { useState, useEffect, useCallback } from "react";
-import { Shield, AlertTriangle, Star, Users, TrendingUp, Bell, Settings, Tag, BarChart3, Gauge, Brain, Activity, Network, Building2 } from "lucide-react";
-import KpiCard from "./components/KpiCard";
-import BlocksBarChart from "./components/BlocksBarChart";
-import CategoryPieChart from "./components/CategoryPieChart";
-import LiveLogsTable from "./components/LiveLogsTable";
-import PolicySettings from "./components/PolicySettings";
-import ExportButton from "./components/ExportButton";
-import TrendLineChart from "./components/TrendLineChart";
-import AlertsPanel from "./components/AlertsPanel";
-import OrganizationSelector from "./components/OrganizationSelector";
-import ThreatScoreGauge from "./components/ThreatScoreGauge";
-import CustomKeywordsManager from "./components/CustomKeywordsManager";
-import ExportPdfButton from "./components/ExportPdfButton";
-import UsersTable from "./components/UsersTable";
-import ClientOnboardingWizard from "./components/ClientOnboardingWizard";
+/**
+ * app/admin/page.js
+ *
+ * GhostLayer – Command Center Dashboard
+ * ──────────────────────────────────────
+ * Phase 1: Server Brain Connection  (AI RAG pipeline telemetry)
+ * Phase 2: Worker Shield Deployment (endpoint agent management)
+ */
 
-// מסך טעינה – שלד אנימטיבי
-function LoadingSkeleton() {
+import { useState, useEffect, useRef } from "react";
+import {
+  Shield, Brain, Cpu, Server, Download, Copy, CheckCheck,
+  Activity, Users, Zap, Lock, Eye, ChevronRight,
+  Terminal, AlertCircle, Wifi,
+} from "lucide-react";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Utility helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+function clsx(...cls) {
+  return cls.filter(Boolean).join(" ");
+}
+
+function randomBetween(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function formatNumber(n) {
+  return n.toLocaleString("en-US");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pulsing "live" dot
+// ─────────────────────────────────────────────────────────────────────────────
+
+function LiveDot({ color = "bg-green-500" }) {
   return (
-    <div className="animate-pulse space-y-6">
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {[...Array(4)].map((_, i) => (
-          <div key={i} className="bg-slate-900 border border-slate-700/50 rounded-xl h-32" />
-        ))}
-      </div>
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div className="bg-slate-900 border border-slate-700/50 rounded-xl h-80" />
-        <div className="bg-slate-900 border border-slate-700/50 rounded-xl h-80" />
-      </div>
-      <div className="bg-slate-900 border border-slate-700/50 rounded-xl h-64" />
-    </div>
+    <span className="relative flex h-2.5 w-2.5">
+      <span className={clsx("animate-ping absolute inline-flex h-full w-full rounded-full opacity-75", color)} />
+      <span className={clsx("relative inline-flex rounded-full h-2.5 w-2.5", color)} />
+    </span>
   );
 }
 
-// ── GhostLayer Status Panel ──────────────────────────────────────────────────
-function GhostLayerPanel({ health }) {
-  if (!health) return null;
-  const { triage = {} } = health;
-  const layers = [
-    { name: "L1 – סריקה מהירה (Regex)",   hits: triage.l1Hits || 0, rate: triage.l1HitRate || "0.0", color: "text-green-400", bg: "bg-green-500/10 border-green-500/30" },
-    { name: "L2 – Hash Signatures",         hits: triage.l2Hits || 0, rate: triage.l2HitRate || "0.0", color: "text-blue-400",  bg: "bg-blue-500/10 border-blue-500/30"  },
-    { name: "L3 – ניתוח קונטקסטואלי (NLP)", hits: triage.l3Hits || 0, rate: triage.l3HitRate || "0.0", color: "text-purple-400",bg: "bg-purple-500/10 border-purple-500/30"},
-  ];
-  return (
-    <div className="space-y-4">
-      <h2 className="text-lg font-bold text-white flex items-center gap-2">
-        🛡️ GhostLayer Status
-        <span className="text-sm font-normal text-slate-400">
-          ({triage.totalRuns || 0} סריקות סה״כ)
-        </span>
-      </h2>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {layers.map((layer) => (
-          <div key={layer.name} className={`rounded-xl border p-4 ${layer.bg}`}>
-            <p className="text-xs text-slate-400 mb-1">{layer.name}</p>
-            <p className={`text-2xl font-bold ${layer.color}`}>{layer.hits}</p>
-            <p className="text-xs text-slate-500 mt-1">שיעור זיהוי: {layer.rate}%</p>
-          </div>
-        ))}
-      </div>
-      <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl p-4 text-sm text-slate-300">
-        <span className="font-semibold text-white">סה״כ חסימות: </span>
-        {triage.totalUnsafe || 0} {' | '}
-        <span className="font-semibold text-white">סריקות: </span>
-        {triage.totalRuns || 0}
-      </div>
-    </div>
-  );
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// Copy-to-clipboard button
+// ─────────────────────────────────────────────────────────────────────────────
 
-// ── Knowledge Graph Manager ──────────────────────────────────────────────────
-function KnowledgeGraphManager() {
-  const [entities, setEntities] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [query, setQuery] = useState("");
-  const [results, setResults] = useState(null);
-  const [newText, setNewText] = useState("");
-  const [newCategory, setNewCategory] = useState("CUSTOM");
-  const [msg, setMsg] = useState("");
+function CopyButton({ text, label = "Copy" }) {
+  const [state, setState] = useState("idle"); // "idle" | "copied" | "error"
 
-  const fetchEntities = useCallback(async () => {
-    try {
-      const res = await fetch("/api/knowledge-graph");
-      if (!res.ok) return;
-      const data = await res.json();
-      setEntities(data.entities || []);
-    } finally {
-      setLoading(false);
+  function handleCopy() {
+    if (!navigator.clipboard) {
+      setState("error");
+      setTimeout(() => setState("idle"), 2500);
+      return;
     }
-  }, []);
-
-  useEffect(() => { fetchEntities(); }, [fetchEntities]);
-
-  async function handleAdd(e) {
-    e.preventDefault();
-    if (!newText.trim()) return;
-    const res = await fetch("/api/knowledge-graph", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: newText.trim(), category: newCategory }),
-    });
-    if (res.ok) {
-      setMsg("✅ ישות נוספה");
-      setNewText("");
-      fetchEntities();
-      setTimeout(() => setMsg(""), 2000);
-    }
-  }
-
-  async function handleDelete(id) {
-    const res = await fetch(`/api/knowledge-graph?id=${encodeURIComponent(id)}`, { method: "DELETE" });
-    if (res.ok) { fetchEntities(); }
-  }
-
-  async function handleSearch(e) {
-    e.preventDefault();
-    if (!query.trim()) return;
-    const res = await fetch(`/api/knowledge-graph?q=${encodeURIComponent(query)}`);
-    if (res.ok) {
-      const data = await res.json();
-      setResults(data.results || []);
-    }
-  }
-
-  return (
-    <div className="space-y-6">
-      <h2 className="text-lg font-bold text-white flex items-center gap-2">
-        🕸️ Knowledge Graph Manager
-        <span className="text-sm font-normal text-slate-400">({entities.length} ישויות)</span>
-      </h2>
-
-      {/* הוספת ישות */}
-      <form onSubmit={handleAdd} className="bg-slate-900/50 border border-slate-700/50 rounded-xl p-4 flex flex-col sm:flex-row gap-3">
-        <input
-          type="text"
-          placeholder="טקסט רגיש לאינדוס..."
-          value={newText}
-          onChange={(e) => setNewText(e.target.value)}
-          className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-500 outline-none focus:border-blue-500"
-          dir="rtl"
-        />
-        <select
-          value={newCategory}
-          onChange={(e) => setNewCategory(e.target.value)}
-          className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500"
-        >
-          {["CUSTOM", "PHONE", "EMAIL", "ID", "PASSWORD", "CREDIT_CARD", "ADDRESS", "PROJECT", "SECRET"].map((c) => (
-            <option key={c} value={c}>{c}</option>
-          ))}
-        </select>
-        <button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-2 rounded-lg font-medium transition-colors">
-          הוסף
-        </button>
-        {msg && <span className="self-center text-green-400 text-sm">{msg}</span>}
-      </form>
-
-      {/* חיפוש דמיון */}
-      <form onSubmit={handleSearch} className="flex gap-3">
-        <input
-          type="text"
-          placeholder="חיפוש ישויות דומות..."
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-500 outline-none focus:border-purple-500"
-          dir="rtl"
-        />
-        <button type="submit" className="bg-purple-600 hover:bg-purple-700 text-white text-sm px-4 py-2 rounded-lg font-medium transition-colors">
-          חפש
-        </button>
-        {results !== null && <button type="button" onClick={() => setResults(null)} className="text-slate-400 text-sm underline">נקה</button>}
-      </form>
-
-      {/* תוצאות חיפוש */}
-      {results !== null && (
-        <div className="bg-slate-900/50 border border-purple-500/30 rounded-xl p-4 space-y-2">
-          <p className="text-sm font-semibold text-purple-300 mb-2">תוצאות דמיון ({results.length}):</p>
-          {results.length === 0
-            ? <p className="text-slate-400 text-sm">לא נמצאו ישויות דומות</p>
-            : results.map((r) => (
-              <div key={r.id} className="flex justify-between text-sm text-slate-300">
-                <span dir="rtl">{r.text}</span>
-                <span className="text-purple-400 font-mono">{(r.similarity * 100).toFixed(1)}%</span>
-              </div>
-            ))
-          }
-        </div>
-      )}
-
-      {/* רשימת ישויות */}
-      {loading ? (
-        <div className="animate-pulse space-y-2">{[...Array(3)].map((_, i) => <div key={i} className="bg-slate-800 h-10 rounded-xl" />)}</div>
-      ) : entities.length === 0 ? (
-        <div className="text-center text-slate-400 py-8">אין ישויות רשומות עדיין</div>
-      ) : (
-        <div className="overflow-x-auto rounded-xl border border-slate-700/50">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-slate-800/60 border-b border-slate-700/50">
-                <th className="text-right px-4 py-3 font-semibold text-slate-300">טקסט</th>
-                <th className="text-center px-4 py-3 font-semibold text-slate-300">קטגוריה</th>
-                <th className="text-center px-4 py-3 font-semibold text-slate-300">נוצר</th>
-                <th className="text-center px-4 py-3 font-semibold text-slate-300">מחיקה</th>
-              </tr>
-            </thead>
-            <tbody>
-              {entities.map((e) => (
-                <tr key={e.id} className="border-b border-slate-800 hover:bg-slate-800/40">
-                  <td className="px-4 py-3 text-slate-200" dir="rtl">{e.text}</td>
-                  <td className="px-4 py-3 text-center"><span className="bg-slate-700 text-slate-200 text-xs px-2 py-1 rounded-full">{e.category}</span></td>
-                  <td className="px-4 py-3 text-center text-slate-400 text-xs">{new Date(e.addedAt).toLocaleDateString("he-IL")}</td>
-                  <td className="px-4 py-3 text-center">
-                    <button onClick={() => handleDelete(e.id)} className="text-rose-400 hover:text-rose-300 text-xs underline">מחק</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── System Health Monitor ────────────────────────────────────────────────────
-function SystemHealthMonitor({ health }) {
-  if (!health) {
-    return (
-      <div className="text-center text-slate-400 py-8">
-        <p>לא ניתן לטעון נתוני בריאות מערכת</p>
-      </div>
+    navigator.clipboard.writeText(text).then(
+      () => {
+        setState("copied");
+        setTimeout(() => setState("idle"), 2000);
+      },
+      () => {
+        setState("error");
+        setTimeout(() => setState("idle"), 2500);
+      }
     );
   }
 
-  const isHealthy = health.status === "healthy";
-  const memPercent = Math.min(100, Math.round((health.memory?.heapUsedMB || 0) / 512 * 100));
+  const styles = {
+    idle   : "bg-slate-700/60 text-slate-300 border border-slate-600/50 hover:bg-slate-600/60 hover:text-white",
+    copied : "bg-green-500/20 text-green-400 border border-green-500/40",
+    error  : "bg-rose-500/20 text-rose-400 border border-rose-500/40",
+  };
 
   return (
-    <div className="space-y-4">
-      <h2 className="text-lg font-bold text-white flex items-center gap-2">
-        💓 System Health Monitor
-        <span className={`text-sm font-semibold px-2 py-0.5 rounded-full ${isHealthy ? "bg-green-500/20 text-green-400" : "bg-red-500/20 text-red-400"}`}>
-          {isHealthy ? "תקין ✓" : "תקלה ✗"}
-        </span>
-      </h2>
+    <button
+      onClick={handleCopy}
+      className={clsx(
+        "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200",
+        styles[state]
+      )}
+    >
+      {state === "copied" ? <CheckCheck className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+      {state === "copied" ? "Copied!" : state === "error" ? "Copy failed" : label}
+    </button>
+  );
+}
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl p-4">
-          <p className="text-xs text-slate-400">API Latency</p>
-          <p className="text-2xl font-bold text-white">{health.latency?.total || 0}ms</p>
-        </div>
-        <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl p-4">
-          <p className="text-xs text-slate-400">שימוש זיכרון</p>
-          <p className="text-2xl font-bold text-white">{health.memory?.heapUsedMB || 0}MB</p>
-          <div className="w-full bg-slate-700 rounded-full h-1.5 mt-2">
-            <div className={`h-1.5 rounded-full ${memPercent > 80 ? "bg-red-500" : "bg-green-500"}`} style={{ width: `${memPercent}%` }} />
-          </div>
-        </div>
-        <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl p-4">
-          <p className="text-xs text-slate-400">Uptime</p>
-          <p className="text-2xl font-bold text-white">{Math.floor((health.uptime || 0) / 60)}m</p>
-        </div>
-        <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl p-4">
-          <p className="text-xs text-slate-400">סביבה</p>
-          <p className="text-lg font-bold text-white capitalize">{health.environment || "—"}</p>
-        </div>
+// ─────────────────────────────────────────────────────────────────────────────
+// Progress bar
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ProgressBar({ value, color = "bg-cyan-500", className = "" }) {
+  return (
+    <div className={clsx("w-full bg-slate-800 rounded-full h-2 overflow-hidden", className)}>
+      <div
+        className={clsx("h-full rounded-full transition-all duration-700 ease-in-out", color)}
+        style={{ width: `${Math.min(100, Math.max(0, value))}%` }}
+      />
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Metric card
+// ─────────────────────────────────────────────────────────────────────────────
+
+function MetricCard({ icon: Icon, label, value, sub, color = "text-cyan-400", border = "border-cyan-500/20" }) {
+  return (
+    <div className={clsx("bg-slate-900/60 border rounded-xl p-4 flex items-start gap-3", border)}>
+      <div className="p-2 rounded-lg bg-slate-800/80">
+        <Icon className={clsx("w-4 h-4", color)} />
       </div>
-
-      <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl p-4 space-y-2 text-sm">
-        <div className="flex justify-between text-slate-300">
-          <span>גרסה:</span><span className="font-mono">{health.version || "—"}</span>
-        </div>
-        <div className="flex justify-between text-slate-300">
-          <span>DB Latency:</span><span className="font-mono">{health.latency?.db || 0}ms</span>
-        </div>
-        <div className="flex justify-between text-slate-300">
-          <span>Knowledge Graph:</span><span>{health.knowledgeGraph?.totalEntities || 0} ישויות</span>
-        </div>
-        <div className="flex justify-between text-slate-300">
-          <span>חסימות כלל:</span><span>{health.store?.totalBlocked || 0}</span>
-        </div>
-        <div className="flex justify-between text-slate-300 text-xs text-slate-500">
-          <span>עדכון אחרון:</span>
-          <span>{health.timestamp ? new Date(health.timestamp).toLocaleTimeString("he-IL") : "—"}</span>
-        </div>
+      <div className="min-w-0">
+        <p className="text-xs text-slate-500 truncate">{label}</p>
+        <p className={clsx("text-lg font-bold mt-0.5", color)}>{value}</p>
+        {sub && <p className="text-xs text-slate-600 mt-0.5 truncate">{sub}</p>}
       </div>
     </div>
   );
 }
 
-// הגדרות טאבים
-const TABS = [
-  { id: "overview",      label: "סקירה כללית",   icon: BarChart3  },
-  { id: "trends",        label: "מגמות",          icon: TrendingUp },
-  { id: "alerts",        label: "התראות",         icon: Bell       },
-  { id: "users",         label: "משתמשים",        icon: Users      },
-  { id: "ghostlayer",    label: "GhostLayer",     icon: Shield     },
-  { id: "knowledge",     label: "Knowledge Graph", icon: Network    },
-  { id: "health",        label: "בריאות מערכת",   icon: Activity   },
-  { id: "clients",       label: "ניהול לקוחות",   icon: Building2  },
-  { id: "settings",      label: "הגדרות",         icon: Settings   },
-  { id: "keywords",      label: "מילים מותאמות",  icon: Tag        },
-];
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 1 – Server Brain Connection
+// ─────────────────────────────────────────────────────────────────────────────
 
-export default function AdminDashboard() {
-  const [stats, setStats] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [policies, setPolicies] = useState([]);
-  const [activeTab, setActiveTab] = useState("overview");
-  const [trendData, setTrendData] = useState(null);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState("all");
-  const [unreadAlerts, setUnreadAlerts] = useState(0);
-  const [health, setHealth] = useState(null);
+function DEMO_TENANT_KEY() {
+  // Deterministic key derived from hostname + date (demo purposes)
+  const seed = typeof window !== "undefined" ? window.location.hostname : "localhost";
+  const ts   = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  return `GL-${ts}-${seed.slice(0, 4).toUpperCase().padEnd(4, "X")}-${Math.random().toString(36).slice(2, 10).toUpperCase()}`;
+}
 
-  // מצב ניהול לקוחות
-  const [clients, setClients] = useState([]);
-  const [clientsLoading, setClientsLoading] = useState(false);
-  const [showWizard, setShowWizard] = useState(false);
-  const [deletingClientId, setDeletingClientId] = useState(null);
-  const [copiedKey, setCopiedKey] = useState(null);
+function ServerBrainPhase() {
+  const tenantKey   = useRef(null);
+  const [key, setKey] = useState("");
 
-  // טעינת רשימת לקוחות
-  const fetchClients = useCallback(async () => {
-    setClientsLoading(true);
-    try {
-      const res = await fetch("/api/clients");
-      if (!res.ok) return;
-      const data = await res.json();
-      setClients(data.clients || []);
-    } catch {
-      // שגיאת רשת – המשך
-    } finally {
-      setClientsLoading(false);
-    }
-  }, []);
-
-  // מחיקת לקוח
-  async function handleDeleteClient(orgId) {
-    if (!confirm("האם למחוק את הלקוח? פעולה זו בלתי הפיכה.")) return;
-    setDeletingClientId(orgId);
-    try {
-      const res = await fetch(`/api/clients?id=${encodeURIComponent(orgId)}`, { method: "DELETE" });
-      if (res.ok) fetchClients();
-    } finally {
-      setDeletingClientId(null);
-    }
-  }
-
-  // העתקת API Key
-  async function handleCopyKey(key) {
-    await navigator.clipboard.writeText(key);
-    setCopiedKey(key);
-    setTimeout(() => setCopiedKey(null), 2000);
-  }
-
-  // טעינת סטטיסטיקות
-  const fetchStats = useCallback(async () => {
-    try {
-      const res = await fetch("/api/stats");
-      if (!res.ok) throw new Error("שגיאה בטעינת הנתונים");
-      const data = await res.json();
-      setStats(data);
-      setPolicies(data.policySettings || []);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  // טעינת מגמות
-  const fetchTrends = useCallback(async () => {
-    try {
-      const res = await fetch("/api/trend-data");
-      if (!res.ok) return;
-      const data = await res.json();
-      setTrendData(data);
-    } catch {
-      // שגיאת רשת – המשך
-    }
-  }, []);
-
-  // טעינת מספר התראות שלא נקראו
-  const fetchAlertCount = useCallback(async () => {
-    try {
-      const res = await fetch("/api/alerts");
-      if (!res.ok) return;
-      const data = await res.json();
-      setUnreadAlerts(data.unreadCount || 0);
-    } catch {
-      // שגיאת רשת
-    }
-  }, []);
-
-  // טעינת בריאות מערכת
-  const fetchHealth = useCallback(async () => {
-    try {
-      const res = await fetch("/api/health");
-      if (!res.ok) return;
-      const data = await res.json();
-      setHealth(data);
-    } catch {
-      // שגיאת רשת
-    }
-  }, []);
-
-  // טעינה ראשונית
   useEffect(() => {
-    fetchStats();
-    fetchTrends();
-    fetchAlertCount();
-    fetchHealth();
-    fetchClients();
-  }, [fetchStats, fetchTrends, fetchAlertCount, fetchHealth, fetchClients]);
+    if (!tenantKey.current) tenantKey.current = DEMO_TENANT_KEY();
+    setKey(tenantKey.current);
+  }, []);
 
-  // Auto-refresh כל 30 שניות
+  const command = `npx ghostlayer-agent --api-key=${key} --dir=/company/docs --verbose`;
+
+  // ── Simulated real-time telemetry ─────────────────────────────────────────
+  const [connected,       setConnected]       = useState(false);
+  const [status,          setStatus]          = useState("Awaiting server agent…");
+  const [filesProcessed,  setFilesProcessed]  = useState(0);
+  const [totalFiles,      setTotalFiles]      = useState(5000);
+  const [vectorsLearned,  setVectorsLearned]  = useState(0);
+  const [brainProgress,   setBrainProgress]   = useState(0);
+  const [layerStatus,     setLayerStatus]     = useState({ l1: "idle", l2: "idle", l3: "idle" });
+
+  const STATUSES = [
+    "Scanning infrastructure…",
+    "Building Bloom filter index…",
+    "Extracting PII patterns…",
+    "Embedding document chunks…",
+    "Populating vector store…",
+    "Training semantic similarity model…",
+    "Calibrating sensitivity thresholds…",
+    "Ghost-masking engine ready",
+  ];
+
   useEffect(() => {
-    const interval = setInterval(() => {
-      fetchStats();
-      fetchAlertCount();
-      fetchHealth();
-    }, 30000);
-    return () => clearInterval(interval);
-  }, [fetchStats, fetchAlertCount, fetchHealth]);
+    // Simulate agent connecting after 1.5 s
+    const connectTimer = setTimeout(() => setConnected(true), 1500);
+    return () => clearTimeout(connectTimer);
+  }, []);
 
-  // עדכון מדיניות דרך API
-  async function handleTogglePolicy(id) {
-    const policy = policies.find((p) => p.id === id);
-    if (!policy) return;
-    const newEnabled = !policy.enabled;
-    try {
-      await fetch("/api/policies", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, enabled: newEnabled }),
+  useEffect(() => {
+    if (!connected) return;
+
+    let statusIdx = 0;
+    const iv = setInterval(() => {
+      setFilesProcessed((p) => Math.min(totalFiles, p + randomBetween(40, 120)));
+      setVectorsLearned((v) => v + randomBetween(80, 250));
+      setBrainProgress((b) => {
+        const next = Math.min(100, b + randomBetween(1, 3));
+        return next;
       });
-      setPolicies((prev) =>
-        prev.map((p) => (p.id === id ? { ...p, enabled: newEnabled } : p))
-      );
-    } catch {
-      // fallback: עדכון מקומי בלבד
-      setPolicies((prev) =>
-        prev.map((p) => (p.id === id ? { ...p, enabled: newEnabled } : p))
-      );
-    }
-  }
+      setStatus(STATUSES[Math.min(statusIdx++, STATUSES.length - 1)]);
+      setLayerStatus({
+        l1: statusIdx >= 2 ? "active" : "idle",
+        l2: statusIdx >= 4 ? "active" : "idle",
+        l3: statusIdx >= 6 ? "active" : "idle",
+      });
+    }, 800);
 
-  // קטגוריות ייחודיות מהלוגים
-  const uniqueCategories = stats?.recentLogs
-    ? ["all", ...new Set(stats.recentLogs.map((l) => l.type))]
-    : ["all"];
+    return () => clearInterval(iv);
+  }, [connected, totalFiles]);
+
+  const layerColor = (s) =>
+    s === "active" ? "bg-green-500/20 text-green-400 border-green-500/30"
+                   : "bg-slate-800/50 text-slate-600 border-slate-700/30";
 
   return (
-    <main className="min-h-screen bg-slate-950 text-white" dir="rtl">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <section className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center gap-3">
+        <div className="p-2.5 bg-cyan-500/10 rounded-xl border border-cyan-500/20">
+          <Server className="w-6 h-6 text-cyan-400" />
+        </div>
+        <div>
+          <h2 className="text-lg font-bold text-white">Phase 1 — Connect Server Brain</h2>
+          <p className="text-sm text-slate-400">Run this one command on your on-premise server to activate the AI engine</p>
+        </div>
+        <div className="ml-auto flex items-center gap-2">
+          {connected
+            ? <><LiveDot color="bg-green-500" /><span className="text-xs text-green-400 font-medium">Agent connected</span></>
+            : <><LiveDot color="bg-yellow-500" /><span className="text-xs text-yellow-400 font-medium">Waiting for agent…</span></>}
+        </div>
+      </div>
 
-        {/* כותרת עליונה */}
-        <header className="flex items-center justify-between mb-6 gap-4 flex-wrap">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-rose-500/10 rounded-xl">
-              <Shield className="w-8 h-8 text-rose-500" />
-            </div>
+      {/* Terminal command */}
+      <div className="bg-slate-950 border border-slate-700/50 rounded-xl overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-2.5 bg-slate-900/80 border-b border-slate-700/50">
+          <div className="flex items-center gap-2">
+            <Terminal className="w-3.5 h-3.5 text-slate-500" />
+            <span className="text-xs text-slate-500 font-medium">Terminal – run on your company server</span>
+          </div>
+          <CopyButton text={command} label="Copy command" />
+        </div>
+        <div className="px-5 py-4 overflow-x-auto">
+          <code className="text-sm text-green-400 font-mono whitespace-nowrap">
+            <span className="text-slate-600 select-none">$ </span>
+            {command}
+          </code>
+        </div>
+        <div className="px-5 pb-3 flex items-center gap-2">
+          <span className="text-xs text-slate-600">Your Tenant API Key:</span>
+          <code className="text-xs text-cyan-400 font-mono bg-slate-800/60 px-2 py-0.5 rounded">{key}</code>
+          <CopyButton text={key} label="Copy key" />
+        </div>
+      </div>
+
+      {/* Triage layer status pills */}
+      <div className="grid grid-cols-3 gap-3">
+        {[
+          { id: "l1", label: "L1 – Bloom Filter", sub: "<1 ms", icon: Zap },
+          { id: "l2", label: "L2 – PII Regex",    sub: "<5 ms", icon: Eye },
+          { id: "l3", label: "L3 – Semantic RAG",  sub: "async", icon: Brain },
+        ].map(({ id, label, sub, icon: Icon }) => (
+          <div key={id} className={clsx("flex items-center gap-2.5 rounded-xl border px-4 py-3 transition-all duration-500", layerColor(layerStatus[id]))}>
+            <Icon className="w-4 h-4 shrink-0" />
             <div>
-              <h1 className="text-2xl font-bold text-white leading-tight">DLP Shield</h1>
-              <p className="text-slate-400 text-sm">Enterprise CISO Dashboard</p>
+              <p className="text-xs font-semibold">{label}</p>
+              <p className="text-[10px] opacity-60">{sub}</p>
             </div>
           </div>
-          <div className="flex items-center gap-3 flex-wrap">
-            <OrganizationSelector />
-            <ExportPdfButton />
-            <ExportButton logs={stats?.recentLogs || []} />
+        ))}
+      </div>
+
+      {/* Live telemetry panel */}
+      <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl p-5 space-y-5">
+        <div className="flex items-center gap-2">
+          <Activity className="w-4 h-4 text-cyan-400" />
+          <span className="text-sm font-semibold text-white">Real-Time Brain Telemetry</span>
+          {connected && <LiveDot color="bg-cyan-500" />}
+        </div>
+
+        {/* Status line */}
+        <div className="flex items-center gap-2.5">
+          <div className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+          <span className="text-sm text-cyan-300 font-medium">{connected ? status : "Awaiting connection…"}</span>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <MetricCard
+            icon={Cpu}
+            label="Files Processed"
+            value={`${formatNumber(filesProcessed)} / ${formatNumber(totalFiles)}`}
+            sub="local documents scanned"
+            color="text-cyan-400"
+            border="border-cyan-500/20"
+          />
+          <MetricCard
+            icon={Brain}
+            label="Sensitive Vectors Learned"
+            value={formatNumber(vectorsLearned)}
+            sub="high-dimensional embeddings stored"
+            color="text-purple-400"
+            border="border-purple-500/20"
+          />
+        </div>
+
+        {/* Brain training progress */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-slate-400 font-medium">Brain Training Progress</span>
+            <span className="text-cyan-400 font-bold">{brainProgress}%</span>
           </div>
-        </header>
+          <ProgressBar value={brainProgress} color="bg-gradient-to-r from-cyan-600 to-purple-600" />
+        </div>
 
-        {/* מצב שגיאה */}
-        {error && (
-          <div className="bg-rose-900/30 border border-rose-500/50 rounded-xl p-4 mb-6 text-rose-400 text-sm">
-            {error}
+        {connected && brainProgress >= 95 && (
+          <div className="flex items-center gap-2 bg-green-500/10 border border-green-500/20 rounded-lg px-4 py-2.5">
+            <Shield className="w-4 h-4 text-green-400" />
+            <span className="text-sm text-green-300 font-medium">RAG pipeline fully operational — Ghost-Masking engine armed</span>
           </div>
-        )}
-
-        {/* ניווט טאבים */}
-        <nav className="flex gap-1 mb-6 bg-slate-900/50 border border-slate-700/50 rounded-xl p-1 overflow-x-auto">
-          {TABS.map((tab) => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`relative flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${
-                  isActive
-                    ? "bg-slate-800 text-white shadow-sm"
-                    : "text-slate-400 hover:text-white hover:bg-slate-800/50"
-                }`}
-              >
-                <Icon className="w-4 h-4" />
-                {tab.label}
-                {/* תג התראות */}
-                {tab.id === "alerts" && unreadAlerts > 0 && (
-                  <span className="absolute -top-1 -left-1 w-4 h-4 bg-rose-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
-                    {unreadAlerts > 9 ? "9+" : unreadAlerts}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </nav>
-
-        {/* תוכן טאב */}
-        {loading ? (
-          <LoadingSkeleton />
-        ) : (
-          <>
-            {/* ── טאב: סקירה כללית ── */}
-            {activeTab === "overview" && stats && (
-              <div className="space-y-6">
-                {/* KPI + ThreatScoreGauge */}
-                <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-                  <KpiCard
-                    title="סה״כ חסימות"
-                    value={stats.kpi.totalBlocked.toLocaleString("he-IL")}
-                    icon={AlertTriangle}
-                    color="rose"
-                  />
-                  <KpiCard
-                    title="ציון פרטיות"
-                    value={`${stats.kpi.privacyScore}%`}
-                    icon={Shield}
-                    color="violet"
-                  />
-                  <KpiCard
-                    title="ישות מובילה"
-                    value={stats.kpi.topEntity}
-                    icon={Star}
-                    color="amber"
-                  />
-                  <KpiCard
-                    title="משתמשים פעילים"
-                    value={stats.kpi.activeUsers}
-                    icon={Users}
-                    color="emerald"
-                  />
-                  <ThreatScoreGauge score={stats.kpi.avgThreatScore || 0} />
-                </section>
-
-                {/* גרפים */}
-                <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  <BlocksBarChart data={stats.dailyBlocks} />
-                  <CategoryPieChart data={stats.categoryBreakdown} />
-                </section>
-
-                {/* חיפוש ופילטור */}
-                <div className="flex flex-wrap gap-3 items-center">
-                  <input
-                    type="text"
-                    placeholder="חיפוש בלוגים..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="bg-slate-800 border border-slate-700 text-white text-sm rounded-xl px-4 py-2 focus:outline-none focus:ring-1 focus:ring-rose-500 min-w-[200px]"
-                    dir="rtl"
-                  />
-                  <select
-                    value={categoryFilter}
-                    onChange={(e) => setCategoryFilter(e.target.value)}
-                    className="bg-slate-800 border border-slate-700 text-white text-sm rounded-xl px-3 py-2 focus:outline-none focus:ring-1 focus:ring-rose-500"
-                  >
-                    {uniqueCategories.map((cat) => (
-                      <option key={cat} value={cat}>
-                        {cat === "all" ? "כל הקטגוריות" : cat}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* טבלת לוגים */}
-                <section>
-                  <LiveLogsTable
-                    logs={stats.recentLogs}
-                    searchQuery={searchQuery}
-                    categoryFilter={categoryFilter}
-                  />
-                </section>
-              </div>
-            )}
-
-            {/* ── טאב: מגמות ── */}
-            {activeTab === "trends" && (
-              <div className="space-y-6">
-                <TrendLineChart
-                  data={trendData?.trendData || []}
-                  summary={trendData?.summary || {}}
-                />
-                {/* כרטיסי השוואה */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  <div className="bg-slate-900 border border-slate-700/50 rounded-xl p-5">
-                    <p className="text-slate-400 text-sm mb-1">השבוע</p>
-                    <p className="text-3xl font-bold text-white">
-                      {trendData?.summary?.thisWeek ?? 0}
-                    </p>
-                    <p className="text-xs text-slate-500 mt-1">חסימות</p>
-                  </div>
-                  <div className="bg-slate-900 border border-slate-700/50 rounded-xl p-5">
-                    <p className="text-slate-400 text-sm mb-1">שבוע שעבר</p>
-                    <p className="text-3xl font-bold text-white">
-                      {trendData?.summary?.lastWeek ?? 0}
-                    </p>
-                    <p className="text-xs text-slate-500 mt-1">חסימות</p>
-                  </div>
-                  <div className="bg-slate-900 border border-slate-700/50 rounded-xl p-5">
-                    <p className="text-slate-400 text-sm mb-1">החודש</p>
-                    <p className="text-3xl font-bold text-white">
-                      {trendData?.summary?.thisMonth ?? 0}
-                    </p>
-                    <p className="text-xs text-slate-500 mt-1">חסימות</p>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* ── טאב: התראות ── */}
-            {activeTab === "alerts" && (
-              <AlertsPanel />
-            )}
-
-            {/* ── טאב: משתמשים ── */}
-            {activeTab === "users" && (
-              <UsersTable />
-            )}
-
-            {/* ── טאב: GhostLayer Status ── */}
-            {activeTab === "ghostlayer" && (
-              <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl p-6">
-                <GhostLayerPanel health={health} />
-              </div>
-            )}
-
-            {/* ── טאב: Knowledge Graph ── */}
-            {activeTab === "knowledge" && (
-              <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl p-6">
-                <KnowledgeGraphManager />
-              </div>
-            )}
-
-            {/* ── טאב: בריאות מערכת ── */}
-            {activeTab === "health" && (
-              <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl p-6">
-                <SystemHealthMonitor health={health} />
-              </div>
-            )}
-
-            {/* ── טאב: ניהול לקוחות ── */}
-            {activeTab === "clients" && (
-              <div className="space-y-6">
-                <div className="flex items-center justify-between flex-wrap gap-3">
-                  <div className="flex items-center gap-3">
-                    <Building2 className="w-5 h-5 text-blue-400" />
-                    <h2 className="text-lg font-bold text-white">ניהול לקוחות</h2>
-                    <span className="text-sm text-slate-400">({clients.length} לקוחות)</span>
-                  </div>
-                  <button
-                    onClick={() => setShowWizard(true)}
-                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-xl transition-colors"
-                  >
-                    <span>+ הוסף לקוח חדש</span>
-                  </button>
-                </div>
-
-                {clientsLoading ? (
-                  <div className="animate-pulse space-y-2">
-                    {[...Array(3)].map((_, i) => <div key={i} className="bg-slate-800 h-14 rounded-xl" />)}
-                  </div>
-                ) : clients.length === 0 ? (
-                  <div className="text-center py-16 text-slate-400">
-                    <Building2 className="w-12 h-12 mx-auto mb-4 opacity-30" />
-                    <p className="text-lg">אין לקוחות עדיין</p>
-                    <p className="text-sm mt-1">לחץ על "הוסף לקוח חדש" כדי להתחיל</p>
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto rounded-xl border border-slate-700/50">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="bg-slate-800/60 border-b border-slate-700/50">
-                          <th className="text-right px-4 py-3 font-semibold text-slate-300">שם ארגון</th>
-                          <th className="text-right px-4 py-3 font-semibold text-slate-300">מזהה</th>
-                          <th className="text-right px-4 py-3 font-semibold text-slate-300">חבילה</th>
-                          <th className="text-center px-4 py-3 font-semibold text-slate-300">חסימות</th>
-                          <th className="text-center px-4 py-3 font-semibold text-slate-300">סטטוס</th>
-                          <th className="text-center px-4 py-3 font-semibold text-slate-300">תאריך יצירה</th>
-                          <th className="text-center px-4 py-3 font-semibold text-slate-300">פעולות</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {clients.map((client) => (
-                          <tr key={client.id} className="border-b border-slate-800 hover:bg-slate-800/40 transition-colors">
-                            <td className="px-4 py-3 text-white font-medium">{client.name}</td>
-                            <td className="px-4 py-3">
-                              <div className="flex items-center gap-1">
-                                <code className="text-xs text-slate-400 font-mono">{client.id.slice(0, 12)}…</code>
-                                <button
-                                  onClick={() => handleCopyKey(client.id)}
-                                  className="p-1 text-slate-500 hover:text-slate-300 transition-colors"
-                                  title="העתק מזהה"
-                                >
-                                  {copiedKey === client.id ? "✓" : <span className="text-xs">📋</span>}
-                                </button>
-                              </div>
-                            </td>
-                            <td className="px-4 py-3">
-                              <span className={`text-xs px-2 py-1 rounded-full font-medium ${
-                                client.plan === "enterprise" ? "bg-violet-500/20 text-violet-300" :
-                                client.plan === "pro"        ? "bg-blue-500/20 text-blue-300" :
-                                                              "bg-slate-700 text-slate-300"
-                              }`}>
-                                {client.plan === "enterprise" ? "Enterprise" : client.plan === "pro" ? "מקצועי" : "בסיסי"}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3 text-center text-slate-300">{client.stats?.totalBlocked || 0}</td>
-                            <td className="px-4 py-3 text-center">
-                              <span className={`text-xs px-2 py-1 rounded-full ${
-                                client.status === "active"    ? "bg-green-500/20 text-green-400" :
-                                client.status === "trial"     ? "bg-yellow-500/20 text-yellow-400" :
-                                                               "bg-red-500/20 text-red-400"
-                              }`}>
-                                {client.status === "active" ? "פעיל" : client.status === "trial" ? "ניסיון" : "מושהה"}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3 text-center text-slate-400 text-xs">
-                              {new Date(client.createdAt).toLocaleDateString("he-IL")}
-                            </td>
-                            <td className="px-4 py-3 text-center">
-                              {client.id !== "default-org" && (
-                                <button
-                                  onClick={() => handleDeleteClient(client.id)}
-                                  disabled={deletingClientId === client.id}
-                                  className="text-rose-400 hover:text-rose-300 text-xs underline disabled:opacity-50 transition-colors"
-                                >
-                                  {deletingClientId === client.id ? "מוחק…" : "מחק"}
-                                </button>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-
-                {/* אשף הוספת לקוח */}
-                {showWizard && (
-                  <ClientOnboardingWizard
-                    onClose={() => setShowWizard(false)}
-                    onClientCreated={() => fetchClients()}
-                  />
-                )}
-              </div>
-            )}
-
-            {/* ── טאב: הגדרות ── */}
-            {activeTab === "settings" && (
-              <div className="space-y-6">
-                <OrganizationSelector />
-                <PolicySettings
-                  policies={policies}
-                  onToggle={handleTogglePolicy}
-                />
-              </div>
-            )}
-
-            {/* ── טאב: מילים מותאמות ── */}
-            {activeTab === "keywords" && (
-              <CustomKeywordsManager />
-            )}
-          </>
         )}
       </div>
-    </main>
+    </section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 2 – Worker Shield Deployment
+// ─────────────────────────────────────────────────────────────────────────────
+
+const DEMO_FLEET = [
+  { id: 1, name: "David's MacBook Pro",     os: "macOS",   status: "active",  lastSeen: "now",     blocked: 14 },
+  { id: 2, name: "Marketing-WIN-PC-07",     os: "Windows", status: "active",  lastSeen: "1m ago",  blocked: 3  },
+  { id: 3, name: "Sarah's MacBook Air",     os: "macOS",   status: "active",  lastSeen: "2m ago",  blocked: 7  },
+  { id: 4, name: "Dev-LINUX-BUILD-01",      os: "Linux",   status: "active",  lastSeen: "now",     blocked: 1  },
+  { id: 5, name: "Finance-WIN-PC-12",       os: "Windows", status: "warning", lastSeen: "8m ago",  blocked: 22 },
+  { id: 6, name: "HR-WIN-LAPTOP-03",        os: "Windows", status: "active",  lastSeen: "3m ago",  blocked: 5  },
+  { id: 7, name: "CTO-MacBook-Pro-M3",      os: "macOS",   status: "active",  lastSeen: "now",     blocked: 0  },
+  { id: 8, name: "Design-WIN-PC-09",        os: "Windows", status: "offline", lastSeen: "2h ago",  blocked: 0  },
+];
+
+const OS_ICONS = {
+  macOS   : "🍎",
+  Windows : "🪟",
+  Linux   : "🐧",
+};
+
+const STATUS_STYLE = {
+  active  : "bg-green-500/15 text-green-400  border-green-500/25",
+  warning : "bg-yellow-500/15 text-yellow-400 border-yellow-500/25",
+  offline : "bg-slate-700/40 text-slate-500   border-slate-600/30",
+};
+
+function WorkerShieldPhase() {
+  const [activeTab, setActiveTab] = useState("downloads");
+  const [fleet, setFleet]         = useState(DEMO_FLEET);
+
+  // Simulate live fleet updates
+  useEffect(() => {
+    const iv = setInterval(() => {
+      setFleet((prev) =>
+        prev.map((e) =>
+          e.status === "active" && Math.random() > 0.85
+            ? { ...e, blocked: e.blocked + 1, lastSeen: "now" }
+            : e
+        )
+      );
+    }, 3000);
+    return () => clearInterval(iv);
+  }, []);
+
+  const deployScript =
+`# GhostLayer – Mass Deployment Script (Intune / Jamf / GPO)
+# ──────────────────────────────────────────────────────────
+# Windows (Intune / PowerShell):
+$GL_KEY = "GL-TENANT-KEY-HERE"
+Invoke-WebRequest -Uri "https://releases.ghostlayer.ai/shield/latest/win/GhostLayerShield.exe" -OutFile "$env:TEMP\\GhostLayerShield.exe"
+Start-Process "$env:TEMP\\GhostLayerShield.exe" -ArgumentList "/S /KEY=$GL_KEY" -Wait
+
+# macOS (Jamf / shell):
+GL_KEY="GL-TENANT-KEY-HERE"
+curl -fsSL "https://releases.ghostlayer.ai/shield/latest/mac/GhostLayerShield.dmg" -o /tmp/GhostLayerShield.dmg
+hdiutil attach /tmp/GhostLayerShield.dmg -nobrowse -quiet
+sudo installer -pkg /Volumes/GhostLayerShield/GhostLayerShield.pkg -target / -key "$GL_KEY"
+hdiutil detach /Volumes/GhostLayerShield -quiet`;
+
+  const downloads = [
+    { label: "Windows Shield",  ext: ".exe", icon: "🪟", color: "bg-blue-500/10  border-blue-500/25  text-blue-400",   size: "18.4 MB" },
+    { label: "macOS Shield",    ext: ".dmg", icon: "🍎", color: "bg-slate-700/30 border-slate-600/40 text-slate-300",  size: "21.1 MB" },
+    { label: "Chrome Extension",ext: ".crx", icon: "🌐", color: "bg-yellow-500/10 border-yellow-500/25 text-yellow-400", size: "3.2 MB"  },
+  ];
+
+  const tabs = [
+    { id: "downloads",    label: "Download Shields" },
+    { id: "mass-deploy",  label: "Mass Deploy Script" },
+    { id: "fleet",        label: `Fleet Tracking (${fleet.filter(f => f.status === "active").length} active)` },
+  ];
+
+  return (
+    <section className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center gap-3">
+        <div className="p-2.5 bg-purple-500/10 rounded-xl border border-purple-500/20">
+          <Users className="w-6 h-6 text-purple-400" />
+        </div>
+        <div>
+          <h2 className="text-lg font-bold text-white">Phase 2 — Deploy Worker Shields</h2>
+          <p className="text-sm text-slate-400">Protect every employee endpoint in minutes — no tech knowledge required</p>
+        </div>
+        <div className="ml-auto flex items-center gap-2">
+          <LiveDot color="bg-purple-500" />
+          <span className="text-xs text-purple-400 font-medium">{fleet.filter(f => f.status === "active").length} shields active</span>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex gap-1 bg-slate-900/60 rounded-xl p-1 border border-slate-700/40">
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setActiveTab(t.id)}
+            className={clsx(
+              "flex-1 py-2 px-3 rounded-lg text-xs font-medium transition-all duration-200",
+              activeTab === t.id
+                ? "bg-purple-600/25 text-purple-300 border border-purple-500/30"
+                : "text-slate-500 hover:text-slate-300 hover:bg-slate-800/50"
+            )}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Downloads tab */}
+      {activeTab === "downloads" && (
+        <div className="space-y-4">
+          <p className="text-sm text-slate-400">
+            Click to download the Shield installer for each platform. Run the installer on the employee's machine — it auto-registers with your tenant key.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {downloads.map(({ label, ext, icon, color, size }) => (
+              <button
+                key={ext}
+                className={clsx(
+                  "flex flex-col items-center gap-3 rounded-xl border px-4 py-6 transition-all duration-200 hover:scale-[1.02] hover:shadow-lg hover:shadow-black/30 active:scale-100",
+                  color
+                )}
+              >
+                <span className="text-4xl">{icon}</span>
+                <div className="text-center">
+                  <p className="font-semibold text-sm">{label}</p>
+                  <p className="text-[11px] opacity-60 mt-0.5">{size} · {ext}</p>
+                </div>
+                <div className="flex items-center gap-1.5 text-xs font-medium mt-1">
+                  <Download className="w-3.5 h-3.5" />
+                  Download
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Mass deploy tab */}
+      {activeTab === "mass-deploy" && (
+        <div className="space-y-3">
+          <p className="text-sm text-slate-400">
+            Copy this script and paste it into <strong className="text-white">Intune (Windows)</strong> or{" "}
+            <strong className="text-white">Jamf (macOS)</strong> to silently deploy shields across your entire fleet.
+          </p>
+          <div className="bg-slate-950 border border-slate-700/50 rounded-xl overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-2.5 bg-slate-900/80 border-b border-slate-700/50">
+              <div className="flex items-center gap-2">
+                <Terminal className="w-3.5 h-3.5 text-slate-500" />
+                <span className="text-xs text-slate-500 font-medium">PowerShell / Bash – paste into Intune or Jamf</span>
+              </div>
+              <CopyButton text={deployScript} label="Copy script" />
+            </div>
+            <pre className="px-5 py-4 text-xs text-green-300 font-mono overflow-x-auto leading-relaxed whitespace-pre">
+              {deployScript}
+            </pre>
+          </div>
+        </div>
+      )}
+
+      {/* Fleet tracking tab */}
+      {activeTab === "fleet" && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <Activity className="w-4 h-4 text-purple-400" />
+            <span className="text-sm font-semibold text-white">Protected Endpoints</span>
+            <LiveDot color="bg-purple-500" />
+            <span className="text-xs text-slate-500">Live</span>
+          </div>
+          <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-700/50 text-xs text-slate-500 uppercase tracking-wider">
+                  <th className="text-left px-4 py-3">Endpoint</th>
+                  <th className="text-left px-4 py-3 hidden sm:table-cell">OS</th>
+                  <th className="text-left px-4 py-3">Status</th>
+                  <th className="text-right px-4 py-3 hidden md:table-cell">Blocks</th>
+                  <th className="text-right px-4 py-3 hidden lg:table-cell">Last Seen</th>
+                </tr>
+              </thead>
+              <tbody>
+                {fleet.map((e, i) => (
+                  <tr
+                    key={e.id}
+                    className={clsx(
+                      "border-b border-slate-800/60 transition-colors",
+                      i % 2 === 0 ? "bg-slate-900/20" : "bg-transparent",
+                      e.status === "warning" && "bg-yellow-500/5"
+                    )}
+                  >
+                    <td className="px-4 py-3 font-medium text-white flex items-center gap-2">
+                      <span>{OS_ICONS[e.os] || "💻"}</span>
+                      <span className="truncate max-w-[160px]">{e.name}</span>
+                    </td>
+                    <td className="px-4 py-3 text-slate-400 hidden sm:table-cell">{e.os}</td>
+                    <td className="px-4 py-3">
+                      <span className={clsx("text-xs font-medium px-2 py-0.5 rounded-full border", STATUS_STYLE[e.status])}>
+                        {e.status === "active" ? "🛡 Active" : e.status === "warning" ? "⚠ Warning" : "○ Offline"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-right text-slate-400 hidden md:table-cell">
+                      {e.blocked > 0
+                        ? <span className="text-rose-400 font-semibold">{e.blocked}</span>
+                        : <span className="text-slate-600">—</span>}
+                    </td>
+                    <td className="px-4 py-3 text-right text-slate-500 text-xs hidden lg:table-cell">{e.lastSeen}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Top-level KPI strip
+// ─────────────────────────────────────────────────────────────────────────────
+
+function KpiStrip() {
+  const [kpis, setKpis] = useState({ blocked: 1842, threats: 94, endpoints: 8, vectors: 48920 });
+
+  useEffect(() => {
+    const iv = setInterval(() => {
+      setKpis((k) => ({
+        ...k,
+        blocked : k.blocked  + randomBetween(0, 2),
+        threats : k.threats  + randomBetween(0, 1),
+        vectors : k.vectors  + randomBetween(50, 200),
+      }));
+    }, 2500);
+    return () => clearInterval(iv);
+  }, []);
+
+  const items = [
+    { icon: Lock,     label: "Total Blocks",           value: formatNumber(kpis.blocked),  color: "text-rose-400",   border: "border-rose-500/20" },
+    { icon: AlertCircle, label: "Threats Intercepted", value: formatNumber(kpis.threats),  color: "text-orange-400", border: "border-orange-500/20" },
+    { icon: Wifi,     label: "Protected Endpoints",    value: kpis.endpoints,              color: "text-purple-400", border: "border-purple-500/20" },
+    { icon: Brain,    label: "Vectors in Brain",       value: formatNumber(kpis.vectors),  color: "text-cyan-400",   border: "border-cyan-500/20" },
+  ];
+
+  return (
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      {items.map(({ icon: Icon, label, value, color, border }) => (
+        <MetricCard key={label} icon={Icon} label={label} value={value} color={color} border={border} />
+      ))}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Main dashboard
+// ─────────────────────────────────────────────────────────────────────────────
+
+export default function CommandCenterDashboard() {
+  const [time, setTime] = useState("");
+
+  useEffect(() => {
+    function tick() {
+      setTime(new Date().toLocaleTimeString("en-US", { hour12: false }));
+    }
+    tick();
+    const iv = setInterval(tick, 1000);
+    return () => clearInterval(iv);
+  }, []);
+
+  return (
+    <div className="min-h-screen bg-[#030712] text-white" dir="ltr">
+      {/* Top bar */}
+      <header className="sticky top-0 z-40 flex items-center justify-between px-6 py-3 bg-[#030712]/90 backdrop-blur border-b border-slate-800/60">
+        <div className="flex items-center gap-3">
+          <div className="p-1.5 bg-cyan-500/10 rounded-lg border border-cyan-500/20">
+            <Shield className="w-5 h-5 text-cyan-400" />
+          </div>
+          <div className="flex items-baseline gap-2">
+            <span className="font-bold text-base tracking-tight text-white">GhostLayer</span>
+            <span className="text-xs text-slate-500 font-medium tracking-widest uppercase">Command Center</span>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-1.5">
+            <LiveDot color="bg-green-500" />
+            <span className="text-xs text-green-400 font-medium hidden sm:inline">System Operational</span>
+          </div>
+          <code className="text-xs text-slate-500 font-mono hidden md:block">{time}</code>
+        </div>
+      </header>
+
+      {/* Page content */}
+      <main className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-10">
+
+        {/* Hero headline */}
+        <div className="text-center space-y-2 pt-2">
+          <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight">
+            <span className="text-white">Deploy</span>{" "}
+            <span className="bg-gradient-to-r from-cyan-400 to-purple-500 bg-clip-text text-transparent">GhostLayer</span>{" "}
+            <span className="text-white">in Minutes</span>
+          </h1>
+          <p className="text-slate-400 text-base max-w-xl mx-auto">
+            Two steps. Zero-trust AI data-loss prevention — no vendor access, no data leaves your network.
+          </p>
+        </div>
+
+        {/* Live KPI strip */}
+        <KpiStrip />
+
+        {/* Divider with step labels */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          {[
+            { num: "01", label: "Connect Server Brain",    color: "border-cyan-500/30   bg-cyan-500/5" },
+            { num: "02", label: "Deploy Worker Shields",   color: "border-purple-500/30 bg-purple-500/5" },
+          ].map(({ num, label, color }) => (
+            <div key={num} className={clsx("flex items-center gap-3 rounded-xl border px-5 py-3", color)}>
+              <span className="text-2xl font-black text-white/20">{num}</span>
+              <ChevronRight className="w-4 h-4 text-slate-600" />
+              <span className="font-semibold text-white text-sm">{label}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Phase 1 */}
+        <div className="bg-slate-900/40 border border-slate-700/40 rounded-2xl p-6 lg:p-8 shadow-xl shadow-black/20">
+          <ServerBrainPhase />
+        </div>
+
+        {/* Phase 2 */}
+        <div className="bg-slate-900/40 border border-slate-700/40 rounded-2xl p-6 lg:p-8 shadow-xl shadow-black/20">
+          <WorkerShieldPhase />
+        </div>
+
+        {/* Footer note */}
+        <p className="text-center text-xs text-slate-700 pb-6">
+          GhostLayer processes all sensitive data locally. No plaintext ever reaches external LLMs or third-party servers.
+        </p>
+      </main>
+    </div>
   );
 }

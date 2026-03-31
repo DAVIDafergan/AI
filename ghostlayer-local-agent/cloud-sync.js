@@ -1,9 +1,9 @@
 /**
- * cloud-sync.js – Sends a heartbeat to the GhostLayer SaaS dashboard.
+ * cloud-sync.js – Sends an AI-powered scan report to the GhostLayer SaaS dashboard.
  *
  * CRITICAL: Only metadata / counts are transmitted.
- *           The actual sensitive words, emails, or any file content
- *           NEVER leave this machine.
+ *           The actual sensitive content, entity names, file paths, or any
+ *           file content NEVER leave this machine.
  */
 
 // Use the built-in fetch available in Node ≥ 18.
@@ -19,20 +19,37 @@ const DEFAULT_SAAS_URL = "https://ghostlayer.up.railway.app";
  *   saasUrl?: string,
  *   filesScanned: number,
  *   sensitiveTermsFound: number,
+ *   highlySensitiveFiles?: number,
+ *   sensitiveFiles?: number,
+ *   averageSensitivityScore?: number,
+ *   entitiesFound?: { persons: number, orgs: number },
  * }} options
- * @returns {Promise<{ ok: boolean, body: object }>}
+ * @returns {Promise<{ ok: boolean, status: number, body: object }>}
  */
-export async function sendHeartbeat({ apiKey, saasUrl, filesScanned, sensitiveTermsFound }) {
+export async function sendHeartbeat({
+  apiKey,
+  saasUrl,
+  filesScanned,
+  sensitiveTermsFound,
+  highlySensitiveFiles    = 0,
+  sensitiveFiles          = 0,
+  averageSensitivityScore = 0,
+  entitiesFound           = { persons: 0, orgs: 0 },
+}) {
   const baseUrl = (saasUrl || DEFAULT_SAAS_URL).replace(/\/$/, "");
   const url = `${baseUrl}/api/agents/heartbeat`;
 
   const payload = {
-    status: "Active",
+    status:                  "Active",
     filesScanned,
     sensitiveTermsFound,
+    highlySensitiveFiles,
+    sensitiveFiles,
+    averageSensitivityScore,
+    entitiesFound,
     // The agent version – useful for the dashboard to detect outdated agents.
-    agentVersion: "1.0.0",
-    timestamp: new Date().toISOString(),
+    agentVersion: "2.0.0",
+    timestamp:    new Date().toISOString(),
   };
 
   const response = await fetch(url, {

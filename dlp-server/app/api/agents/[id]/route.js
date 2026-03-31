@@ -5,7 +5,7 @@ import { connectMongo, Agent } from "../../../../lib/db.js";
 // GET /api/agents/[id]
 export async function GET(request, { params }) {
   try {
-    requireSuperAdmin(request);
+    await requireSuperAdmin(request);
     await connectMongo();
     const agent = await Agent.findById(params.id).lean();
     if (!agent) return NextResponse.json({ error: "Agent not found" }, { status: 404 });
@@ -18,7 +18,7 @@ export async function GET(request, { params }) {
 // PUT /api/agents/[id]
 export async function PUT(request, { params }) {
   try {
-    requireSuperAdmin(request);
+    await requireSuperAdmin(request);
     await connectMongo();
     const body = await request.json();
     const agent = await Agent.findByIdAndUpdate(params.id, body, { new: true, runValidators: true }).lean();
@@ -32,7 +32,7 @@ export async function PUT(request, { params }) {
 // DELETE /api/agents/[id]
 export async function DELETE(request, { params }) {
   try {
-    requireSuperAdmin(request);
+    await requireSuperAdmin(request);
     await connectMongo();
     const agent = await Agent.findByIdAndDelete(params.id).lean();
     if (!agent) return NextResponse.json({ error: "Agent not found" }, { status: 404 });

@@ -13,7 +13,7 @@ function slugify(name) {
 // GET /api/tenants – list all tenants
 export async function GET(request) {
   try {
-    requireSuperAdmin(request);
+    await requireSuperAdmin(request);
     await connectMongo();
     const tenants = await Tenant.find({}).sort({ createdAt: -1 }).lean();
     return NextResponse.json({ tenants });
@@ -25,7 +25,7 @@ export async function GET(request) {
 // POST /api/tenants – create tenant
 export async function POST(request) {
   try {
-    requireSuperAdmin(request);
+    await requireSuperAdmin(request);
     await connectMongo();
     const body = await request.json();
     const { name, contactEmail, contactName, plan, domain } = body;

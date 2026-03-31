@@ -6,7 +6,7 @@ import { randomUUID } from "crypto";
 // POST /api/provision – create agent + return deployment config
 export async function POST(request) {
   try {
-    requireSuperAdmin(request);
+    await requireSuperAdmin(request);
     await connectMongo();
     const body = await request.json();
     const { tenantId, name, environment = "production" } = body;

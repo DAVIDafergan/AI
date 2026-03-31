@@ -1,209 +1,198 @@
-// ── גרף ידע – Knowledge Graph Engine ──
-// TF-IDF based embedding עם cosine similarity לעברית ולאנגלית
-// SensitiveEntity: text, embedding, category, organizationId
+// ── Knowledge Graph – מנוע דמיון וקטורי על בסיס TF-IDF ──
+// ללא תלויות חיצוניות (pure JS)
+// תומך בטקסט עברי ואנגלי
 
-// ── TF-IDF Utilities ──
+import { randomUUID } from "crypto";
 
-// Tokenize text (Hebrew + English)
+// ─────────────────────────────────────────────
+// TF-IDF Embedding
+// ─────────────────────────────────────────────
+
+/**
+ * Tokenize text into lowercase tokens (Hebrew + ASCII words).
+ */
 function tokenize(text) {
   return text
     .toLowerCase()
-    .replace(/[^\u05D0-\u05EA\w\s]/g, " ")
-    .split(/\s+/)
-    .filter((t) => t.length > 1);
+    .split(/[\s,.–:;!?\"'()\[\]{}|\/\\-]+/)
+    .filter((t) => t.length >= 2);
 }
 
-// חישוב TF (Term Frequency)
+/**
+ * Compute term frequency map for a list of tokens.
+ */
 function computeTF(tokens) {
-  const tf = new Map();
-  for (const token of tokens) {
-    tf.set(token, (tf.get(token) || 0) + 1);
+  const tf = {};
+  const n = tokens.length || 1;
+  for (const t of tokens) {
+    tf[t] = (tf[t] || 0) + 1;
   }
-  const total = tokens.length || 1;
-  for (const [key, count] of tf) {
-    tf.set(key, count / total);
+  for (const t in tf) {
+    tf[t] = tf[t] / n;
   }
   return tf;
 }
 
-// חישוב IDF (Inverse Document Frequency) לפי מאגר מסמכים
-function computeIDF(documents) {
-  const idf = new Map();
-  const N = documents.length || 1;
-  const termDocCount = new Map();
+// In-memory document corpus (all stored entities)
+const corpus = new Map(); // id → { id, text, tokens, tf, embedding, category, organizationId, addedAt }
 
-  for (const doc of documents) {
-    const tokens = new Set(tokenize(doc.text));
-    for (const token of tokens) {
-      termDocCount.set(token, (termDocCount.get(token) || 0) + 1);
-    }
+/**
+ * Compute IDF (inverse document frequency) for a given term
+ * across the entire corpus.
+ */
+function computeIDF(term) {
+  let docCount = 0;
+  for (const doc of corpus.values()) {
+    if (doc.tf[term] !== undefined) docCount++;
   }
-
-  for (const [term, count] of termDocCount) {
-    idf.set(term, Math.log((N + 1) / (count + 1)) + 1);
-  }
-
-  return idf;
+  const N = corpus.size || 1;
+  return Math.log((N + 1) / (docCount + 1)) + 1; // smoothed
 }
 
-// חישוב וקטור TF-IDF
-function computeTFIDF(text, idf) {
-  const tokens = tokenize(text);
+/**
+ * Build a TF-IDF vector (sparse object) for a token list.
+ * Uses current corpus IDF values.
+ */
+function buildTFIDFVector(tokens) {
   const tf = computeTF(tokens);
-  const tfidf = new Map();
-
-  for (const [term, tfVal] of tf) {
-    // ערך ברירת מחדל log(2) ≈ 0.693 מייצג IDF של מסמך אחד מתוך שניים – ניטרלי ולא מעניש
-    const idfVal = idf.get(term) || Math.log(2);
-    tfidf.set(term, tfVal * idfVal);
+  const vector = {};
+  for (const term in tf) {
+    vector[term] = tf[term] * computeIDF(term);
   }
-
-  return tfidf;
+  return vector;
 }
 
-// נרמול וקטור
-function normalizeVector(vec) {
-  let magnitude = 0;
-  for (const val of vec.values()) {
-    magnitude += val * val;
-  }
-  magnitude = Math.sqrt(magnitude) || 1;
-  const normalized = new Map();
-  for (const [key, val] of vec) {
-    normalized.set(key, val / magnitude);
-  }
-  return normalized;
-}
-
-// Cosine Similarity בין שני וקטורים (Map)
+/**
+ * Cosine similarity between two sparse TF-IDF vectors.
+ */
 function cosineSimilarity(vecA, vecB) {
   let dot = 0;
-  for (const [term, valA] of vecA) {
-    if (vecB.has(term)) {
-      dot += valA * vecB.get(term);
+  let magA = 0;
+  let magB = 0;
+
+  for (const term in vecA) {
+    magA += vecA[term] * vecA[term];
+    if (vecB[term]) {
+      dot += vecA[term] * vecB[term];
     }
   }
-  return dot; // וקטורים מנורמלים → dot = cosine
-}
-
-// ── In-Memory Entity Store ──
-// במערכת production: להחליף ב-MongoDB SensitiveEntity collection
-const entityStore = new Map(); // entityId → entity object
-let entityCounter = 0;
-let cachedIDF = new Map();
-let idfDirty = true;
-
-function rebuildIDF() {
-  const docs = [...entityStore.values()];
-  if (docs.length === 0) {
-    cachedIDF = new Map();
-    return;
+  for (const term in vecB) {
+    magB += vecB[term] * vecB[term];
   }
-  cachedIDF = computeIDF(docs);
-  idfDirty = false;
+
+  const denom = Math.sqrt(magA) * Math.sqrt(magB);
+  if (denom === 0) return 0;
+  return dot / denom;
 }
 
-// ── CRUD Operations ──
+// ─────────────────────────────────────────────
+// CRUD operations
+// ─────────────────────────────────────────────
 
-// הוספת ישות רגישה חדשה
-export function addEntity(text, category, organizationId) {
-  const id = `entity-${++entityCounter}-${Date.now()}`;
+/**
+ * Add a sensitive entity to the knowledge graph.
+ * @param {{ text: string, category: string, organizationId?: string }} params
+ * @returns {{ id: string, text: string, category: string, addedAt: string }}
+ */
+export function addEntity({ text, category, organizationId = "default-org" }) {
+  if (!text || !category) throw new Error("text and category are required");
+
+  const id = randomUUID();
+  const tokens = tokenize(text);
+  const tf = computeTF(tokens);
+
   const entity = {
     id,
     text,
-    category: category || "UNKNOWN",
-    organizationId: organizationId || "default-org",
-    createdAt: new Date().toISOString(),
-    embedding: null, // ייחושב בזמן חיפוש
+    tokens,
+    tf,
+    category,
+    organizationId,
+    addedAt: new Date().toISOString(),
   };
-  entityStore.set(id, entity);
-  idfDirty = true;
-  return entity;
+
+  corpus.set(id, entity);
+
+  // Rebuild embeddings for all docs after adding (because IDF changes)
+  _rebuildEmbeddings();
+
+  return { id, text, category, organizationId, addedAt: entity.addedAt };
 }
 
-// שליפת ישות לפי ID
-export function getEntity(entityId) {
-  return entityStore.get(entityId) || null;
-}
-
-// מחיקת ישות
-export function deleteEntity(entityId) {
-  const existed = entityStore.has(entityId);
-  if (existed) {
-    entityStore.delete(entityId);
-    idfDirty = true;
+/** Rebuild TF-IDF embeddings for the entire corpus (needed after add/delete). */
+function _rebuildEmbeddings() {
+  for (const [id, doc] of corpus.entries()) {
+    corpus.set(id, { ...doc, embedding: buildTFIDFVector(doc.tokens) });
   }
+}
+
+/**
+ * Remove an entity by ID.
+ * @param {string} id
+ * @returns {boolean} true if removed
+ */
+export function removeEntity(id) {
+  const existed = corpus.has(id);
+  corpus.delete(id);
+  if (existed) _rebuildEmbeddings();
   return existed;
 }
 
-// שליפת כל הישויות של ארגון
-export function getEntitiesByOrg(organizationId, limit = 100) {
+/**
+ * Get all entities, optionally filtered by organizationId.
+ */
+export function getAllEntities(organizationId = null) {
+  const docs = [...corpus.values()];
+  if (organizationId) return docs.filter((d) => d.organizationId === organizationId);
+  return docs.map(({ id, text, category, organizationId: oid, addedAt }) => ({
+    id, text, category, organizationId: oid, addedAt,
+  }));
+}
+
+/**
+ * Search for similar entities using cosine similarity.
+ * @param {string} queryText - The query text
+ * @param {{ topK?: number, threshold?: number, organizationId?: string }} options
+ * @returns {Array<{ id, text, category, similarity }>}
+ */
+export function searchSimilar(queryText, { topK = 5, threshold = 0.1, organizationId = null } = {}) {
+  if (corpus.size === 0) return [];
+
+  const queryTokens = tokenize(queryText);
+  const queryVec = buildTFIDFVector(queryTokens);
+
   const results = [];
-  for (const entity of entityStore.values()) {
-    if (entity.organizationId === organizationId) {
-      results.push(entity);
-      if (results.length >= limit) break;
-    }
-  }
-  return results;
-}
-
-// ── חיפוש בגרף ידע (Cosine Similarity Search) ──
-export function searchSimilar(queryText, organizationId, topK = 5, threshold = 0.3) {
-  if (idfDirty) rebuildIDF();
-
-  const orgEntities = [...entityStore.values()].filter(
-    (e) => e.organizationId === organizationId || e.organizationId === "global"
-  );
-
-  if (orgEntities.length === 0) {
-    return [];
-  }
-
-  // חישוב וקטור השאילתה
-  const queryVec = normalizeVector(computeTFIDF(queryText, cachedIDF));
-
-  const scored = [];
-  for (const entity of orgEntities) {
-    const entityVec = normalizeVector(computeTFIDF(entity.text, cachedIDF));
-    const score = cosineSimilarity(queryVec, entityVec);
-    if (score >= threshold) {
-      scored.push({ ...entity, similarityScore: score });
+  for (const doc of corpus.values()) {
+    if (organizationId && doc.organizationId !== organizationId) continue;
+    if (!doc.embedding) continue;
+    const sim = cosineSimilarity(queryVec, doc.embedding);
+    if (sim >= threshold) {
+      results.push({
+        id: doc.id,
+        text: doc.text,
+        category: doc.category,
+        organizationId: doc.organizationId,
+        addedAt: doc.addedAt,
+        similarity: parseFloat(sim.toFixed(4)),
+      });
     }
   }
 
-  // מיון לפי ציון דמיון (גבוה ראשון)
-  scored.sort((a, b) => b.similarityScore - a.similarityScore);
-
-  return scored.slice(0, topK);
+  return results
+    .sort((a, b) => b.similarity - a.similarity)
+    .slice(0, topK);
 }
 
-// ── בדיקה האם טקסט דומה לישות רגישה קיימת ──
-export function isTextSensitive(text, organizationId, threshold = 0.5) {
-  const results = searchSimilar(text, organizationId, 1, threshold);
-  if (results.length === 0) return { sensitive: false };
-  return {
-    sensitive: true,
-    matchedEntity: results[0],
-    score: results[0].similarityScore,
-  };
-}
-
-// ── סטטיסטיקות ──
-export function getKnowledgeGraphStats(organizationId) {
-  const allEntities = [...entityStore.values()];
-  const orgEntities = organizationId
-    ? allEntities.filter((e) => e.organizationId === organizationId)
-    : allEntities;
-
-  const categoryBreakdown = {};
-  for (const entity of orgEntities) {
-    categoryBreakdown[entity.category] = (categoryBreakdown[entity.category] || 0) + 1;
+/**
+ * Get knowledge graph statistics.
+ */
+export function getGraphStats() {
+  const categoryCount = {};
+  for (const doc of corpus.values()) {
+    categoryCount[doc.category] = (categoryCount[doc.category] || 0) + 1;
   }
-
   return {
-    total: orgEntities.length,
-    categoryBreakdown,
-    globalEntities: allEntities.filter((e) => e.organizationId === "global").length,
+    totalEntities: corpus.size,
+    categoryBreakdown: categoryCount,
   };
 }

@@ -2,7 +2,7 @@
 
 // דף ראשי של ה-Admin Dashboard – CISO Enterprise Dashboard
 import { useState, useEffect, useCallback } from "react";
-import { Shield, AlertTriangle, Star, Users, TrendingUp, Bell, Settings, Tag, BarChart3, Gauge } from "lucide-react";
+import { Shield, AlertTriangle, Star, Users, TrendingUp, Bell, Settings, Tag, BarChart3, Gauge, Brain, Activity, Network } from "lucide-react";
 import KpiCard from "./components/KpiCard";
 import BlocksBarChart from "./components/BlocksBarChart";
 import CategoryPieChart from "./components/CategoryPieChart";
@@ -35,15 +35,272 @@ function LoadingSkeleton() {
   );
 }
 
+// ── GhostLayer Status Panel ──────────────────────────────────────────────────
+function GhostLayerPanel({ health }) {
+  if (!health) return null;
+  const { triage = {} } = health;
+  const layers = [
+    { name: "L1 – סריקה מהירה (Regex)",   hits: triage.l1Hits || 0, rate: triage.l1HitRate || "0.0", color: "text-green-400", bg: "bg-green-500/10 border-green-500/30" },
+    { name: "L2 – Hash Signatures",         hits: triage.l2Hits || 0, rate: triage.l2HitRate || "0.0", color: "text-blue-400",  bg: "bg-blue-500/10 border-blue-500/30"  },
+    { name: "L3 – ניתוח קונטקסטואלי (NLP)", hits: triage.l3Hits || 0, rate: triage.l3HitRate || "0.0", color: "text-purple-400",bg: "bg-purple-500/10 border-purple-500/30"},
+  ];
+  return (
+    <div className="space-y-4">
+      <h2 className="text-lg font-bold text-white flex items-center gap-2">
+        🛡️ GhostLayer Status
+        <span className="text-sm font-normal text-slate-400">
+          ({triage.totalRuns || 0} סריקות סה״כ)
+        </span>
+      </h2>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        {layers.map((layer) => (
+          <div key={layer.name} className={`rounded-xl border p-4 ${layer.bg}`}>
+            <p className="text-xs text-slate-400 mb-1">{layer.name}</p>
+            <p className={`text-2xl font-bold ${layer.color}`}>{layer.hits}</p>
+            <p className="text-xs text-slate-500 mt-1">שיעור זיהוי: {layer.rate}%</p>
+          </div>
+        ))}
+      </div>
+      <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl p-4 text-sm text-slate-300">
+        <span className="font-semibold text-white">סה״כ חסימות: </span>
+        {triage.totalUnsafe || 0} {' | '}
+        <span className="font-semibold text-white">סריקות: </span>
+        {triage.totalRuns || 0}
+      </div>
+    </div>
+  );
+}
+
+// ── Knowledge Graph Manager ──────────────────────────────────────────────────
+function KnowledgeGraphManager() {
+  const [entities, setEntities] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState(null);
+  const [newText, setNewText] = useState("");
+  const [newCategory, setNewCategory] = useState("CUSTOM");
+  const [msg, setMsg] = useState("");
+
+  const fetchEntities = useCallback(async () => {
+    try {
+      const res = await fetch("/api/knowledge-graph");
+      if (!res.ok) return;
+      const data = await res.json();
+      setEntities(data.entities || []);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { fetchEntities(); }, [fetchEntities]);
+
+  async function handleAdd(e) {
+    e.preventDefault();
+    if (!newText.trim()) return;
+    const res = await fetch("/api/knowledge-graph", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: newText.trim(), category: newCategory }),
+    });
+    if (res.ok) {
+      setMsg("✅ ישות נוספה");
+      setNewText("");
+      fetchEntities();
+      setTimeout(() => setMsg(""), 2000);
+    }
+  }
+
+  async function handleDelete(id) {
+    const res = await fetch(`/api/knowledge-graph?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (res.ok) { fetchEntities(); }
+  }
+
+  async function handleSearch(e) {
+    e.preventDefault();
+    if (!query.trim()) return;
+    const res = await fetch(`/api/knowledge-graph?q=${encodeURIComponent(query)}`);
+    if (res.ok) {
+      const data = await res.json();
+      setResults(data.results || []);
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <h2 className="text-lg font-bold text-white flex items-center gap-2">
+        🕸️ Knowledge Graph Manager
+        <span className="text-sm font-normal text-slate-400">({entities.length} ישויות)</span>
+      </h2>
+
+      {/* הוספת ישות */}
+      <form onSubmit={handleAdd} className="bg-slate-900/50 border border-slate-700/50 rounded-xl p-4 flex flex-col sm:flex-row gap-3">
+        <input
+          type="text"
+          placeholder="טקסט רגיש לאינדוס..."
+          value={newText}
+          onChange={(e) => setNewText(e.target.value)}
+          className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-500 outline-none focus:border-blue-500"
+          dir="rtl"
+        />
+        <select
+          value={newCategory}
+          onChange={(e) => setNewCategory(e.target.value)}
+          className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500"
+        >
+          {["CUSTOM", "PHONE", "EMAIL", "ID", "PASSWORD", "CREDIT_CARD", "ADDRESS", "PROJECT", "SECRET"].map((c) => (
+            <option key={c} value={c}>{c}</option>
+          ))}
+        </select>
+        <button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-2 rounded-lg font-medium transition-colors">
+          הוסף
+        </button>
+        {msg && <span className="self-center text-green-400 text-sm">{msg}</span>}
+      </form>
+
+      {/* חיפוש דמיון */}
+      <form onSubmit={handleSearch} className="flex gap-3">
+        <input
+          type="text"
+          placeholder="חיפוש ישויות דומות..."
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-500 outline-none focus:border-purple-500"
+          dir="rtl"
+        />
+        <button type="submit" className="bg-purple-600 hover:bg-purple-700 text-white text-sm px-4 py-2 rounded-lg font-medium transition-colors">
+          חפש
+        </button>
+        {results !== null && <button type="button" onClick={() => setResults(null)} className="text-slate-400 text-sm underline">נקה</button>}
+      </form>
+
+      {/* תוצאות חיפוש */}
+      {results !== null && (
+        <div className="bg-slate-900/50 border border-purple-500/30 rounded-xl p-4 space-y-2">
+          <p className="text-sm font-semibold text-purple-300 mb-2">תוצאות דמיון ({results.length}):</p>
+          {results.length === 0
+            ? <p className="text-slate-400 text-sm">לא נמצאו ישויות דומות</p>
+            : results.map((r) => (
+              <div key={r.id} className="flex justify-between text-sm text-slate-300">
+                <span dir="rtl">{r.text}</span>
+                <span className="text-purple-400 font-mono">{(r.similarity * 100).toFixed(1)}%</span>
+              </div>
+            ))
+          }
+        </div>
+      )}
+
+      {/* רשימת ישויות */}
+      {loading ? (
+        <div className="animate-pulse space-y-2">{[...Array(3)].map((_, i) => <div key={i} className="bg-slate-800 h-10 rounded-xl" />)}</div>
+      ) : entities.length === 0 ? (
+        <div className="text-center text-slate-400 py-8">אין ישויות רשומות עדיין</div>
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-slate-700/50">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-slate-800/60 border-b border-slate-700/50">
+                <th className="text-right px-4 py-3 font-semibold text-slate-300">טקסט</th>
+                <th className="text-center px-4 py-3 font-semibold text-slate-300">קטגוריה</th>
+                <th className="text-center px-4 py-3 font-semibold text-slate-300">נוצר</th>
+                <th className="text-center px-4 py-3 font-semibold text-slate-300">מחיקה</th>
+              </tr>
+            </thead>
+            <tbody>
+              {entities.map((e) => (
+                <tr key={e.id} className="border-b border-slate-800 hover:bg-slate-800/40">
+                  <td className="px-4 py-3 text-slate-200" dir="rtl">{e.text}</td>
+                  <td className="px-4 py-3 text-center"><span className="bg-slate-700 text-slate-200 text-xs px-2 py-1 rounded-full">{e.category}</span></td>
+                  <td className="px-4 py-3 text-center text-slate-400 text-xs">{new Date(e.addedAt).toLocaleDateString("he-IL")}</td>
+                  <td className="px-4 py-3 text-center">
+                    <button onClick={() => handleDelete(e.id)} className="text-rose-400 hover:text-rose-300 text-xs underline">מחק</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── System Health Monitor ────────────────────────────────────────────────────
+function SystemHealthMonitor({ health }) {
+  if (!health) {
+    return (
+      <div className="text-center text-slate-400 py-8">
+        <p>לא ניתן לטעון נתוני בריאות מערכת</p>
+      </div>
+    );
+  }
+
+  const isHealthy = health.status === "healthy";
+  const memPercent = Math.min(100, Math.round((health.memory?.heapUsedMB || 0) / 512 * 100));
+
+  return (
+    <div className="space-y-4">
+      <h2 className="text-lg font-bold text-white flex items-center gap-2">
+        💓 System Health Monitor
+        <span className={`text-sm font-semibold px-2 py-0.5 rounded-full ${isHealthy ? "bg-green-500/20 text-green-400" : "bg-red-500/20 text-red-400"}`}>
+          {isHealthy ? "תקין ✓" : "תקלה ✗"}
+        </span>
+      </h2>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl p-4">
+          <p className="text-xs text-slate-400">API Latency</p>
+          <p className="text-2xl font-bold text-white">{health.latency?.total || 0}ms</p>
+        </div>
+        <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl p-4">
+          <p className="text-xs text-slate-400">שימוש זיכרון</p>
+          <p className="text-2xl font-bold text-white">{health.memory?.heapUsedMB || 0}MB</p>
+          <div className="w-full bg-slate-700 rounded-full h-1.5 mt-2">
+            <div className={`h-1.5 rounded-full ${memPercent > 80 ? "bg-red-500" : "bg-green-500"}`} style={{ width: `${memPercent}%` }} />
+          </div>
+        </div>
+        <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl p-4">
+          <p className="text-xs text-slate-400">Uptime</p>
+          <p className="text-2xl font-bold text-white">{Math.floor((health.uptime || 0) / 60)}m</p>
+        </div>
+        <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl p-4">
+          <p className="text-xs text-slate-400">סביבה</p>
+          <p className="text-lg font-bold text-white capitalize">{health.environment || "—"}</p>
+        </div>
+      </div>
+
+      <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl p-4 space-y-2 text-sm">
+        <div className="flex justify-between text-slate-300">
+          <span>גרסה:</span><span className="font-mono">{health.version || "—"}</span>
+        </div>
+        <div className="flex justify-between text-slate-300">
+          <span>DB Latency:</span><span className="font-mono">{health.latency?.db || 0}ms</span>
+        </div>
+        <div className="flex justify-between text-slate-300">
+          <span>Knowledge Graph:</span><span>{health.knowledgeGraph?.totalEntities || 0} ישויות</span>
+        </div>
+        <div className="flex justify-between text-slate-300">
+          <span>חסימות כלל:</span><span>{health.store?.totalBlocked || 0}</span>
+        </div>
+        <div className="flex justify-between text-slate-300 text-xs text-slate-500">
+          <span>עדכון אחרון:</span>
+          <span>{health.timestamp ? new Date(health.timestamp).toLocaleTimeString("he-IL") : "—"}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // הגדרות טאבים
 const TABS = [
-  { id: "overview",     label: "סקירה כללית",   icon: BarChart3  },
-  { id: "trends",       label: "מגמות",          icon: TrendingUp },
-  { id: "alerts",       label: "התראות",          icon: Bell       },
-  { id: "users",        label: "משתמשים",        icon: Users      },
-  { id: "ghostlayer",   label: "GhostLayer",     icon: Gauge      },
-  { id: "settings",     label: "הגדרות",          icon: Settings   },
-  { id: "keywords",     label: "מילים מותאמות",  icon: Tag        },
+  { id: "overview",      label: "סקירה כללית",   icon: BarChart3  },
+  { id: "trends",        label: "מגמות",          icon: TrendingUp },
+  { id: "alerts",        label: "התראות",         icon: Bell       },
+  { id: "users",         label: "משתמשים",        icon: Users      },
+  { id: "ghostlayer",    label: "GhostLayer",     icon: Shield     },
+  { id: "knowledge",     label: "Knowledge Graph", icon: Network    },
+  { id: "health",        label: "בריאות מערכת",   icon: Activity   },
+  { id: "settings",      label: "הגדרות",         icon: Settings   },
+  { id: "keywords",      label: "מילים מותאמות",  icon: Tag        },
 ];
 
 export default function AdminDashboard() {
@@ -56,12 +313,7 @@ export default function AdminDashboard() {
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [unreadAlerts, setUnreadAlerts] = useState(0);
-  const [healthData, setHealthData] = useState(null);
-  const [kgEntities, setKgEntities] = useState([]);
-  const [kgQuery, setKgQuery] = useState("");
-  const [kgResults, setKgResults] = useState([]);
-  const [kgNewText, setKgNewText] = useState("");
-  const [kgNewCategory, setKgNewCategory] = useState("UNKNOWN");
+  const [health, setHealth] = useState(null);
 
   // טעינת סטטיסטיקות
   const fetchStats = useCallback(async () => {
@@ -102,25 +354,13 @@ export default function AdminDashboard() {
     }
   }, []);
 
-  // טעינת נתוני בריאות מערכת (כולל Triage Stats)
+  // טעינת בריאות מערכת
   const fetchHealth = useCallback(async () => {
     try {
       const res = await fetch("/api/health");
       if (!res.ok) return;
       const data = await res.json();
-      setHealthData(data);
-    } catch {
-      // שגיאת רשת
-    }
-  }, []);
-
-  // טעינת Knowledge Graph Entities
-  const fetchKGEntities = useCallback(async () => {
-    try {
-      const res = await fetch("/api/knowledge-graph");
-      if (!res.ok) return;
-      const data = await res.json();
-      setKgEntities(data.entities || []);
+      setHealth(data);
     } catch {
       // שגיאת רשת
     }
@@ -132,8 +372,7 @@ export default function AdminDashboard() {
     fetchTrends();
     fetchAlertCount();
     fetchHealth();
-    fetchKGEntities();
-  }, [fetchStats, fetchTrends, fetchAlertCount, fetchHealth, fetchKGEntities]);
+  }, [fetchStats, fetchTrends, fetchAlertCount, fetchHealth]);
 
   // Auto-refresh כל 30 שניות
   useEffect(() => {
@@ -171,41 +410,6 @@ export default function AdminDashboard() {
   const uniqueCategories = stats?.recentLogs
     ? ["all", ...new Set(stats.recentLogs.map((l) => l.type))]
     : ["all"];
-
-  // Knowledge Graph: חיפוש דמיון
-  async function handleKGSearch(e) {
-    e.preventDefault();
-    if (!kgQuery.trim()) return;
-    try {
-      const res = await fetch(`/api/knowledge-graph?query=${encodeURIComponent(kgQuery)}&topK=5`);
-      if (!res.ok) return;
-      const data = await res.json();
-      setKgResults(data.results || []);
-    } catch { /* ignore */ }
-  }
-
-  // Knowledge Graph: הוספת ישות חדשה
-  async function handleKGAdd(e) {
-    e.preventDefault();
-    if (!kgNewText.trim()) return;
-    try {
-      await fetch("/api/knowledge-graph", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: kgNewText, category: kgNewCategory }),
-      });
-      setKgNewText("");
-      fetchKGEntities();
-    } catch { /* ignore */ }
-  }
-
-  // Knowledge Graph: מחיקת ישות
-  async function handleKGDelete(id) {
-    try {
-      await fetch(`/api/knowledge-graph?id=${id}`, { method: "DELETE" });
-      fetchKGEntities();
-    } catch { /* ignore */ }
-  }
 
   return (
     <main className="min-h-screen bg-slate-950 text-white" dir="rtl">
@@ -387,141 +591,22 @@ export default function AdminDashboard() {
 
             {/* ── טאב: GhostLayer Status ── */}
             {activeTab === "ghostlayer" && (
-              <div className="space-y-6">
-                {/* Triage Stats */}
-                <section className="bg-slate-900 border border-slate-700/50 rounded-xl p-6">
-                  <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-                    <Gauge className="w-5 h-5 text-violet-400" />
-                    GhostLayer Triage Engine – אחוזי הצלחה
-                  </h2>
-                  {healthData?.checks?.triage ? (
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                      {[
-                        { label: "L1 – Fast Scan", rate: healthData.checks.triage.stats?.l1Rate || "0%", hits: healthData.checks.triage.stats?.l1Hits || 0, borderClass: "border-emerald-500/30", textClass: "text-emerald-400", desc: "Regex + Bloom Filter (< 1ms)" },
-                        { label: "L2 – Semantic Hash", rate: healthData.checks.triage.stats?.l2Rate || "0%", hits: healthData.checks.triage.stats?.l2Hits || 0, borderClass: "border-amber-500/30", textClass: "text-amber-400", desc: "Hash Signatures (< 10ms)" },
-                        { label: "L3 – Hebrew NLP", rate: healthData.checks.triage.stats?.l3Rate || "0%", hits: healthData.checks.triage.stats?.l3Hits || 0, borderClass: "border-rose-500/30", textClass: "text-rose-400", desc: "Context Inference (< 150ms)" },
-                      ].map((tier) => (
-                        <div key={tier.label} className={`bg-slate-800 border rounded-xl p-5 ${tier.borderClass}`}>
-                          <p className={`text-xs font-medium uppercase tracking-wide mb-1 ${tier.textClass}`}>{tier.label}</p>
-                          <p className="text-3xl font-bold text-white">{tier.rate}</p>
-                          <p className="text-slate-400 text-xs mt-1">{tier.hits} זיהויים</p>
-                          <p className="text-slate-500 text-xs mt-0.5">{tier.desc}</p>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-slate-400 text-sm">טוען נתוני Triage...</p>
-                  )}
-                  {healthData && (
-                    <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
-                      <div className="bg-slate-800 rounded-lg p-3">
-                        <p className="text-slate-400 text-xs">סה״כ בדיקות</p>
-                        <p className="text-white font-semibold">{healthData.checks?.triage?.stats?.total || 0}</p>
-                      </div>
-                      <div className="bg-slate-800 rounded-lg p-3">
-                        <p className="text-slate-400 text-xs">ניקיים</p>
-                        <p className="text-emerald-400 font-semibold">{healthData.checks?.triage?.stats?.clean || 0}</p>
-                      </div>
-                      <div className="bg-slate-800 rounded-lg p-3">
-                        <p className="text-slate-400 text-xs">סטטוס</p>
-                        <p className={`font-semibold ${healthData.status === "ok" ? "text-emerald-400" : "text-amber-400"}`}>{healthData.status === "ok" ? "תקין" : "מוזהר"}</p>
-                      </div>
-                      <div className="bg-slate-800 rounded-lg p-3">
-                        <p className="text-slate-400 text-xs">זמן תגובה</p>
-                        <p className="text-white font-semibold">{healthData.responseTime || "—"}</p>
-                      </div>
-                    </div>
-                  )}
-                </section>
+              <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl p-6">
+                <GhostLayerPanel health={health} />
+              </div>
+            )}
 
-                {/* Knowledge Graph Manager */}
-                <section className="bg-slate-900 border border-slate-700/50 rounded-xl p-6">
-                  <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-                    <Star className="w-5 h-5 text-amber-400" />
-                    Knowledge Graph – ניהול ישויות רגישות
-                  </h2>
+            {/* ── טאב: Knowledge Graph ── */}
+            {activeTab === "knowledge" && (
+              <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl p-6">
+                <KnowledgeGraphManager />
+              </div>
+            )}
 
-                  {/* הוספת ישות */}
-                  <form onSubmit={handleKGAdd} className="flex flex-wrap gap-3 mb-5">
-                    <input
-                      type="text"
-                      placeholder="טקסט ישות רגישה חדשה..."
-                      value={kgNewText}
-                      onChange={(e) => setKgNewText(e.target.value)}
-                      className="bg-slate-800 border border-slate-700 text-white text-sm rounded-xl px-4 py-2 flex-1 min-w-[200px] focus:outline-none focus:ring-1 focus:ring-violet-500"
-                      dir="rtl"
-                    />
-                    <select
-                      value={kgNewCategory}
-                      onChange={(e) => setKgNewCategory(e.target.value)}
-                      className="bg-slate-800 border border-slate-700 text-white text-sm rounded-xl px-3 py-2 focus:outline-none focus:ring-1 focus:ring-violet-500"
-                    >
-                      {["UNKNOWN","PASSWORD","CREDIT_CARD","ID","EMAIL","PHONE","ADDRESS","API_SECRET","BANK_ACCOUNT"].map((c) => (
-                        <option key={c} value={c}>{c}</option>
-                      ))}
-                    </select>
-                    <button type="submit" className="bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium px-4 py-2 rounded-xl transition-colors">
-                      הוסף ישות
-                    </button>
-                  </form>
-
-                  {/* חיפוש דמיון */}
-                  <form onSubmit={handleKGSearch} className="flex gap-3 mb-5">
-                    <input
-                      type="text"
-                      placeholder="חיפוש דמיון קשרי..."
-                      value={kgQuery}
-                      onChange={(e) => setKgQuery(e.target.value)}
-                      className="bg-slate-800 border border-slate-700 text-white text-sm rounded-xl px-4 py-2 flex-1 focus:outline-none focus:ring-1 focus:ring-amber-500"
-                      dir="rtl"
-                    />
-                    <button type="submit" className="bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium px-4 py-2 rounded-xl transition-colors">
-                      חפש
-                    </button>
-                  </form>
-
-                  {/* תוצאות חיפוש */}
-                  {kgResults.length > 0 && (
-                    <div className="mb-5">
-                      <p className="text-slate-400 text-xs mb-2">תוצאות חיפוש ({kgResults.length})</p>
-                      <div className="space-y-2">
-                        {kgResults.map((r) => (
-                          <div key={r.id} className="bg-slate-800 rounded-lg p-3 flex justify-between items-center">
-                            <div>
-                              <p className="text-white text-sm">{r.text}</p>
-                              <p className="text-slate-400 text-xs">{r.category} • דמיון: {(r.similarityScore * 100).toFixed(1)}%</p>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* רשימת ישויות */}
-                  <div>
-                    <p className="text-slate-400 text-xs mb-2">ישויות רשומות ({kgEntities.length})</p>
-                    {kgEntities.length === 0 ? (
-                      <p className="text-slate-500 text-sm">אין ישויות עדיין. הוסף ישויות רגישות ידועות.</p>
-                    ) : (
-                      <div className="space-y-2 max-h-60 overflow-y-auto">
-                        {kgEntities.map((entity) => (
-                          <div key={entity.id} className="bg-slate-800 rounded-lg p-3 flex justify-between items-center">
-                            <div>
-                              <p className="text-white text-sm">{entity.text}</p>
-                              <p className="text-slate-400 text-xs">{entity.category}</p>
-                            </div>
-                            <button
-                              onClick={() => handleKGDelete(entity.id)}
-                              className="text-rose-400 hover:text-rose-300 text-xs px-2 py-1 rounded transition-colors"
-                            >
-                              מחק
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </section>
+            {/* ── טאב: בריאות מערכת ── */}
+            {activeTab === "health" && (
+              <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl p-6">
+                <SystemHealthMonitor health={health} />
               </div>
             )}
 

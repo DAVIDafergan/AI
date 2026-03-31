@@ -1,47 +1,41 @@
 // מודל ברירת המחדל של מדיניות DLP לכל ארגון
 // כל מדיניות מכילה: id, label, description, enabled, category, severity
 
-// ── רמות סיווג (Classification Levels) ──
+// ── רמות סיווג מידע ──
 export const CLASSIFICATION_LEVELS = {
-  PUBLIC: {
-    id: "PUBLIC",
-    label: "ציבורי",
-    description: "מידע שמותר לשיתוף חופשי – ללא פעולה",
-    action: "ALLOW",
-    color: "#22c55e",
-  },
-  INTERNAL: {
-    id: "INTERNAL",
-    label: "פנימי",
-    description: "מידע לשימוש פנימי בארגון – רישום בלבד",
-    action: "LOG",
-    color: "#3b82f6",
-  },
-  SECRET: {
-    id: "SECRET",
-    label: "סודי",
-    description: "מידע רגיש – מסיכה בנתונים סינתטיים",
-    action: "MASK",
-    color: "#f59e0b",
-  },
-  TOP_SECRET: {
-    id: "TOP_SECRET",
-    label: "סודי ביותר",
-    description: "מידע קריטי – חסימה מלאה + התראה למנהל",
-    action: "BLOCK_AND_ALERT",
-    color: "#ef4444",
-  },
+  PUBLIC:     { id: "PUBLIC",     label: "ציבורי",   action: "none",     description: "מידע ציבורי – ללא פעולה" },
+  INTERNAL:   { id: "INTERNAL",   label: "פנימי",    action: "log",      description: "מידע פנימי – רישום בלבד (מצב ביקורת)" },
+  SECRET:     { id: "SECRET",     label: "סודי",     action: "mask",     description: "מידע סודי – החלפה בנתונים סינתטיים" },
+  TOP_SECRET: { id: "TOP_SECRET", label: "סודי ביותר", action: "block", description: "מידע סודי ביותר – חסימה מוחלטת + התראה למנהל" },
 };
 
-// מיפוי חומרה לרמת סיווג
-export function severityToClassification(severity) {
-  switch (severity) {
-    case "critical": return CLASSIFICATION_LEVELS.TOP_SECRET;
-    case "high":     return CLASSIFICATION_LEVELS.SECRET;
-    case "medium":   return CLASSIFICATION_LEVELS.INTERNAL;
-    case "low":
-    default:         return CLASSIFICATION_LEVELS.PUBLIC;
-  }
+// ── מיפוי ברירת מחדל: קטגוריה → רמת סיווג ──
+export const DEFAULT_CATEGORY_CLASSIFICATION = {
+  credit_card:  "TOP_SECRET",
+  israeli_id:   "SECRET",
+  password:     "TOP_SECRET",
+  bank_account: "TOP_SECRET",
+  iban:         "TOP_SECRET",
+  api_key:      "TOP_SECRET",
+  phone:        "SECRET",
+  landline:     "SECRET",
+  email:        "INTERNAL",
+  address:      "SECRET",
+  full_name:    "INTERNAL",
+  birthdate:    "SECRET",
+  passport:     "SECRET",
+  vehicle:      "INTERNAL",
+  ip_address:   "INTERNAL",
+  keywords:     "SECRET",
+};
+
+/**
+ * Get the classification level for a given policy/category.
+ * Falls back to SECRET if unknown.
+ */
+export function getClassification(policyId) {
+  const levelId = DEFAULT_CATEGORY_CLASSIFICATION[policyId] || "SECRET";
+  return CLASSIFICATION_LEVELS[levelId];
 }
 
 export const DEFAULT_POLICIES = [

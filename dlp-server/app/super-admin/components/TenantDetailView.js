@@ -56,7 +56,9 @@ function CopyButton({ text, label = "העתק" }) {
 }
 
 function ConnectionInstructions({ tenant, agents, superAdminKey, onAgentProvisioned }) {
-  const serverUrl = process.env.NEXT_PUBLIC_DLP_SERVER_URL || "";
+  const serverUrl =
+    process.env.NEXT_PUBLIC_DLP_SERVER_URL ||
+    (typeof window !== "undefined" ? window.location.origin : "");
   const apiKey = tenant.apiKey || "";
   const primaryAgent = agents[0] || null;
   const [provName, setProvName] = useState("");

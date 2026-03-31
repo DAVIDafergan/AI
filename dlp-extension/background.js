@@ -1,6 +1,9 @@
 // DLP Shield - Background Service Worker
 // Manages stats, badge updates, configuration, and user identity
 
+// ── Constants ─────────────────────────────────────────────────────────────────
+const HEALTH_CHECK_TIMEOUT_MS = 8000;
+
 // ── Cached email ──────────────────────────────────────────────────────────────
 let cachedEmail = null;
 
@@ -140,7 +143,7 @@ async function performHealthCheck() {
 
     const serverUrl = data.serverUrl || "https://ai-production-ffa9.up.railway.app";
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
+    const timeout = setTimeout(() => controller.abort(), HEALTH_CHECK_TIMEOUT_MS);
     const res = await fetch(`${serverUrl}/api/health`, { signal: controller.signal });
     clearTimeout(timeout);
 

@@ -30,9 +30,9 @@ const ALL_PATTERNS = [
   // ── מפתחות API וסודות קוד ──
   { id: "AWS_KEY",        regex: /\b(?:AKIA|ABIA|ACCA|ASIA)[0-9A-Z]{16}\b/g,                                    label: "מפתח AWS",                     policyId: "api_key",   severity: "critical" },
   { id: "OPENAI_KEY",     regex: /\bsk-[a-zA-Z0-9]{20,}\b/g,                                                    label: "מפתח OpenAI",                  policyId: "api_key",   severity: "critical" },
-  { id: "GITHUB_TOKEN",   regex: /\b(?:ghp|gho|ghs|ghr)_[A-Za-z0-9]{36,}\b/g,                                  label: "GitHub Token",                 policyId: "api_key",   severity: "critical" },
+  { id: "GITHUB_TOKEN",   regex: /\b(?:ghp|gho|ghs|ghr|ghu)_[A-Za-z0-9]{36,}\b/g,                                  label: "GitHub Token",                 policyId: "api_key",   severity: "critical" },
   { id: "GOOGLE_API_KEY", regex: /\bAIza[0-9A-Za-z\-_]{35}\b/g,                                                label: "Google API Key",               policyId: "api_key",   severity: "critical" },
-  { id: "JWT_TOKEN",      regex: /eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,                     label: "JWT Token",                    policyId: "api_key",   severity: "critical" },
+  { id: "JWT_TOKEN",      regex: /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,                         label: "JWT Token",                    policyId: "api_key",   severity: "critical" },
   { id: "PEM_KEY",        regex: /-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/g,                                   label: "Private Key (PEM)",            policyId: "api_key",   severity: "critical" },
   { id: "MONGODB_URI",    regex: /mongodb(?:\+srv)?:\/\/[^\s]+/g,                                               label: "MongoDB Connection String",    policyId: "api_key",   severity: "critical" },
   { id: "POSTGRES_URI",   regex: /postgres(?:ql)?:\/\/[^\s]+/g,                                                 label: "PostgreSQL Connection String", policyId: "api_key",   severity: "critical" },

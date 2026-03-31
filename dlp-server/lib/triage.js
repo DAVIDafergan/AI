@@ -135,7 +135,7 @@ const L1_PATTERNS = [
   },
   {
     id: "GITHUB_TOKEN",
-    regex: /\b(?:ghp|gho|ghs|ghr)_[A-Za-z0-9]{36,}\b/g,
+    regex: /\b(?:ghp|gho|ghs|ghr|ghu)_[A-Za-z0-9]{36,}\b/g,
     label: "GitHub Token",
     confidence: "high",
   },
@@ -147,7 +147,7 @@ const L1_PATTERNS = [
   },
   {
     id: "JWT",
-    regex: /eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,
+    regex: /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,
     label: "JWT Token",
     confidence: "high",
   },
@@ -500,11 +500,12 @@ export function runTriageWithStats(text) {
  * Get triage statistics for admin dashboard.
  */
 export function getTriageStats() {
-  const total = triageStats.totalUnsafe || 1; // avoid division by zero
+  const total = triageStats.totalUnsafe;
+  const rateOf = (hits) => total > 0 ? ((hits / total) * 100).toFixed(1) : "0.0";
   return {
     ...triageStats,
-    l1HitRate: ((triageStats.l1Hits / total) * 100).toFixed(1),
-    l2HitRate: ((triageStats.l2Hits / total) * 100).toFixed(1),
-    l3HitRate: ((triageStats.l3Hits / total) * 100).toFixed(1),
+    l1HitRate: rateOf(triageStats.l1Hits),
+    l2HitRate: rateOf(triageStats.l2Hits),
+    l3HitRate: rateOf(triageStats.l3Hits),
   };
 }

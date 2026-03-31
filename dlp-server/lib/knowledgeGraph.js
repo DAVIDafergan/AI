@@ -14,7 +14,7 @@ import { randomUUID } from "crypto";
 function tokenize(text) {
   return text
     .toLowerCase()
-    .split(/[\s,.\-–:;!?\"'()\[\]{}|\/\\]+/)
+    .split(/[\s,.–:;!?\"'()\[\]{}|\/\\-]+/)
     .filter((t) => t.length >= 2);
 }
 

@@ -49,7 +49,7 @@ function GhostLayerPanel({ health }) {
       <h2 className="text-lg font-bold text-white flex items-center gap-2">
         🛡️ GhostLayer Status
         <span className="text-sm font-normal text-slate-400">
-          ({triage.totalRuns || 0} סריקות סה&quot;כ)
+          ({triage.totalRuns || 0} סריקות סה״כ)
         </span>
       </h2>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -62,8 +62,8 @@ function GhostLayerPanel({ health }) {
         ))}
       </div>
       <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl p-4 text-sm text-slate-300">
-        <span className="font-semibold text-white">סה&quot;כ חסימות: </span>
-        {triage.totalUnsafe || 0} &nbsp;|&nbsp;
+        <span className="font-semibold text-white">סה״כ חסימות: </span>
+        {triage.totalUnsafe || 0} {' | '}
         <span className="font-semibold text-white">סריקות: </span>
         {triage.totalRuns || 0}
       </div>

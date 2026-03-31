@@ -1,6 +1,49 @@
 // מודל ברירת המחדל של מדיניות DLP לכל ארגון
 // כל מדיניות מכילה: id, label, description, enabled, category, severity
 
+// ── רמות סיווג (Classification Levels) ──
+export const CLASSIFICATION_LEVELS = {
+  PUBLIC: {
+    id: "PUBLIC",
+    label: "ציבורי",
+    description: "מידע שמותר לשיתוף חופשי – ללא פעולה",
+    action: "ALLOW",
+    color: "#22c55e",
+  },
+  INTERNAL: {
+    id: "INTERNAL",
+    label: "פנימי",
+    description: "מידע לשימוש פנימי בארגון – רישום בלבד",
+    action: "LOG",
+    color: "#3b82f6",
+  },
+  SECRET: {
+    id: "SECRET",
+    label: "סודי",
+    description: "מידע רגיש – מסיכה בנתונים סינתטיים",
+    action: "MASK",
+    color: "#f59e0b",
+  },
+  TOP_SECRET: {
+    id: "TOP_SECRET",
+    label: "סודי ביותר",
+    description: "מידע קריטי – חסימה מלאה + התראה למנהל",
+    action: "BLOCK_AND_ALERT",
+    color: "#ef4444",
+  },
+};
+
+// מיפוי חומרה לרמת סיווג
+export function severityToClassification(severity) {
+  switch (severity) {
+    case "critical": return CLASSIFICATION_LEVELS.TOP_SECRET;
+    case "high":     return CLASSIFICATION_LEVELS.SECRET;
+    case "medium":   return CLASSIFICATION_LEVELS.INTERNAL;
+    case "low":
+    default:         return CLASSIFICATION_LEVELS.PUBLIC;
+  }
+}
+
 export const DEFAULT_POLICIES = [
   {
     id: "credit_card",

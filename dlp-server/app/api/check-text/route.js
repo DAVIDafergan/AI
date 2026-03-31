@@ -14,6 +14,7 @@ import {
   recordUserActivity,
 } from "../../../lib/db.js";
 import { getDefaultPolicies, SEVERITY_SCORES } from "../../../lib/policies.js";
+import { runTriage, recordTriageHit } from "../../../lib/triage.js";
 
 // ── תבניות Regex לזיהוי PII ──
 const ALL_PATTERNS = [
@@ -28,6 +29,14 @@ const ALL_PATTERNS = [
   { id: "BIRTHDATE",      regex: /\b(?:0[1-9]|[12]\d|3[01])[\/.\-](?:0[1-9]|1[0-2])[\/.\-](?:19|20)\d{2}\b/g, label: "תאריך לידה",    policyId: "birthdate" },
   { id: "AWS_KEY",        regex: /\b(?:AKIA|ABIA|ACCA|ASIA)[0-9A-Z]{16}\b/g,                                    label: "מפתח AWS",       policyId: "api_key"   },
   { id: "OPENAI_KEY",     regex: /\bsk-[a-zA-Z0-9]{20,}\b/g,                                                    label: "מפתח OpenAI",    policyId: "api_key"   },
+  // ── Secret Code Leak Detection ──
+  { id: "GITHUB_TOKEN",   regex: /\b(?:ghp|gho|ghs)_[A-Za-z0-9]{36,}\b/g,                                      label: "GitHub Token",   policyId: "api_key"   },
+  { id: "GOOGLE_KEY",     regex: /\bAIza[0-9A-Za-z_-]{35}\b/g,                                                  label: "Google API Key", policyId: "api_key"   },
+  { id: "JWT_TOKEN",      regex: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g,        label: "JWT Token",      policyId: "api_key"   },
+  { id: "PEM_KEY",        regex: /-----BEGIN\s+(?:RSA\s+)?PRIVATE\s+KEY-----[\s\S]*?-----END\s+(?:RSA\s+)?PRIVATE\s+KEY-----/g, label: "מפתח PEM",  policyId: "api_key"   },
+  { id: "MONGODB_CONN",   regex: /mongodb(?:\+srv)?:\/\/[^\s"']{8,}/gi,                                          label: "MongoDB חיבור",  policyId: "api_key"   },
+  { id: "PG_CONN",        regex: /postgres(?:ql)?:\/\/[^\s"']{8,}/gi,                                            label: "PostgreSQL חיבור", policyId: "api_key" },
+  { id: "INTERNAL_IP",    regex: /\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})\b/g, label: "IP פנימי", policyId: "ip_address" },
 ];
 
 // מילות מפתח ברירת מחדל
@@ -136,6 +145,10 @@ export async function POST(request) {
     let redactedText = text;
     const replacements = [];
     const mappingEntries = [];
+
+    // ── 0. Triage Engine (L1/L2/L3) ──
+    const triageResult = runTriage(text, organizationId);
+    recordTriageHit(triageResult.level);
 
     // ── 1. זיהוי Regex ──
     for (const { id, regex, label, policyId } of ALL_PATTERNS) {
@@ -274,6 +287,11 @@ export async function POST(request) {
         timestamp: new Date().toISOString(),
         organizationId,
         userEmail,
+        triage: {
+          level: triageResult.level,
+          triggered: triageResult.triggered,
+          elapsed: triageResult.totalElapsed,
+        },
       },
       {
         headers: {

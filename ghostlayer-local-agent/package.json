@@ -1,0 +1,20 @@
+{
+  "name": "ghostlayer-local-agent",
+  "version": "1.0.0",
+  "description": "GhostLayer On-Premise Agent – scans local files and reports metadata to the GhostLayer SaaS dashboard",
+  "main": "index.js",
+  "type": "module",
+  "bin": {
+    "ghostlayer-agent": "./index.js"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "commander": "^12.1.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "license": "MIT"
+}

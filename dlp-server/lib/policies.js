@@ -1,6 +1,43 @@
 // מודל ברירת המחדל של מדיניות DLP לכל ארגון
 // כל מדיניות מכילה: id, label, description, enabled, category, severity
 
+// ── רמות סיווג מידע ──
+export const CLASSIFICATION_LEVELS = {
+  PUBLIC:     { id: "PUBLIC",     label: "ציבורי",   action: "none",     description: "מידע ציבורי – ללא פעולה" },
+  INTERNAL:   { id: "INTERNAL",   label: "פנימי",    action: "log",      description: "מידע פנימי – רישום בלבד (מצב ביקורת)" },
+  SECRET:     { id: "SECRET",     label: "סודי",     action: "mask",     description: "מידע סודי – החלפה בנתונים סינתטיים" },
+  TOP_SECRET: { id: "TOP_SECRET", label: "סודי ביותר", action: "block", description: "מידע סודי ביותר – חסימה מוחלטת + התראה למנהל" },
+};
+
+// ── מיפוי ברירת מחדל: קטגוריה → רמת סיווג ──
+export const DEFAULT_CATEGORY_CLASSIFICATION = {
+  credit_card:  "TOP_SECRET",
+  israeli_id:   "SECRET",
+  password:     "TOP_SECRET",
+  bank_account: "TOP_SECRET",
+  iban:         "TOP_SECRET",
+  api_key:      "TOP_SECRET",
+  phone:        "SECRET",
+  landline:     "SECRET",
+  email:        "INTERNAL",
+  address:      "SECRET",
+  full_name:    "INTERNAL",
+  birthdate:    "SECRET",
+  passport:     "SECRET",
+  vehicle:      "INTERNAL",
+  ip_address:   "INTERNAL",
+  keywords:     "SECRET",
+};
+
+/**
+ * Get the classification level for a given policy/category.
+ * Falls back to SECRET if unknown.
+ */
+export function getClassification(policyId) {
+  const levelId = DEFAULT_CATEGORY_CLASSIFICATION[policyId] || "SECRET";
+  return CLASSIFICATION_LEVELS[levelId];
+}
+
 export const DEFAULT_POLICIES = [
   {
     id: "credit_card",

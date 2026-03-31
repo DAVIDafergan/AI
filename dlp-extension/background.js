@@ -110,4 +110,46 @@ chrome.runtime.onInstalled.addListener(() => {
     enabled: true,
   });
   chrome.action.setBadgeText({ text: "" });
+
+  // Schedule periodic health check every 5 minutes
+  chrome.alarms.create("healthCheck", { periodInMinutes: 5 });
 });
+
+// ── Restore alarms on startup (service worker may be restarted) ───────────────
+chrome.runtime.onStartup.addListener(() => {
+  chrome.alarms.get("healthCheck", (alarm) => {
+    if (!alarm) {
+      chrome.alarms.create("healthCheck", { periodInMinutes: 5 });
+    }
+  });
+});
+
+// ── Alarm handler: periodic health check ─────────────────────────────────────
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === "healthCheck") {
+    performHealthCheck();
+  }
+});
+
+async function performHealthCheck() {
+  try {
+    const data = await new Promise((resolve) => {
+      chrome.storage.local.get(["serverUrl", "enabled"], resolve);
+    });
+    if (!data.enabled) return;
+
+    const serverUrl = data.serverUrl || "https://ai-production-ffa9.up.railway.app";
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    const res = await fetch(`${serverUrl}/api/health`, { signal: controller.signal });
+    clearTimeout(timeout);
+
+    if (res.ok) {
+      await chrome.storage.local.set({ lastHealthCheck: Date.now(), serverHealthy: true });
+    } else {
+      await chrome.storage.local.set({ lastHealthCheck: Date.now(), serverHealthy: false });
+    }
+  } catch {
+    await chrome.storage.local.set({ lastHealthCheck: Date.now(), serverHealthy: false });
+  }
+}

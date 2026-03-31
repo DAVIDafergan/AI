@@ -13,6 +13,13 @@ services:
       # External Railway MongoDB – override with MONGODB_URI env var if needed
       MONGODB_URI: ${MONGODB_URI:-mongodb://mongo:CJIYYeWjRwoQChiJPyxBjQGbqbsfgQeu@ballast.proxy.rlwy.net:56402}
       SUPER_ADMIN_KEY: ${SUPER_ADMIN_KEY}
+      SUPER_ADMIN_USERNAME: ${SUPER_ADMIN_USERNAME}
+      SUPER_ADMIN_PASSWORD: ${SUPER_ADMIN_PASSWORD}
+      DLP_SERVER_URL: ${DLP_SERVER_URL:-http://localhost:3000}
+      DLP_DEFAULT_ORG: ${DLP_DEFAULT_ORG:-default-org}
+      DLP_ADMIN_SECRET: ${DLP_ADMIN_SECRET:-change-me-in-production}
+      DLP_API_KEY: ${DLP_API_KEY:-dev-api-key-12345}
+      DLP_VERBOSE: ${DLP_VERBOSE:-false}
     depends_on:
       - mongo
       - redis

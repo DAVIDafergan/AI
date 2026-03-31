@@ -246,3 +246,103 @@ curl -X POST http://localhost:3000/api/check-text \
 ## גרסה
 
 **3.0.0** – Enterprise Edition עם Multi-tenancy, Contextual NLP, Clipboard Shield, CISO Dashboard
+
+---
+
+## הוספת לקוח חדש (Client Onboarding)
+
+### דרך ה-Dashboard (מומלץ)
+1. עבור לטאב **"ניהול לקוחות"** ב-Admin Dashboard (`/admin`)
+2. לחץ על **"+ הוסף לקוח חדש"**
+3. מלא את האשף בשלושה שלבים:
+   - **שלב 1** – פרטי הארגון (שם, אימייל, חבילה, הערות)
+   - **שלב 2** – הגדרת מדיניות ראשונית (סוגי PII + רמת חומרה)
+   - **שלב 3** – קבלת API Key + הוראות חיבור מפורטות
+
+### דרך דף ה-Onboarding הציבורי
+גש לכתובת `/onboarding` וקבל מפתח API מיידי.
+
+### דרך ה-API ישירות
+
+#### יצירת לקוח חדש
+```bash
+curl -X POST http://localhost:3000/api/clients \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "חברת טכנולוגיות בע\"מ",
+    "contactEmail": "admin@company.com",
+    "plan": "enterprise",
+    "notes": "לקוח חשוב"
+  }'
+```
+
+תשובה:
+```json
+{
+  "success": true,
+  "organization": { "id": "...", "name": "...", "plan": "enterprise" },
+  "apiKey": "key-...",
+  "organizationId": "...",
+  "instructions": {
+    "browserExtension": [...],
+    "desktopShield": "...",
+    "curlExample": "...",
+    "sdkExample": "..."
+  }
+}
+```
+
+#### רשימת כל הלקוחות
+```bash
+curl http://localhost:3000/api/clients
+```
+
+#### מחיקת לקוח
+```bash
+curl -X DELETE "http://localhost:3000/api/clients?id=ORG_ID"
+```
+
+---
+
+## API Routes – עדכון מלא
+
+| Method | Route | תיאור |
+|--------|-------|-------|
+| GET | `/api/clients` | רשימת כל הלקוחות עם סטטיסטיקות |
+| POST | `/api/clients` | יצירת לקוח חדש + מפתח API |
+| DELETE | `/api/clients?id=ORG_ID` | מחיקת לקוח ונתוניו |
+| GET | `/api/organizations` | פרטי ארגון נוכחי |
+| POST | `/api/organizations` | יצירת ארגון (Legacy) |
+| PUT | `/api/organizations` | עדכון ארגון |
+
+### הוראות חיבור (לכל לקוח)
+
+**א. תוסף דפדפן:**
+1. התקן את התוסף מ-Chrome Web Store
+2. הזן את כתובת השרת בהגדרות
+3. הזן את מפתח ה-API
+
+**ב. Desktop Shield:**
+```bash
+export DLP_SERVER_URL="http://localhost:3000"
+export DLP_API_KEY="YOUR_API_KEY"
+npm run shield
+```
+
+**ג. REST API:**
+```bash
+curl -X POST http://localhost:3000/api/check-text \
+  -H "x-api-key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"text": "הטקסט לבדיקה", "source": "api"}'
+```
+
+**ד. JavaScript:**
+```javascript
+const response = await fetch('http://localhost:3000/api/check-text', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', 'x-api-key': 'YOUR_API_KEY' },
+  body: JSON.stringify({ text: 'הטקסט לבדיקה', source: 'sdk' })
+});
+const { safe, redactedText } = await response.json();
+```

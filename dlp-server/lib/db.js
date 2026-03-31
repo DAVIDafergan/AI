@@ -20,6 +20,10 @@ function seed() {
     id: defaultOrgId,
     name: "ארגון ברירת מחדל",
     createdAt: new Date().toISOString(),
+    contactEmail: "",
+    plan: "enterprise",
+    notes: "",
+    status: "active",
     settings: { language: "he", timezone: "Asia/Jerusalem" },
   });
   // הוסף מפתחות פיתוח רק בסביבת dev/test
@@ -31,17 +35,25 @@ function seed() {
 seed();
 
 // ── ניהול ארגונים ──
-export function createOrganization({ name, id } = {}) {
+export function createOrganization({ name, id, contactEmail = "", plan = "basic", notes = "", status = "active", initialPolicy = [] } = {}) {
   const orgId = id || randomUUID();
   const org = {
     id: orgId,
     name: name || "ארגון חדש",
     createdAt: new Date().toISOString(),
+    contactEmail,
+    plan,       // basic | pro | enterprise
+    notes,
+    status,     // active | suspended | trial
     settings: { language: "he", timezone: "Asia/Jerusalem" },
   };
   organizations.set(orgId, org);
   const newApiKey = `key-${randomUUID().replace(/-/g, "").slice(0, 20)}`;
   apiKeys.set(newApiKey, orgId);
+  // שמירת מדיניות ראשונית אם סופקה
+  if (initialPolicy && initialPolicy.length > 0) {
+    policies.set(orgId, initialPolicy);
+  }
   return { ...org, apiKey: newApiKey };
 }
 
@@ -59,6 +71,70 @@ export function updateOrganization(orgId, updates) {
   const updated = { ...existing, ...updates, id: orgId };
   organizations.set(orgId, updated);
   return updated;
+}
+
+// ── מחיקת ארגון + כל הנתונים הקשורים ──
+export function deleteOrganization(orgId) {
+  if (!organizations.has(orgId)) return false;
+  organizations.delete(orgId);
+  // מחיקת כל ה-API keys של הארגון
+  for (const [key, oid] of apiKeys.entries()) {
+    if (oid === orgId) apiKeys.delete(key);
+  }
+  // מחיקת logs
+  for (const [id, doc] of logs.entries()) {
+    if (doc.organizationId === orgId) logs.delete(id);
+  }
+  // מחיקת mappings
+  for (const [id, doc] of mappings.entries()) {
+    if (doc.organizationId === orgId) mappings.delete(id);
+  }
+  // מחיקת policies
+  policies.delete(orgId);
+  // מחיקת keywords
+  customKeywords.delete(orgId);
+  // מחיקת alerts
+  for (const [id, doc] of alerts.entries()) {
+    if (doc.organizationId === orgId) alerts.delete(id);
+  }
+  return true;
+}
+
+// ── סטטיסטיקות מהירות לארגון ──
+export function getOrganizationStats(orgId) {
+  let totalBlocked = 0;
+  let lastBlockedAt = null;
+  let totalThreat = 0;
+
+  for (const doc of logs.values()) {
+    if (doc.organizationId === orgId) {
+      totalBlocked++;
+      totalThreat += doc.threatScore || 0;
+      if (!lastBlockedAt || doc.timestamp > lastBlockedAt) {
+        lastBlockedAt = doc.timestamp;
+      }
+    }
+  }
+
+  const avgThreatScore = totalBlocked > 0 ? Math.round(totalThreat / totalBlocked) : 0;
+  return { totalBlocked, lastBlockedAt, avgThreatScore };
+}
+
+// ── כל הארגונים עם סטטיסטיקות ──
+export function getAllOrganizationsWithStats() {
+  return [...organizations.values()].map((org) => ({
+    ...org,
+    stats: getOrganizationStats(org.id),
+  }));
+}
+
+// ── כל ה-API Keys של ארגון ──
+export function getApiKeysForOrg(orgId) {
+  const result = [];
+  for (const [key, oid] of apiKeys.entries()) {
+    if (oid === orgId) result.push(key);
+  }
+  return result;
 }
 
 // ── ניהול API Keys ──

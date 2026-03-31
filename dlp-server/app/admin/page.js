@@ -2,7 +2,7 @@
 
 // דף ראשי של ה-Admin Dashboard – CISO Enterprise Dashboard
 import { useState, useEffect, useCallback } from "react";
-import { Shield, AlertTriangle, Star, Users, TrendingUp, Bell, Settings, Tag, BarChart3, Gauge, Brain, Activity, Network } from "lucide-react";
+import { Shield, AlertTriangle, Star, Users, TrendingUp, Bell, Settings, Tag, BarChart3, Gauge, Brain, Activity, Network, Building2 } from "lucide-react";
 import KpiCard from "./components/KpiCard";
 import BlocksBarChart from "./components/BlocksBarChart";
 import CategoryPieChart from "./components/CategoryPieChart";
@@ -16,6 +16,7 @@ import ThreatScoreGauge from "./components/ThreatScoreGauge";
 import CustomKeywordsManager from "./components/CustomKeywordsManager";
 import ExportPdfButton from "./components/ExportPdfButton";
 import UsersTable from "./components/UsersTable";
+import ClientOnboardingWizard from "./components/ClientOnboardingWizard";
 
 // מסך טעינה – שלד אנימטיבי
 function LoadingSkeleton() {
@@ -299,6 +300,7 @@ const TABS = [
   { id: "ghostlayer",    label: "GhostLayer",     icon: Shield     },
   { id: "knowledge",     label: "Knowledge Graph", icon: Network    },
   { id: "health",        label: "בריאות מערכת",   icon: Activity   },
+  { id: "clients",       label: "ניהול לקוחות",   icon: Building2  },
   { id: "settings",      label: "הגדרות",         icon: Settings   },
   { id: "keywords",      label: "מילים מותאמות",  icon: Tag        },
 ];
@@ -314,6 +316,47 @@ export default function AdminDashboard() {
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [unreadAlerts, setUnreadAlerts] = useState(0);
   const [health, setHealth] = useState(null);
+
+  // מצב ניהול לקוחות
+  const [clients, setClients] = useState([]);
+  const [clientsLoading, setClientsLoading] = useState(false);
+  const [showWizard, setShowWizard] = useState(false);
+  const [deletingClientId, setDeletingClientId] = useState(null);
+  const [copiedKey, setCopiedKey] = useState(null);
+
+  // טעינת רשימת לקוחות
+  const fetchClients = useCallback(async () => {
+    setClientsLoading(true);
+    try {
+      const res = await fetch("/api/clients");
+      if (!res.ok) return;
+      const data = await res.json();
+      setClients(data.clients || []);
+    } catch {
+      // שגיאת רשת – המשך
+    } finally {
+      setClientsLoading(false);
+    }
+  }, []);
+
+  // מחיקת לקוח
+  async function handleDeleteClient(orgId) {
+    if (!confirm("האם למחוק את הלקוח? פעולה זו בלתי הפיכה.")) return;
+    setDeletingClientId(orgId);
+    try {
+      const res = await fetch(`/api/clients?id=${encodeURIComponent(orgId)}`, { method: "DELETE" });
+      if (res.ok) fetchClients();
+    } finally {
+      setDeletingClientId(null);
+    }
+  }
+
+  // העתקת API Key
+  async function handleCopyKey(key) {
+    await navigator.clipboard.writeText(key);
+    setCopiedKey(key);
+    setTimeout(() => setCopiedKey(null), 2000);
+  }
 
   // טעינת סטטיסטיקות
   const fetchStats = useCallback(async () => {
@@ -372,7 +415,8 @@ export default function AdminDashboard() {
     fetchTrends();
     fetchAlertCount();
     fetchHealth();
-  }, [fetchStats, fetchTrends, fetchAlertCount, fetchHealth]);
+    fetchClients();
+  }, [fetchStats, fetchTrends, fetchAlertCount, fetchHealth, fetchClients]);
 
   // Auto-refresh כל 30 שניות
   useEffect(() => {
@@ -607,6 +651,113 @@ export default function AdminDashboard() {
             {activeTab === "health" && (
               <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl p-6">
                 <SystemHealthMonitor health={health} />
+              </div>
+            )}
+
+            {/* ── טאב: ניהול לקוחות ── */}
+            {activeTab === "clients" && (
+              <div className="space-y-6">
+                <div className="flex items-center justify-between flex-wrap gap-3">
+                  <div className="flex items-center gap-3">
+                    <Building2 className="w-5 h-5 text-blue-400" />
+                    <h2 className="text-lg font-bold text-white">ניהול לקוחות</h2>
+                    <span className="text-sm text-slate-400">({clients.length} לקוחות)</span>
+                  </div>
+                  <button
+                    onClick={() => setShowWizard(true)}
+                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-xl transition-colors"
+                  >
+                    <span>+ הוסף לקוח חדש</span>
+                  </button>
+                </div>
+
+                {clientsLoading ? (
+                  <div className="animate-pulse space-y-2">
+                    {[...Array(3)].map((_, i) => <div key={i} className="bg-slate-800 h-14 rounded-xl" />)}
+                  </div>
+                ) : clients.length === 0 ? (
+                  <div className="text-center py-16 text-slate-400">
+                    <Building2 className="w-12 h-12 mx-auto mb-4 opacity-30" />
+                    <p className="text-lg">אין לקוחות עדיין</p>
+                    <p className="text-sm mt-1">לחץ על "הוסף לקוח חדש" כדי להתחיל</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto rounded-xl border border-slate-700/50">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-slate-800/60 border-b border-slate-700/50">
+                          <th className="text-right px-4 py-3 font-semibold text-slate-300">שם ארגון</th>
+                          <th className="text-right px-4 py-3 font-semibold text-slate-300">מזהה</th>
+                          <th className="text-right px-4 py-3 font-semibold text-slate-300">חבילה</th>
+                          <th className="text-center px-4 py-3 font-semibold text-slate-300">חסימות</th>
+                          <th className="text-center px-4 py-3 font-semibold text-slate-300">סטטוס</th>
+                          <th className="text-center px-4 py-3 font-semibold text-slate-300">תאריך יצירה</th>
+                          <th className="text-center px-4 py-3 font-semibold text-slate-300">פעולות</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {clients.map((client) => (
+                          <tr key={client.id} className="border-b border-slate-800 hover:bg-slate-800/40 transition-colors">
+                            <td className="px-4 py-3 text-white font-medium">{client.name}</td>
+                            <td className="px-4 py-3">
+                              <div className="flex items-center gap-1">
+                                <code className="text-xs text-slate-400 font-mono">{client.id.slice(0, 12)}…</code>
+                                <button
+                                  onClick={() => handleCopyKey(client.id)}
+                                  className="p-1 text-slate-500 hover:text-slate-300 transition-colors"
+                                  title="העתק מזהה"
+                                >
+                                  {copiedKey === client.id ? "✓" : <span className="text-xs">📋</span>}
+                                </button>
+                              </div>
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className={`text-xs px-2 py-1 rounded-full font-medium ${
+                                client.plan === "enterprise" ? "bg-violet-500/20 text-violet-300" :
+                                client.plan === "pro"        ? "bg-blue-500/20 text-blue-300" :
+                                                              "bg-slate-700 text-slate-300"
+                              }`}>
+                                {client.plan === "enterprise" ? "Enterprise" : client.plan === "pro" ? "מקצועי" : "בסיסי"}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-center text-slate-300">{client.stats?.totalBlocked || 0}</td>
+                            <td className="px-4 py-3 text-center">
+                              <span className={`text-xs px-2 py-1 rounded-full ${
+                                client.status === "active"    ? "bg-green-500/20 text-green-400" :
+                                client.status === "trial"     ? "bg-yellow-500/20 text-yellow-400" :
+                                                               "bg-red-500/20 text-red-400"
+                              }`}>
+                                {client.status === "active" ? "פעיל" : client.status === "trial" ? "ניסיון" : "מושהה"}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-center text-slate-400 text-xs">
+                              {new Date(client.createdAt).toLocaleDateString("he-IL")}
+                            </td>
+                            <td className="px-4 py-3 text-center">
+                              {client.id !== "default-org" && (
+                                <button
+                                  onClick={() => handleDeleteClient(client.id)}
+                                  disabled={deletingClientId === client.id}
+                                  className="text-rose-400 hover:text-rose-300 text-xs underline disabled:opacity-50 transition-colors"
+                                >
+                                  {deletingClientId === client.id ? "מוחק…" : "מחק"}
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {/* אשף הוספת לקוח */}
+                {showWizard && (
+                  <ClientOnboardingWizard
+                    onClose={() => setShowWizard(false)}
+                    onClientCreated={() => fetchClients()}
+                  />
+                )}
               </div>
             )}
 

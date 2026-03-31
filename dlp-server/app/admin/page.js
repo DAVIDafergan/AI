@@ -50,26 +50,42 @@ function LiveDot({ color = "bg-green-500" }) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function CopyButton({ text, label = "Copy" }) {
-  const [copied, setCopied] = useState(false);
+  const [state, setState] = useState("idle"); // "idle" | "copied" | "error"
 
   function handleCopy() {
-    navigator.clipboard.writeText(text).catch(() => {});
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    if (!navigator.clipboard) {
+      setState("error");
+      setTimeout(() => setState("idle"), 2500);
+      return;
+    }
+    navigator.clipboard.writeText(text).then(
+      () => {
+        setState("copied");
+        setTimeout(() => setState("idle"), 2000);
+      },
+      () => {
+        setState("error");
+        setTimeout(() => setState("idle"), 2500);
+      }
+    );
   }
+
+  const styles = {
+    idle   : "bg-slate-700/60 text-slate-300 border border-slate-600/50 hover:bg-slate-600/60 hover:text-white",
+    copied : "bg-green-500/20 text-green-400 border border-green-500/40",
+    error  : "bg-rose-500/20 text-rose-400 border border-rose-500/40",
+  };
 
   return (
     <button
       onClick={handleCopy}
       className={clsx(
         "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200",
-        copied
-          ? "bg-green-500/20 text-green-400 border border-green-500/40"
-          : "bg-slate-700/60 text-slate-300 border border-slate-600/50 hover:bg-slate-600/60 hover:text-white"
+        styles[state]
       )}
     >
-      {copied ? <CheckCheck className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-      {copied ? "Copied!" : label}
+      {state === "copied" ? <CheckCheck className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+      {state === "copied" ? "Copied!" : state === "error" ? "Copy failed" : label}
     </button>
   );
 }
@@ -96,7 +112,7 @@ function ProgressBar({ value, color = "bg-cyan-500", className = "" }) {
 function MetricCard({ icon: Icon, label, value, sub, color = "text-cyan-400", border = "border-cyan-500/20" }) {
   return (
     <div className={clsx("bg-slate-900/60 border rounded-xl p-4 flex items-start gap-3", border)}>
-      <div className={clsx("p-2 rounded-lg bg-slate-800/80", color.replace("text-", "text-").replace("400", "500/10"))}>
+      <div className="p-2 rounded-lg bg-slate-800/80">
         <Icon className={clsx("w-4 h-4", color)} />
       </div>
       <div className="min-w-0">
@@ -560,7 +576,7 @@ export default function CommandCenterDashboard() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-[#030712] text-white">
+    <div className="min-h-screen bg-[#030712] text-white" dir="ltr">
       {/* Top bar */}
       <header className="sticky top-0 z-40 flex items-center justify-between px-6 py-3 bg-[#030712]/90 backdrop-blur border-b border-slate-800/60">
         <div className="flex items-center gap-3">

@@ -82,7 +82,8 @@ const NER_PATTERNS = [
   // E-mail addresses
   { type: "EMAIL",        pattern: /\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b/g },
 
-  // Credit card numbers (Luhn-validated separately)
+  // Credit card numbers – broad initial match; downstream Luhn validation
+  // should be applied before treating a match as a confirmed credit card.
   { type: "CREDIT_CARD",  pattern: /\b(?:\d[ \-]?){13,16}\b/g },
 
   // Israeli national ID (9 digits)
@@ -103,7 +104,8 @@ const NER_PATTERNS = [
   // Hebrew person names: common Hebrew first names followed by a second word
   { type: "PERSON_HE",    pattern: /\b(?:דוד|יוסף|משה|אברהם|שרה|רחל|לאה|מרים|רבקה|יצחק|יעקב|שמואל|אהרן|נועה|תמר|אורי|עמית|גלי|רוני|נועם|עדן|ליאור)\s+[א-ת]{2,15}\b/g },
 
-  // API keys / tokens (long alphanumeric blobs ≥ 20 chars)
+  // API keys / tokens – broad match on known vendor prefixes; high false-positive
+  // rate for arbitrary long strings is intentional at this interception layer.
   { type: "API_KEY",      pattern: /\b[A-Za-z0-9+/=_\-]{20,}\b/g },
 
   // IPv4 addresses

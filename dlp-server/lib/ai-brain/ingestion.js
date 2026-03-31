@@ -212,7 +212,6 @@ export function ingestDocument(docId, content, metadata = {}, options = {}) {
       text       : chunk.text,
       tokens,
       tf,
-      sparse,
       embedding,
       metadata   : { ...metadata, charStart: chunk.start, charEnd: chunk.end },
       ingestedAt,

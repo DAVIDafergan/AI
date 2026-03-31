@@ -261,7 +261,7 @@ export async function triage(text) {
 
   return {
     safe          : true,
-    escalated     : !l2.hit && !l1.hit,
+    escalated     : true,  // L3 was invoked
     triggeredLayer: null,
     reason        : l2.ambiguous ? "Ambiguous – L3 cleared" : "All layers passed",
     details       : { l1, l2, l3 },

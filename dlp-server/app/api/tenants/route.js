@@ -37,7 +37,7 @@ export async function POST(request) {
     const apiKey = randomUUID();
     const { randomBytes } = await import("crypto");
     const apiSecret = randomBytes(32).toString("hex");
-    const slug = slugify(name);
+    const slug = slugify(name) || `tenant-${randomUUID()}`;
 
     const tenant = await Tenant.create({
       name,

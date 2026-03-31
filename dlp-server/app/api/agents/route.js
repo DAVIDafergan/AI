@@ -6,7 +6,7 @@ import { randomUUID } from "crypto";
 // GET /api/agents – list agents (optionally filter by tenantId)
 export async function GET(request) {
   try {
-    requireSuperAdmin(request);
+    await requireSuperAdmin(request);
     await connectMongo();
     const { searchParams } = new URL(request.url);
     const tenantId = searchParams.get("tenantId");
@@ -35,7 +35,7 @@ export async function GET(request) {
 // POST /api/agents – create agent
 export async function POST(request) {
   try {
-    requireSuperAdmin(request);
+    await requireSuperAdmin(request);
     await connectMongo();
     const body = await request.json();
     const { tenantId, name, environment } = body;

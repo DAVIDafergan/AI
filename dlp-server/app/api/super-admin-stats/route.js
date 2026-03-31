@@ -5,7 +5,7 @@ import { connectMongo, Tenant, Agent, TenantEvent } from "../../../lib/db.js";
 // GET /api/super-admin-stats – aggregated platform statistics
 export async function GET(request) {
   try {
-    requireSuperAdmin(request);
+    await requireSuperAdmin(request);
     await connectMongo();
 
     const now = new Date();

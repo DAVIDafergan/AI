@@ -5,7 +5,7 @@ import { connectMongo, TenantEvent } from "../../../lib/db.js";
 // GET /api/tenant-events – list events with filters + pagination
 export async function GET(request) {
   try {
-    requireSuperAdmin(request);
+    await requireSuperAdmin(request);
     await connectMongo();
     const { searchParams } = new URL(request.url);
     const tenantId  = searchParams.get("tenantId");
@@ -33,7 +33,7 @@ export async function GET(request) {
 // POST /api/tenant-events – create event
 export async function POST(request) {
   try {
-    requireSuperAdmin(request);
+    await requireSuperAdmin(request);
     await connectMongo();
     const body = await request.json();
     const { tenantId, agentId, eventType, severity, category, details, userEmail, ip } = body;

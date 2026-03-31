@@ -5,7 +5,7 @@ import { connectMongo, Tenant } from "../../../../lib/db.js";
 // GET /api/tenants/[id]
 export async function GET(request, { params }) {
   try {
-    requireSuperAdmin(request);
+    await requireSuperAdmin(request);
     await connectMongo();
     const tenant = await Tenant.findById(params.id).lean();
     if (!tenant) return NextResponse.json({ error: "Tenant not found" }, { status: 404 });
@@ -18,7 +18,7 @@ export async function GET(request, { params }) {
 // PUT /api/tenants/[id]
 export async function PUT(request, { params }) {
   try {
-    requireSuperAdmin(request);
+    await requireSuperAdmin(request);
     await connectMongo();
     const body = await request.json();
     const tenant = await Tenant.findByIdAndUpdate(params.id, body, { new: true, runValidators: true }).lean();
@@ -32,7 +32,7 @@ export async function PUT(request, { params }) {
 // DELETE /api/tenants/[id]
 export async function DELETE(request, { params }) {
   try {
-    requireSuperAdmin(request);
+    await requireSuperAdmin(request);
     await connectMongo();
     const tenant = await Tenant.findByIdAndDelete(params.id).lean();
     if (!tenant) return NextResponse.json({ error: "Tenant not found" }, { status: 404 });

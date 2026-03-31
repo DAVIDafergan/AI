@@ -463,8 +463,13 @@ function AuthGate({ onAuth }) {
     setErr(""); setLoading(true);
     try {
       const res = await fetch("/api/tenant-dashboard", { headers: { "x-api-key": key.trim() } });
-      if (res.ok) { onAuth(key.trim(), await res.json()); }
-      else { const d = await res.json(); setErr(d.error || "מפתח שגוי"); }
+      if (res.ok) {
+        onAuth(key.trim(), await res.json());
+      } else {
+        let msg = "מפתח שגוי";
+        try { const d = await res.json(); msg = d.error || msg; } catch {}
+        setErr(msg);
+      }
     } catch { setErr("שגיאת רשת — אנא נסה שוב"); }
     finally { setLoading(false); }
   };
@@ -513,7 +518,10 @@ export default function CommandCenterDashboard() {
     try {
       const res = await fetch("/api/tenant-dashboard", { headers: { "x-api-key": key } });
       if (res.ok) setData(await res.json());
-    } catch {}
+      else console.error("[GhostLayer] Refresh failed:", res.status);
+    } catch (err) {
+      console.error("[GhostLayer] Refresh error:", err);
+    }
   }, []);
 
   const handleAuth = useCallback((key, initialData) => {

@@ -6,6 +6,8 @@ import {
   Server, Users, Plus, Loader2, Link, Shield,
 } from "lucide-react";
 
+function formatNum(n) { return (n ?? 0).toLocaleString("he-IL"); }
+
 const STATUS_COLORS = {
   active:    "bg-green-500/20 text-green-400 border-green-700/40",
   trial:     "bg-blue-500/20 text-blue-400 border-blue-700/40",
@@ -54,7 +56,7 @@ function CopyButton({ text, label = "העתק" }) {
 }
 
 function ConnectionInstructions({ tenant, agents, superAdminKey, onAgentProvisioned }) {
-  const serverUrl = process.env.NEXT_PUBLIC_DLP_SERVER_URL || (typeof window !== "undefined" ? window.location.origin : "");
+  const serverUrl = process.env.NEXT_PUBLIC_DLP_SERVER_URL || "";
   const apiKey = tenant.apiKey || "";
   const primaryAgent = agents[0] || null;
   const [provName, setProvName] = useState("");
@@ -63,13 +65,13 @@ function ConnectionInstructions({ tenant, agents, superAdminKey, onAgentProvisio
   const [tab, setTab] = useState("server");
 
   const buildServerCmd = (agentKey) =>
-    `npx ghostlayer-agent --server-url=${serverUrl} --api-key=${apiKey} --agent-key=${agentKey} --dir=/company/docs --verbose`;
+    `npx ghostlayer-agent --server-url=${serverUrl || "<SERVER_URL>"} --api-key=${apiKey} --agent-key=${agentKey} --dir=/company/docs --verbose`;
 
   const buildDockerCmd = (agentKey) =>
     [
       "docker run -d \\",
       "  --name ghostlayer-agent \\",
-      `  -e DLP_SERVER_URL=${serverUrl} \\`,
+      `  -e DLP_SERVER_URL=${serverUrl || "<SERVER_URL>"} \\`,
       `  -e DLP_TENANT_API_KEY=${apiKey} \\`,
       `  -e DLP_AGENT_KEY=${agentKey} \\`,
       "  ghostlayer/agent:latest",
@@ -334,7 +336,7 @@ export default function TenantDetailView({ tenant, superAdminKey, onBack }) {
         ].map(([label, value, color]) => (
           <div key={label} className="bg-[#0d0d14] border border-slate-700/40 rounded-xl p-4">
             <div className="text-xs text-slate-500 mb-1">{label}</div>
-            <div className={`text-2xl font-bold font-mono ${color}`}>{value.toLocaleString("he-IL")}</div>
+            <div className={`text-2xl font-bold font-mono ${color}`}>{formatNum(value)}</div>
           </div>
         ))}
       </div>
@@ -371,9 +373,9 @@ export default function TenantDetailView({ tenant, superAdminKey, onBack }) {
                     <span className={`text-xs ${st.cls}`}>{st.label}</span>
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-xs text-slate-600">
-                    <span>מסמכים: <span className="text-slate-400">{(a.metrics?.documentsIndexed ?? 0).toLocaleString("he-IL")}</span></span>
-                    <span>סריקות: <span className="text-slate-400">{(a.metrics?.scansPerformed ?? 0).toLocaleString("he-IL")}</span></span>
-                    <span>חסימות: <span className="text-slate-400">{(a.metrics?.blocksExecuted ?? 0).toLocaleString("he-IL")}</span></span>
+                    <span>מסמכים: <span className="text-slate-400">{formatNum(a.metrics?.documentsIndexed)}</span></span>
+                    <span>סריקות: <span className="text-slate-400">{formatNum(a.metrics?.scansPerformed)}</span></span>
+                    <span>חסימות: <span className="text-slate-400">{formatNum(a.metrics?.blocksExecuted)}</span></span>
                     <span>תגובה:  <span className="text-slate-400">{a.metrics?.avgResponseTime ?? 0}ms</span></span>
                   </div>
                   {a.lastPing && (

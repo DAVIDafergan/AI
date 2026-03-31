@@ -2,6 +2,113 @@
 // TODO: להעביר ל-MongoDB/Redis בסביבת Production
 
 import { randomUUID } from "crypto";
+import mongoose from "mongoose";
+
+// ── MongoDB connection (used by new multi-tenant models) ──
+let mongooseConnection = null;
+
+export async function connectMongo() {
+  if (mongooseConnection && mongoose.connection.readyState === 1) {
+    return mongooseConnection;
+  }
+  const uri = process.env.MONGODB_URI || process.env.DATABASE_URL;
+  if (!uri) return null;
+  try {
+    mongooseConnection = await mongoose.connect(uri);
+    return mongooseConnection;
+  } catch (err) {
+    console.error("[connectMongo] Failed to connect:", err.message);
+    return null;
+  }
+}
+
+// ── Tenant Schema ──
+const TenantSchema = new mongoose.Schema(
+  {
+    name:          { type: String, required: true, unique: true },
+    slug:          { type: String, required: true, unique: true },
+    apiKey:        { type: String, required: true, unique: true },
+    apiSecret:     { type: String, required: true },
+    status:        { type: String, enum: ["active", "suspended", "trial", "expired"], default: "trial" },
+    plan:          { type: String, enum: ["starter", "professional", "enterprise"], default: "starter" },
+    maxAgents:     { type: Number, default: 5 },
+    maxUsersPerAgent: { type: Number, default: 50 },
+    contactEmail:  { type: String, required: true },
+    contactName:   { type: String },
+    domain:        { type: String },
+    settings: {
+      autoBlockThreshold: { type: Number, default: 80 },
+      retentionDays:      { type: Number, default: 30 },
+      allowedCategories:  [String],
+      webhookUrl:         { type: String },
+      slackChannel:       { type: String },
+    },
+    usage: {
+      totalScans:    { type: Number, default: 0 },
+      totalBlocks:   { type: Number, default: 0 },
+      lastActivity:  { type: Date },
+      monthlyScans:  { type: Number, default: 0 },
+      monthlyQuota:  { type: Number, default: 10000 },
+    },
+  },
+  { timestamps: true }
+);
+
+// ── Agent Schema ──
+const AgentSchema = new mongoose.Schema(
+  {
+    tenantId:    { type: mongoose.Schema.Types.ObjectId, ref: "Tenant", required: true },
+    name:        { type: String, required: true },
+    agentKey:    { type: String, required: true, unique: true },
+    syncStatus:  { type: String, enum: ["learning", "active", "offline", "error", "paused"], default: "learning" },
+    lastPing:    { type: Date },
+    lastPingIp:  { type: String },
+    version:     { type: String, default: "1.0.0" },
+    environment: { type: String, enum: ["production", "staging", "development"], default: "production" },
+    metrics: {
+      documentsIndexed: { type: Number, default: 0 },
+      vectorsStored:    { type: Number, default: 0 },
+      scansPerformed:   { type: Number, default: 0 },
+      blocksExecuted:   { type: Number, default: 0 },
+      avgResponseTime:  { type: Number, default: 0 },
+      uptime:           { type: Number, default: 0 },
+      lastScanAt:       { type: Date },
+    },
+    config: {
+      scanInterval:           { type: Number, default: 500 },
+      enableClipboard:        { type: Boolean, default: true },
+      enableFileWatch:        { type: Boolean, default: false },
+      enableNetworkInspection:{ type: Boolean, default: false },
+      customPatterns:         [String],
+    },
+    deployedAt: { type: Date, default: Date.now },
+  },
+  { timestamps: { createdAt: false, updatedAt: "updatedAt" } }
+);
+
+// ── TenantEvent Schema (audit log) ──
+const TenantEventSchema = new mongoose.Schema({
+  tenantId:  { type: mongoose.Schema.Types.ObjectId, ref: "Tenant", required: true },
+  agentId:   { type: mongoose.Schema.Types.ObjectId, ref: "Agent" },
+  eventType: {
+    type: String,
+    enum: ["scan", "block", "alert", "agent_connect", "agent_disconnect", "config_change", "user_action"],
+    required: true,
+  },
+  severity:  { type: String, enum: ["low", "medium", "high", "critical"], default: "low" },
+  category:  { type: String },
+  details:   { type: mongoose.Schema.Types.Mixed },
+  userEmail: { type: String },
+  ip:        { type: String },
+  timestamp: { type: Date, default: Date.now },
+});
+
+TenantEventSchema.index({ tenantId: 1, timestamp: -1 });
+TenantEventSchema.index({ timestamp: 1 }, { expireAfterSeconds: 90 * 24 * 60 * 60 }); // TTL 90 days
+
+export const Tenant = mongoose.models.Tenant || mongoose.model("Tenant", TenantSchema);
+export const Agent  = mongoose.models.Agent  || mongoose.model("Agent",  AgentSchema);
+export const TenantEvent = mongoose.models.TenantEvent || mongoose.model("TenantEvent", TenantEventSchema);
 
 // ── מאגרי נתונים ──
 const organizations = new Map(); // organizationId → orgData

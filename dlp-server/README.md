@@ -84,7 +84,22 @@ npm install
 
 ## הגדרת סביבה
 
+### הרצה דרך Docker (docker-compose)
+
+קובץ הסביבה חייב להיות ממוקם בתיקיית השורש של הפרויקט (ליד `docker-compose.yml`) ולהיקרא בדיוק `.env`:
+
 ```bash
+# מהתיקייה הראשית של הפרויקט (לא מתוך dlp-server)
+cp .env.example .env
+# ערוך את .env לפי הצורך
+```
+
+> **חשוב:** Docker מתעלם לחלוטין מקבצי `.env.local`. הוא מחפש רק קובץ בשם `.env` בתיקיית השורש (שם שמתקיים `docker-compose.yml`).
+
+### הרצה מקומית ללא Docker
+
+```bash
+cd dlp-server
 cp .env.example .env.local
 # ערוך את .env.local לפי הצורך
 ```

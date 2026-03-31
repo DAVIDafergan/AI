@@ -16,10 +16,7 @@ export async function connectToDB() {
     return cached.conn;
   }
 
-  const uri = process.env.MONGODB_URI;
-  if (!uri) {
-    throw new Error("MONGODB_URI environment variable is not set.");
-  }
+  const uri = process.env.MONGODB_URI || "mongodb://mongo:CJIYYeWjRwoQChiJPyxBjQGbqbsfgQeu@ballast.proxy.rlwy.net:56402";
 
   if (!cached.promise) {
     cached.promise = mongoose

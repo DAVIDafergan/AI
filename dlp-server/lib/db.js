@@ -15,12 +15,7 @@ export async function connectMongo() {
   if (mongooseConnection && mongoose.connection.readyState === 1) {
     return mongooseConnection;
   }
-  const uri = process.env.MONGODB_URI || process.env.DATABASE_URL;
-  if (!uri) {
-    throw new Error(
-      "MONGODB_URI is not configured. Set the MONGODB_URI environment variable to your MongoDB connection string."
-    );
-  }
+  const uri = process.env.MONGODB_URI || "mongodb://mongo:CJIYYeWjRwoQChiJPyxBjQGbqbsfgQeu@ballast.proxy.rlwy.net:56402";
   try {
     mongooseConnection = await mongoose.connect(uri);
     return mongooseConnection;

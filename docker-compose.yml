@@ -10,12 +10,23 @@ services:
       - "3000:3000"
     environment:
       NODE_ENV: production
-      # Pass the Super Admin MongoDB URI from the host environment
-      MONGODB_URI: ${MONGODB_URI}
+      # Use the bundled MongoDB service; override with MONGODB_URI env var if needed
+      MONGODB_URI: ${MONGODB_URI:-mongodb://ghostlayer-mongo:27017/ghostlayer}
       SUPER_ADMIN_KEY: ${SUPER_ADMIN_KEY}
     depends_on:
+      - mongo
       - redis
       - qdrant
+    networks:
+      - ghostlayer-net
+
+  # ── MongoDB – multi-tenant data store ───────────────────────────────────────
+  mongo:
+    image: mongo:7
+    container_name: ghostlayer-mongo
+    restart: unless-stopped
+    volumes:
+      - mongo_data:/data/db
     networks:
       - ghostlayer-net
 
@@ -39,6 +50,7 @@ services:
 
 volumes:
   qdrant_storage:
+  mongo_data:
 
 networks:
   ghostlayer-net:

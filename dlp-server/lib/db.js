@@ -7,18 +7,26 @@ import mongoose from "mongoose";
 // ── MongoDB connection (used by new multi-tenant models) ──
 let mongooseConnection = null;
 
+// Disable buffering globally – operations will throw immediately if there is no
+// active connection instead of silently queuing and timing out after 10 s.
+mongoose.set("bufferCommands", false);
+
 export async function connectMongo() {
   if (mongooseConnection && mongoose.connection.readyState === 1) {
     return mongooseConnection;
   }
   const uri = process.env.MONGODB_URI || process.env.DATABASE_URL;
-  if (!uri) return null;
+  if (!uri) {
+    throw new Error(
+      "MONGODB_URI is not configured. Set the MONGODB_URI environment variable to your MongoDB connection string."
+    );
+  }
   try {
     mongooseConnection = await mongoose.connect(uri);
     return mongooseConnection;
   } catch (err) {
     console.error("[connectMongo] Failed to connect:", err.message);
-    return null;
+    throw err;
   }
 }
 

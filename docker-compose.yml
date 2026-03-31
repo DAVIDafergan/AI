@@ -10,8 +10,8 @@ services:
       - "3000:3000"
     environment:
       NODE_ENV: production
-      # Use the bundled MongoDB service; override with MONGODB_URI env var if needed
-      MONGODB_URI: ${MONGODB_URI:-mongodb://ghostlayer-mongo:27017/ghostlayer}
+      # External Railway MongoDB – override with MONGODB_URI env var if needed
+      MONGODB_URI: ${MONGODB_URI:-mongodb://mongo:CJIYYeWjRwoQChiJPyxBjQGbqbsfgQeu@ballast.proxy.rlwy.net:56402}
       SUPER_ADMIN_KEY: ${SUPER_ADMIN_KEY}
     depends_on:
       - mongo

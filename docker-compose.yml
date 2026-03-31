@@ -1,0 +1,45 @@
+services:
+  # ── GhostLayer Portal (Next.js 14) ──────────────────────────────────────────
+  ghostlayer-portal:
+    build:
+      context: ./dlp-server
+      dockerfile: Dockerfile
+    container_name: ghostlayer-portal
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      # Pass the Super Admin MongoDB URI from the host environment
+      MONGODB_URI: ${MONGODB_URI}
+      SUPER_ADMIN_KEY: ${SUPER_ADMIN_KEY}
+    depends_on:
+      - redis
+      - qdrant
+    networks:
+      - ghostlayer-net
+
+  # ── Redis – local agent caching ──────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: ghostlayer-redis
+    restart: unless-stopped
+    networks:
+      - ghostlayer-net
+
+  # ── Qdrant – local vector database ──────────────────────────────────────────
+  qdrant:
+    image: qdrant/qdrant:v1.9.2
+    container_name: ghostlayer-qdrant
+    restart: unless-stopped
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    networks:
+      - ghostlayer-net
+
+volumes:
+  qdrant_storage:
+
+networks:
+  ghostlayer-net:
+    driver: bridge

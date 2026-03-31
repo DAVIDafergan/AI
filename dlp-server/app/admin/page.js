@@ -2,7 +2,7 @@
 
 // דף ראשי של ה-Admin Dashboard – CISO Enterprise Dashboard
 import { useState, useEffect, useCallback } from "react";
-import { Shield, AlertTriangle, Star, Users, TrendingUp, Bell, Settings, Tag, BarChart3, Gauge } from "lucide-react";
+import { Shield, AlertTriangle, Star, Users, TrendingUp, Bell, Settings, Tag, BarChart3, Gauge, Brain, Activity, Network } from "lucide-react";
 import KpiCard from "./components/KpiCard";
 import BlocksBarChart from "./components/BlocksBarChart";
 import CategoryPieChart from "./components/CategoryPieChart";
@@ -35,14 +35,272 @@ function LoadingSkeleton() {
   );
 }
 
+// ── GhostLayer Status Panel ──────────────────────────────────────────────────
+function GhostLayerPanel({ health }) {
+  if (!health) return null;
+  const { triage = {} } = health;
+  const layers = [
+    { name: "L1 – סריקה מהירה (Regex)",   hits: triage.l1Hits || 0, rate: triage.l1HitRate || "0.0", color: "text-green-400", bg: "bg-green-500/10 border-green-500/30" },
+    { name: "L2 – Hash Signatures",         hits: triage.l2Hits || 0, rate: triage.l2HitRate || "0.0", color: "text-blue-400",  bg: "bg-blue-500/10 border-blue-500/30"  },
+    { name: "L3 – ניתוח קונטקסטואלי (NLP)", hits: triage.l3Hits || 0, rate: triage.l3HitRate || "0.0", color: "text-purple-400",bg: "bg-purple-500/10 border-purple-500/30"},
+  ];
+  return (
+    <div className="space-y-4">
+      <h2 className="text-lg font-bold text-white flex items-center gap-2">
+        🛡️ GhostLayer Status
+        <span className="text-sm font-normal text-slate-400">
+          ({triage.totalRuns || 0} סריקות סה״כ)
+        </span>
+      </h2>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        {layers.map((layer) => (
+          <div key={layer.name} className={`rounded-xl border p-4 ${layer.bg}`}>
+            <p className="text-xs text-slate-400 mb-1">{layer.name}</p>
+            <p className={`text-2xl font-bold ${layer.color}`}>{layer.hits}</p>
+            <p className="text-xs text-slate-500 mt-1">שיעור זיהוי: {layer.rate}%</p>
+          </div>
+        ))}
+      </div>
+      <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl p-4 text-sm text-slate-300">
+        <span className="font-semibold text-white">סה״כ חסימות: </span>
+        {triage.totalUnsafe || 0} {' | '}
+        <span className="font-semibold text-white">סריקות: </span>
+        {triage.totalRuns || 0}
+      </div>
+    </div>
+  );
+}
+
+// ── Knowledge Graph Manager ──────────────────────────────────────────────────
+function KnowledgeGraphManager() {
+  const [entities, setEntities] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState(null);
+  const [newText, setNewText] = useState("");
+  const [newCategory, setNewCategory] = useState("CUSTOM");
+  const [msg, setMsg] = useState("");
+
+  const fetchEntities = useCallback(async () => {
+    try {
+      const res = await fetch("/api/knowledge-graph");
+      if (!res.ok) return;
+      const data = await res.json();
+      setEntities(data.entities || []);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { fetchEntities(); }, [fetchEntities]);
+
+  async function handleAdd(e) {
+    e.preventDefault();
+    if (!newText.trim()) return;
+    const res = await fetch("/api/knowledge-graph", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: newText.trim(), category: newCategory }),
+    });
+    if (res.ok) {
+      setMsg("✅ ישות נוספה");
+      setNewText("");
+      fetchEntities();
+      setTimeout(() => setMsg(""), 2000);
+    }
+  }
+
+  async function handleDelete(id) {
+    const res = await fetch(`/api/knowledge-graph?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (res.ok) { fetchEntities(); }
+  }
+
+  async function handleSearch(e) {
+    e.preventDefault();
+    if (!query.trim()) return;
+    const res = await fetch(`/api/knowledge-graph?q=${encodeURIComponent(query)}`);
+    if (res.ok) {
+      const data = await res.json();
+      setResults(data.results || []);
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <h2 className="text-lg font-bold text-white flex items-center gap-2">
+        🕸️ Knowledge Graph Manager
+        <span className="text-sm font-normal text-slate-400">({entities.length} ישויות)</span>
+      </h2>
+
+      {/* הוספת ישות */}
+      <form onSubmit={handleAdd} className="bg-slate-900/50 border border-slate-700/50 rounded-xl p-4 flex flex-col sm:flex-row gap-3">
+        <input
+          type="text"
+          placeholder="טקסט רגיש לאינדוס..."
+          value={newText}
+          onChange={(e) => setNewText(e.target.value)}
+          className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-500 outline-none focus:border-blue-500"
+          dir="rtl"
+        />
+        <select
+          value={newCategory}
+          onChange={(e) => setNewCategory(e.target.value)}
+          className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500"
+        >
+          {["CUSTOM", "PHONE", "EMAIL", "ID", "PASSWORD", "CREDIT_CARD", "ADDRESS", "PROJECT", "SECRET"].map((c) => (
+            <option key={c} value={c}>{c}</option>
+          ))}
+        </select>
+        <button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-2 rounded-lg font-medium transition-colors">
+          הוסף
+        </button>
+        {msg && <span className="self-center text-green-400 text-sm">{msg}</span>}
+      </form>
+
+      {/* חיפוש דמיון */}
+      <form onSubmit={handleSearch} className="flex gap-3">
+        <input
+          type="text"
+          placeholder="חיפוש ישויות דומות..."
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-500 outline-none focus:border-purple-500"
+          dir="rtl"
+        />
+        <button type="submit" className="bg-purple-600 hover:bg-purple-700 text-white text-sm px-4 py-2 rounded-lg font-medium transition-colors">
+          חפש
+        </button>
+        {results !== null && <button type="button" onClick={() => setResults(null)} className="text-slate-400 text-sm underline">נקה</button>}
+      </form>
+
+      {/* תוצאות חיפוש */}
+      {results !== null && (
+        <div className="bg-slate-900/50 border border-purple-500/30 rounded-xl p-4 space-y-2">
+          <p className="text-sm font-semibold text-purple-300 mb-2">תוצאות דמיון ({results.length}):</p>
+          {results.length === 0
+            ? <p className="text-slate-400 text-sm">לא נמצאו ישויות דומות</p>
+            : results.map((r) => (
+              <div key={r.id} className="flex justify-between text-sm text-slate-300">
+                <span dir="rtl">{r.text}</span>
+                <span className="text-purple-400 font-mono">{(r.similarity * 100).toFixed(1)}%</span>
+              </div>
+            ))
+          }
+        </div>
+      )}
+
+      {/* רשימת ישויות */}
+      {loading ? (
+        <div className="animate-pulse space-y-2">{[...Array(3)].map((_, i) => <div key={i} className="bg-slate-800 h-10 rounded-xl" />)}</div>
+      ) : entities.length === 0 ? (
+        <div className="text-center text-slate-400 py-8">אין ישויות רשומות עדיין</div>
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-slate-700/50">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-slate-800/60 border-b border-slate-700/50">
+                <th className="text-right px-4 py-3 font-semibold text-slate-300">טקסט</th>
+                <th className="text-center px-4 py-3 font-semibold text-slate-300">קטגוריה</th>
+                <th className="text-center px-4 py-3 font-semibold text-slate-300">נוצר</th>
+                <th className="text-center px-4 py-3 font-semibold text-slate-300">מחיקה</th>
+              </tr>
+            </thead>
+            <tbody>
+              {entities.map((e) => (
+                <tr key={e.id} className="border-b border-slate-800 hover:bg-slate-800/40">
+                  <td className="px-4 py-3 text-slate-200" dir="rtl">{e.text}</td>
+                  <td className="px-4 py-3 text-center"><span className="bg-slate-700 text-slate-200 text-xs px-2 py-1 rounded-full">{e.category}</span></td>
+                  <td className="px-4 py-3 text-center text-slate-400 text-xs">{new Date(e.addedAt).toLocaleDateString("he-IL")}</td>
+                  <td className="px-4 py-3 text-center">
+                    <button onClick={() => handleDelete(e.id)} className="text-rose-400 hover:text-rose-300 text-xs underline">מחק</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── System Health Monitor ────────────────────────────────────────────────────
+function SystemHealthMonitor({ health }) {
+  if (!health) {
+    return (
+      <div className="text-center text-slate-400 py-8">
+        <p>לא ניתן לטעון נתוני בריאות מערכת</p>
+      </div>
+    );
+  }
+
+  const isHealthy = health.status === "healthy";
+  const memPercent = Math.min(100, Math.round((health.memory?.heapUsedMB || 0) / 512 * 100));
+
+  return (
+    <div className="space-y-4">
+      <h2 className="text-lg font-bold text-white flex items-center gap-2">
+        💓 System Health Monitor
+        <span className={`text-sm font-semibold px-2 py-0.5 rounded-full ${isHealthy ? "bg-green-500/20 text-green-400" : "bg-red-500/20 text-red-400"}`}>
+          {isHealthy ? "תקין ✓" : "תקלה ✗"}
+        </span>
+      </h2>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl p-4">
+          <p className="text-xs text-slate-400">API Latency</p>
+          <p className="text-2xl font-bold text-white">{health.latency?.total || 0}ms</p>
+        </div>
+        <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl p-4">
+          <p className="text-xs text-slate-400">שימוש זיכרון</p>
+          <p className="text-2xl font-bold text-white">{health.memory?.heapUsedMB || 0}MB</p>
+          <div className="w-full bg-slate-700 rounded-full h-1.5 mt-2">
+            <div className={`h-1.5 rounded-full ${memPercent > 80 ? "bg-red-500" : "bg-green-500"}`} style={{ width: `${memPercent}%` }} />
+          </div>
+        </div>
+        <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl p-4">
+          <p className="text-xs text-slate-400">Uptime</p>
+          <p className="text-2xl font-bold text-white">{Math.floor((health.uptime || 0) / 60)}m</p>
+        </div>
+        <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl p-4">
+          <p className="text-xs text-slate-400">סביבה</p>
+          <p className="text-lg font-bold text-white capitalize">{health.environment || "—"}</p>
+        </div>
+      </div>
+
+      <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl p-4 space-y-2 text-sm">
+        <div className="flex justify-between text-slate-300">
+          <span>גרסה:</span><span className="font-mono">{health.version || "—"}</span>
+        </div>
+        <div className="flex justify-between text-slate-300">
+          <span>DB Latency:</span><span className="font-mono">{health.latency?.db || 0}ms</span>
+        </div>
+        <div className="flex justify-between text-slate-300">
+          <span>Knowledge Graph:</span><span>{health.knowledgeGraph?.totalEntities || 0} ישויות</span>
+        </div>
+        <div className="flex justify-between text-slate-300">
+          <span>חסימות כלל:</span><span>{health.store?.totalBlocked || 0}</span>
+        </div>
+        <div className="flex justify-between text-slate-300 text-xs text-slate-500">
+          <span>עדכון אחרון:</span>
+          <span>{health.timestamp ? new Date(health.timestamp).toLocaleTimeString("he-IL") : "—"}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // הגדרות טאבים
 const TABS = [
-  { id: "overview",  label: "סקירה כללית", icon: BarChart3  },
-  { id: "trends",    label: "מגמות",       icon: TrendingUp },
-  { id: "alerts",    label: "התראות",      icon: Bell       },
-  { id: "users",     label: "משתמשים",     icon: Users      },
-  { id: "settings",  label: "הגדרות",      icon: Settings   },
-  { id: "keywords",  label: "מילים מותאמות", icon: Tag      },
+  { id: "overview",      label: "סקירה כללית",   icon: BarChart3  },
+  { id: "trends",        label: "מגמות",          icon: TrendingUp },
+  { id: "alerts",        label: "התראות",         icon: Bell       },
+  { id: "users",         label: "משתמשים",        icon: Users      },
+  { id: "ghostlayer",    label: "GhostLayer",     icon: Shield     },
+  { id: "knowledge",     label: "Knowledge Graph", icon: Network    },
+  { id: "health",        label: "בריאות מערכת",   icon: Activity   },
+  { id: "settings",      label: "הגדרות",         icon: Settings   },
+  { id: "keywords",      label: "מילים מותאמות",  icon: Tag        },
 ];
 
 export default function AdminDashboard() {
@@ -55,6 +313,7 @@ export default function AdminDashboard() {
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [unreadAlerts, setUnreadAlerts] = useState(0);
+  const [health, setHealth] = useState(null);
 
   // טעינת סטטיסטיקות
   const fetchStats = useCallback(async () => {
@@ -95,21 +354,35 @@ export default function AdminDashboard() {
     }
   }, []);
 
+  // טעינת בריאות מערכת
+  const fetchHealth = useCallback(async () => {
+    try {
+      const res = await fetch("/api/health");
+      if (!res.ok) return;
+      const data = await res.json();
+      setHealth(data);
+    } catch {
+      // שגיאת רשת
+    }
+  }, []);
+
   // טעינה ראשונית
   useEffect(() => {
     fetchStats();
     fetchTrends();
     fetchAlertCount();
-  }, [fetchStats, fetchTrends, fetchAlertCount]);
+    fetchHealth();
+  }, [fetchStats, fetchTrends, fetchAlertCount, fetchHealth]);
 
-  // Auto-refresh כל 10 שניות
+  // Auto-refresh כל 30 שניות
   useEffect(() => {
     const interval = setInterval(() => {
       fetchStats();
       fetchAlertCount();
-    }, 10000);
+      fetchHealth();
+    }, 30000);
     return () => clearInterval(interval);
-  }, [fetchStats, fetchAlertCount]);
+  }, [fetchStats, fetchAlertCount, fetchHealth]);
 
   // עדכון מדיניות דרך API
   async function handleTogglePolicy(id) {
@@ -314,6 +587,27 @@ export default function AdminDashboard() {
             {/* ── טאב: משתמשים ── */}
             {activeTab === "users" && (
               <UsersTable />
+            )}
+
+            {/* ── טאב: GhostLayer Status ── */}
+            {activeTab === "ghostlayer" && (
+              <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl p-6">
+                <GhostLayerPanel health={health} />
+              </div>
+            )}
+
+            {/* ── טאב: Knowledge Graph ── */}
+            {activeTab === "knowledge" && (
+              <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl p-6">
+                <KnowledgeGraphManager />
+              </div>
+            )}
+
+            {/* ── טאב: בריאות מערכת ── */}
+            {activeTab === "health" && (
+              <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl p-6">
+                <SystemHealthMonitor health={health} />
+              </div>
             )}
 
             {/* ── טאב: הגדרות ── */}

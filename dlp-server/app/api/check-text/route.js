@@ -14,20 +14,29 @@ import {
   recordUserActivity,
 } from "../../../lib/db.js";
 import { getDefaultPolicies, SEVERITY_SCORES } from "../../../lib/policies.js";
+import { runTriageWithStats } from "../../../lib/triage.js";
 
 // ── תבניות Regex לזיהוי PII ──
 const ALL_PATTERNS = [
-  { id: "PHONE",          regex: /\b05\d[- ]?\d{3}[- ]?\d{4}\b/g,                                              label: "טלפון נייד",     policyId: "phone"     },
-  { id: "LANDLINE",       regex: /\b0(?:2|3|4|8|9)[- ]?\d{3}[- ]?\d{4}\b/g,                                     label: "טלפון נייח",     policyId: "landline"  },
-  { id: "CREDIT_CARD",    regex: /\b(?:4\d{3}|5[1-5]\d{2}|2[2-7]\d{2}|3[47]\d{2})[ -]?\d{4}[ -]?\d{4}[ -]?\d{4}\b|\b3[47]\d{2}[ -]?\d{6}[ -]?\d{5}\b/g, label: "כרטיס אשראי",    policyId: "credit_card"},
-  { id: "EMAIL",          regex: /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g,                           label: "אימייל",          policyId: "email"     },
-  { id: "ID",             regex: /\b\d{9}\b/g,                                                                   label: "תעודת זהות",     policyId: "israeli_id"},
-  { id: "IBAN",           regex: /\bIL\d{2}[ -]?\d{4}[ -]?\d{4}[ -]?\d{4}[ -]?\d{4}[ -]?\d{2,4}\b/gi,        label: "IBAN",            policyId: "iban"      },
-  { id: "IP_ADDRESS",     regex: /\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b/g, label: "כתובת IP",    policyId: "ip_address"},
-  { id: "VEHICLE",        regex: /\b\d{2,3}[- ]\d{2,3}[- ]\d{2,3}\b/g,                                         label: "מלוחית",         policyId: "vehicle"   },
-  { id: "BIRTHDATE",      regex: /\b(?:0[1-9]|[12]\d|3[01])[\/.\-](?:0[1-9]|1[0-2])[\/.\-](?:19|20)\d{2}\b/g, label: "תאריך לידה",    policyId: "birthdate" },
-  { id: "AWS_KEY",        regex: /\b(?:AKIA|ABIA|ACCA|ASIA)[0-9A-Z]{16}\b/g,                                    label: "מפתח AWS",       policyId: "api_key"   },
-  { id: "OPENAI_KEY",     regex: /\bsk-[a-zA-Z0-9]{20,}\b/g,                                                    label: "מפתח OpenAI",    policyId: "api_key"   },
+  { id: "PHONE",          regex: /\b05\d[- ]?\d{3}[- ]?\d{4}\b/g,                                              label: "טלפון נייד",                   policyId: "phone"       },
+  { id: "LANDLINE",       regex: /\b0(?:2|3|4|8|9)[- ]?\d{3}[- ]?\d{4}\b/g,                                     label: "טלפון נייח",                   policyId: "landline"    },
+  { id: "CREDIT_CARD",    regex: /\b(?:4\d{3}|5[1-5]\d{2}|2[2-7]\d{2}|3[47]\d{2})[ -]?\d{4}[ -]?\d{4}[ -]?\d{4}\b|\b3[47]\d{2}[ -]?\d{6}[ -]?\d{5}\b/g, label: "כרטיס אשראי", policyId: "credit_card" },
+  { id: "EMAIL",          regex: /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g,                           label: "אימייל",                        policyId: "email"       },
+  { id: "ID",             regex: /\b\d{9}\b/g,                                                                   label: "תעודת זהות",                   policyId: "israeli_id"  },
+  { id: "IBAN",           regex: /\bIL\d{2}[ -]?\d{4}[ -]?\d{4}[ -]?\d{4}[ -]?\d{4}[ -]?\d{2,4}\b/gi,        label: "IBAN",                          policyId: "iban"        },
+  { id: "IP_ADDRESS",     regex: /\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b/g, label: "כתובת IP",                 policyId: "ip_address"  },
+  { id: "VEHICLE",        regex: /\b\d{2,3}[- ]\d{2,3}[- ]\d{2,3}\b/g,                                         label: "מלוחית",                       policyId: "vehicle"     },
+  { id: "BIRTHDATE",      regex: /\b(?:0[1-9]|[12]\d|3[01])[\/.\-](?:0[1-9]|1[0-2])[\/.\-](?:19|20)\d{2}\b/g, label: "תאריך לידה",                  policyId: "birthdate"   },
+  // ── מפתחות API וסודות קוד ──
+  { id: "AWS_KEY",        regex: /\b(?:AKIA|ABIA|ACCA|ASIA)[0-9A-Z]{16}\b/g,                                    label: "מפתח AWS",                     policyId: "api_key",   severity: "critical" },
+  { id: "OPENAI_KEY",     regex: /\bsk-[a-zA-Z0-9]{20,}\b/g,                                                    label: "מפתח OpenAI",                  policyId: "api_key",   severity: "critical" },
+  { id: "GITHUB_TOKEN",   regex: /\b(?:ghp|gho|ghs|ghr|ghu)_[A-Za-z0-9]{36,}\b/g,                                  label: "GitHub Token",                 policyId: "api_key",   severity: "critical" },
+  { id: "GOOGLE_API_KEY", regex: /\bAIza[0-9A-Za-z\-_]{35}\b/g,                                                label: "Google API Key",               policyId: "api_key",   severity: "critical" },
+  { id: "JWT_TOKEN",      regex: /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,                         label: "JWT Token",                    policyId: "api_key",   severity: "critical" },
+  { id: "PEM_KEY",        regex: /-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/g,                                   label: "Private Key (PEM)",            policyId: "api_key",   severity: "critical" },
+  { id: "MONGODB_URI",    regex: /mongodb(?:\+srv)?:\/\/[^\s]+/g,                                               label: "MongoDB Connection String",    policyId: "api_key",   severity: "critical" },
+  { id: "POSTGRES_URI",   regex: /postgres(?:ql)?:\/\/[^\s]+/g,                                                 label: "PostgreSQL Connection String", policyId: "api_key",   severity: "critical" },
+  { id: "INTERNAL_IP",    regex: /\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})\b/g, label: "כתובת IP פנימית", policyId: "ip_address", severity: "high" },
 ];
 
 // מילות מפתח ברירת מחדל
@@ -129,6 +138,9 @@ export async function POST(request) {
 
     // מילות מפתח מותאמות
     const customKws = getCustomKeywords(organizationId);
+
+    // ── Triage מהיר לפני סריקה מלאה ──
+    const triageResult = runTriageWithStats(text);
 
     // מטמון עקביות: אותו ערך מקורי → אותו סינתטי
     const consistencyCache = new Map();
@@ -271,6 +283,8 @@ export async function POST(request) {
         replacements: replacements.map(({ original: _o, ...rest }) => rest),
         threatScore,
         detectionCount: replacements.length,
+        triageLevel: triageResult.level,
+        triageTiming: triageResult.timing,
         timestamp: new Date().toISOString(),
         organizationId,
         userEmail,

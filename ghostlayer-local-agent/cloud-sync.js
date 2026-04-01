@@ -73,6 +73,9 @@ export async function sendHeartbeat({
  * Send a single DLP action event to the cloud `/api/tenant-events` endpoint.
  * Only metadata is transmitted – no raw sensitive text is ever included.
  *
+ * This function is fire-and-forget: it silently absorbs network errors so that
+ * a cloud connectivity issue never interrupts the local DLP operation.
+ *
  * @param {{
  *   tenantApiKey: string,
  *   serverUrl?: string,

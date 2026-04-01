@@ -102,18 +102,15 @@ export async function POST(request) {
       ...(timestamp ? { timestamp: new Date(timestamp) } : {}),
     });
 
-    // Update tenant usage counters
-    if (resolvedEventType === "block") {
-      await Tenant.findByIdAndUpdate(resolvedTenantId, {
-        $inc: { "usage.totalBlocks": 1, "usage.totalScans": 1, "usage.monthlyScans": 1 },
-        $set: { "usage.lastActivity": new Date() },
-      });
-    } else {
-      await Tenant.findByIdAndUpdate(resolvedTenantId, {
-        $inc: { "usage.totalScans": 1, "usage.monthlyScans": 1 },
-        $set: { "usage.lastActivity": new Date() },
-      });
-    }
+    // Update tenant usage counters in a single operation
+    const usageIncrement = resolvedEventType === "block"
+      ? { "usage.totalBlocks": 1, "usage.totalScans": 1, "usage.monthlyScans": 1 }
+      : { "usage.totalScans": 1, "usage.monthlyScans": 1 };
+
+    await Tenant.findByIdAndUpdate(resolvedTenantId, {
+      $inc: usageIncrement,
+      $set: { "usage.lastActivity": new Date() },
+    });
 
     return NextResponse.json({ event }, { status: 201, headers: CORS_HEADERS });
   } catch (err) {

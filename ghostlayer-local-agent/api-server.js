@@ -28,6 +28,7 @@ let _serverUrl    = "";
 /**
  * Detect entity types present in the given text using lightweight regex checks.
  * Used for cloud telemetry metadata ONLY – no raw text is ever sent to the cloud.
+ * Returns entity type labels (never the actual matched values).
  *
  * @param {string} text
  * @returns {string[]}
@@ -38,13 +39,16 @@ function detectEntityTypes(text) {
     entities.push("EMAIL");
   if (/(?:\+?\d{1,3}[\s\-.]?)?\(?\d{2,4}\)?[\s\-.]?\d{3,4}[\s\-.]?\d{4}\b/.test(text))
     entities.push("PHONE");
+  // Credit card: 13-16 digit sequences with optional separators (same pattern as nlp-engine)
   if (/\b(?:\d[ \-]?){13,16}\b/.test(text))
     entities.push("BANK_ACCOUNT");
+  // Israeli ID: 9-digit number (same pattern as nlp-engine)
   if (/\b\d{9}\b/.test(text))
     entities.push("ID_NUMBER");
   if (/\b(password|secret|token|api.?key|credentials)\b/i.test(text))
     entities.push("CREDENTIALS");
-  // Vector similarity hit implies company-internal PERSON / ORG data
+  // PERSON is added when there's a vector similarity match against the indexed corpus
+  // (caller is responsible for only invoking this function when a match was found)
   entities.push("PERSON");
   return [...new Set(entities)];
 }

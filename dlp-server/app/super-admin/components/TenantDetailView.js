@@ -55,29 +55,19 @@ function CopyButton({ text, label = "העתק" }) {
   );
 }
 
-function ConnectionInstructions({ tenant, agents, superAdminKey, onAgentProvisioned }) {
+function ConnectionInstructions({ tenant, superAdminKey, onAgentProvisioned }) {
   const serverUrl =
     process.env.NEXT_PUBLIC_DLP_SERVER_URL ||
     (typeof window !== "undefined" ? window.location.origin : "");
   const apiKey = tenant.apiKey || "";
-  const primaryAgent = agents[0] || null;
   const [provName, setProvName] = useState("");
   const [provisioning, setProvisioning] = useState(false);
   const [provError, setProvError] = useState("");
-  const [tab, setTab] = useState("server");
+  const [tab, setTab] = useState("central-agent");
 
-  const buildServerCmd = (agentKey) =>
-    `npx ghostlayer-agent --server-url=${serverUrl || "<SERVER_URL>"} --api-key=${apiKey} --agent-key=${agentKey} --dir=/company/docs --verbose`;
-
-  const buildDockerCmd = (agentKey) =>
-    [
-      "docker run -d \\",
-      "  --name ghostlayer-agent \\",
-      `  -e DLP_SERVER_URL=${serverUrl || "<SERVER_URL>"} \\`,
-      `  -e DLP_TENANT_API_KEY=${apiKey} \\`,
-      `  -e DLP_AGENT_KEY=${agentKey} \\`,
-      "  ghostlayer/agent:latest",
-    ].join("\n");
+  // Full npx command for the Central AI Agent (runs ONCE on the file server)
+  const centralAgentCmd =
+    `npx ghostlayer-agent --server-url=${serverUrl || "<SERVER_URL>"} --api-key=${apiKey} --dir="C:\\Company_Shared_Drive" --local-port=4000`;
 
   const handleProvision = async () => {
     if (!provName.trim()) return;
@@ -100,16 +90,15 @@ function ConnectionInstructions({ tenant, agents, superAdminKey, onAgentProvisio
   };
 
   const tabs = [
-    { id: "server",    label: "חיבור שרת"      },
-    { id: "shield",    label: "מגן עובדים"     },
-    { id: "extension", label: "תוסף דפדפן"     },
+    { id: "central-agent", label: "סוכן AI מרכזי (לשרת הארגון)" },
+    { id: "extension",     label: "מגן עובדים (תוסף דפדפן)"    },
   ];
 
   return (
-    <div className="bg-[#0d0d14] border border-slate-700/40 rounded-xl overflow-hidden">
+    <div className="bg-[#0d0d14] border border-slate-700/40 rounded-xl overflow-hidden" dir="rtl">
       <div className="flex items-center gap-2 px-4 pt-4 pb-2 border-b border-slate-800">
         <Link size={14} className="text-cyan-400" />
-        <span className="text-sm text-slate-300 font-medium">הוראות חיבור</span>
+        <span className="text-sm text-slate-300 font-medium">הוראות התקנה והפעלה</span>
       </div>
 
       {/* Tabs */}
@@ -126,145 +115,164 @@ function ConnectionInstructions({ tenant, agents, superAdminKey, onAgentProvisio
 
       <div className="p-4 space-y-4">
 
-        {/* ── שלב 1: חיבור שרת ── */}
-        {tab === "server" && (
+        {/* ── טאב 1: סוכן AI מרכזי ── */}
+        {tab === "central-agent" && (
           <div className="space-y-4">
-            <p className="text-xs text-slate-400">
-              הרץ פקודה זו על שרת החברה כדי לחבר את מנוע ה-AI שיסרוק את מסמכי הארגון.
-            </p>
+
+            {/* כותרת ותיאור */}
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <Server size={14} className="text-cyan-400" />
+                <span className="text-xs font-semibold text-slate-200">סוכן AI מרכזי לשרת הארגון</span>
+              </div>
+              <p className="text-xs text-slate-400 leading-relaxed">
+                הסוכן המרכזי מותקן <strong className="text-slate-300">פעם אחת בלבד</strong> על שרת הקבצים הארגוני המרכזי.
+                הוא סורק את הכונן המשותף, לומד את תוכן הנתונים הארגוניים, ובונה מוח AI מקומי המשמש
+                את תוספי הדפדפן של העובדים לזיהוי מידע רגיש בזמן אמת.
+                <span className="block mt-1 text-slate-500">⚠️ כל העיבוד מתבצע מקומית — שום תוכן רגיש אינו עוזב את השרת.</span>
+              </p>
+            </div>
+
+            {/* שלבי התקנה */}
+            <ol className="space-y-2">
+              {[
+                "ודא כי Node.js גרסה 18 ומעלה מותקנת על שרת הקבצים.",
+                'הרץ את הפקודה הבאה בחלון הפקודות (CMD / PowerShell) על שרת הקבצים — הפקודה תסרוק את הכונן, תיצור מוח AI מקומי, ותפעיל שרת API פנימי.',
+                'לאחר סיום הסריקה, הסוכן ימשיך לרוץ ויקשיב על הפורט המוגדר. ניתן לרשום אותו כשירות מערכת (Windows Service / systemd) להפעלה אוטומטית.',
+              ].map((step, i) => (
+                <li key={i} className="flex items-start gap-2">
+                  <span className="flex-shrink-0 w-5 h-5 rounded-full bg-cyan-500/20 border border-cyan-500/40 text-cyan-400 text-[9px] font-bold flex items-center justify-center mt-0.5">
+                    {i + 1}
+                  </span>
+                  <span className="text-xs text-slate-300 leading-relaxed">{step}</span>
+                </li>
+              ))}
+            </ol>
+
+            {/* פקודת הרצה */}
+            <div className="bg-slate-950 border border-slate-700/40 rounded-lg overflow-hidden">
+              <div className="flex items-center justify-between px-3 py-2 bg-slate-900/70 border-b border-slate-700/40">
+                <div className="flex items-center gap-1.5">
+                  <Terminal size={11} className="text-slate-500" />
+                  <span className="text-[10px] text-slate-400">פקודת הפעלה — שרת הקבצים</span>
+                </div>
+                <CopyButton text={centralAgentCmd} label="העתק פקודה" />
+              </div>
+              <div className="px-3 py-3 overflow-x-auto" dir="ltr">
+                <code className="text-[11px] text-green-400 font-mono whitespace-pre">{centralAgentCmd}</code>
+              </div>
+            </div>
+
+            {/* פרמטרים */}
+            <div className="bg-slate-900/40 border border-slate-700/30 rounded-lg p-3 space-y-1.5 text-[10px]">
+              <div className="text-slate-400 font-medium mb-2">פירוט הפרמטרים:</div>
+              {[
+                ["--server-url", "כתובת לוח הבקרה של GhostLayer (מוגדר אוטומטית)"],
+                ["--api-key", "מפתח ה-API הייחודי לדייר זה"],
+                ['--dir', 'נתיב לכונן המשותף הארגוני (לדוגמה: C:\\Company_Shared_Drive)'],
+                ["--local-port", "פורט שרת ה-API המקומי שיאזין לבקשות מתוספי הדפדפן (ברירת מחדל: 4000)"],
+              ].map(([param, desc]) => (
+                <div key={param} className="flex gap-2">
+                  <code className="text-cyan-400/80 font-mono shrink-0">{param}</code>
+                  <span className="text-slate-500">{desc}</span>
+                </div>
+              ))}
+            </div>
+
+            {/* מפתח API */}
+            <div className="flex items-center gap-2 bg-slate-900/60 border border-slate-700/40 rounded-lg px-3 py-2">
+              <span className="text-[10px] text-slate-500">מפתח API של הדייר:</span>
+              <code className="text-[10px] text-cyan-400 font-mono flex-1 truncate" dir="ltr">{apiKey}</code>
+              <CopyButton text={apiKey} />
+            </div>
 
             {/* Provision new agent */}
             <div className="bg-slate-900/60 border border-slate-700/40 rounded-lg p-3 space-y-2">
-              <div className="text-xs text-slate-400 font-medium">יצירת סוכן חדש</div>
+              <div className="text-xs text-slate-400 font-medium">רישום סוכן חדש בלוח הבקרה</div>
               <div className="flex gap-2">
                 <input
                   value={provName}
                   onChange={(e) => setProvName(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleProvision()}
-                  placeholder="שם הסוכן (למשל: main-server)"
+                  placeholder="שם הסוכן (למשל: main-file-server)"
                   className="flex-1 bg-slate-900/60 border border-slate-700/60 rounded px-3 py-1.5 text-xs text-slate-200 outline-none focus:border-cyan-600/60 font-mono"
                   dir="ltr"
                 />
                 <button onClick={handleProvision} disabled={!provName.trim() || provisioning}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-cyan-500/20 border border-cyan-600/40 rounded text-xs text-cyan-300 hover:bg-cyan-500/30 disabled:opacity-40 transition-colors">
                   {provisioning ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />}
-                  צור סוכן
+                  רשום סוכן
                 </button>
               </div>
               {provError && <p className="text-xs text-red-400">{provError}</p>}
             </div>
-
-            {/* Show commands for existing agents */}
-            {agents.length === 0 ? (
-              <p className="text-xs text-slate-600">צור סוכן ראשון למעלה כדי לקבל פקודות חיבור.</p>
-            ) : agents.map((a) => {
-              const cmd = buildServerCmd(a.agentKey);
-              return (
-                <div key={a._id} className="bg-slate-950 border border-slate-700/40 rounded-lg overflow-hidden">
-                  <div className="flex items-center justify-between px-3 py-2 bg-slate-900/70 border-b border-slate-700/40">
-                    <div className="flex items-center gap-1.5">
-                      <Terminal size={11} className="text-slate-500" />
-                      <span className="text-[10px] text-slate-400">{a.name}</span>
-                    </div>
-                    <CopyButton text={cmd} />
-                  </div>
-                  <div className="px-3 py-2.5 overflow-x-auto">
-                    <code className="text-[11px] text-green-400 font-mono whitespace-pre">{cmd}</code>
-                  </div>
-                  <div className="px-3 pb-2 flex items-center gap-2">
-                    <span className="text-[10px] text-slate-600">מפתח סוכן:</span>
-                    <code className="text-[10px] text-cyan-400/70 font-mono">{a.agentKey}</code>
-                    <CopyButton text={a.agentKey} />
-                  </div>
-                </div>
-              );
-            })}
-
-            {/* API Key */}
-            <div className="flex items-center gap-2 bg-slate-900/60 border border-slate-700/40 rounded-lg px-3 py-2">
-              <span className="text-[10px] text-slate-500">מפתח API של הדייר:</span>
-              <code className="text-[10px] text-cyan-400 font-mono flex-1 truncate">{apiKey}</code>
-              <CopyButton text={apiKey} />
-            </div>
           </div>
         )}
 
-        {/* ── שלב 2: מגן עובדים ── */}
-        {tab === "shield" && (
-          <div className="space-y-4">
-            <p className="text-xs text-slate-400">
-              הרץ את הסקריפט על מחשבי העובדים (דרך Intune / Jamf) להתקנת מגן ה-DLP.
-            </p>
-
-            {[
-              {
-                title: "Windows – PowerShell / Intune",
-                icon: "🪟",
-                script: `# Windows (PowerShell / Intune)
-$GL_KEY = "${apiKey}"
-$GL_SERVER = "${serverUrl}"
-Invoke-WebRequest -Uri "$GL_SERVER/downloads/GhostLayerShield.exe" -OutFile "$env:TEMP\\GhostLayerShield.exe"
-Start-Process "$env:TEMP\\GhostLayerShield.exe" -ArgumentList "/S /KEY=$GL_KEY /SERVER=$GL_SERVER" -Wait`,
-              },
-              {
-                title: "macOS – Bash / Jamf",
-                icon: "🍎",
-                script: `# macOS (Jamf / Terminal)
-export GL_KEY="${apiKey}"
-export GL_SERVER="${serverUrl}"
-curl -fsSL "$GL_SERVER/downloads/GhostLayerShield.dmg" -o /tmp/GhostLayerShield.dmg
-hdiutil attach /tmp/GhostLayerShield.dmg -nobrowse -quiet
-sudo installer -pkg /Volumes/GhostLayerShield/GhostLayerShield.pkg -target /
-hdiutil detach /Volumes/GhostLayerShield -quiet`,
-              },
-            ].map(({ title, icon, script }) => (
-              <div key={title} className="bg-slate-950 border border-slate-700/40 rounded-lg overflow-hidden">
-                <div className="flex items-center justify-between px-3 py-2 bg-slate-900/70 border-b border-slate-700/40">
-                  <div className="flex items-center gap-1.5">
-                    <span>{icon}</span>
-                    <span className="text-[10px] text-slate-400">{title}</span>
-                  </div>
-                  <CopyButton text={script} />
-                </div>
-                <pre className="px-3 py-2.5 text-[10px] text-green-300 font-mono overflow-x-auto whitespace-pre">{script}</pre>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* ── שלב 3: תוסף דפדפן ── */}
+        {/* ── טאב 2: מגן עובדים (תוסף דפדפן) ── */}
         {tab === "extension" && (
-          <div className="space-y-3">
-            <p className="text-xs text-slate-400">
-              התוסף מגן על פעילות הדפדפן — חוסם שיתוף מידע רגיש לאתרים חיצוניים.
-            </p>
+          <div className="space-y-4">
+
+            {/* כותרת ותיאור */}
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <Shield size={14} className="text-green-400" />
+                <span className="text-xs font-semibold text-slate-200">מגן עובדים — תוסף דפדפן</span>
+              </div>
+              <p className="text-xs text-slate-400 leading-relaxed">
+                תוסף הדפדפן מגן על פעילות הגלישה של כל עובד בזמן אמת. בכל פעם שעובד מנסה לשתף או
+                להדביק טקסט באתר חיצוני, התוסף שולח את הקטע <strong className="text-slate-300">לסוכן ה-AI המרכזי</strong>
+                {" "}(הרץ על שרת הקבצים) לבדיקה מקומית. אם הקטע מכיל מידע ארגוני רגיש — הפעולה נחסמת מיידית.
+                <span className="block mt-1 text-slate-500">⚠️ הבדיקה מתבצעת לחלוטין בתוך הרשת הפנימית — שום מידע לא מגיע לענן.</span>
+              </p>
+            </div>
+
+            {/* שלבי הגדרה */}
             <ol className="space-y-2">
               {[
-                `הורד את תוסף Chrome מ: ${serverUrl}/extension/ghostlayer.crx`,
-                "פתח Chrome → ניהול תוספים → מצב מפתח → גרור להתקנה",
-                `בהגדרות התוסף, הכנס כתובת שרת: ${serverUrl}`,
-                `הכנס מפתח API: ${apiKey}`,
-                `לחץ "שמור והפעל" – ההגנה תתחיל מיד`,
+                `הורד את תוסף Chrome הארגוני מהכתובת: ${serverUrl}/extension/ghostlayer.crx`,
+                "פתח Chrome ועבור אל: chrome://extensions → הפעל מצב מפתח → גרור את קובץ ה-.crx להתקנה.",
+                "לאחר ההתקנה, פתח את הגדרות התוסף (לחץ על האייקון ← הגדרות).",
+                'בשדה "כתובת הסוכן המקומי", הכנס את כתובת ה-IP של שרת הקבצים הארגוני עם הפורט — לדוגמה: http://10.0.0.50:4000',
+                `בשדה "מפתח API", הכנס את: ${apiKey}`,
+                'לחץ "שמור ואמת חיבור" — התוסף יתחבר לסוכן המרכזי וההגנה תופעל מיידית.',
               ].map((step, i) => (
                 <li key={i} className="flex items-start gap-2">
-                  <span className="flex-shrink-0 w-5 h-5 rounded-full bg-cyan-500/20 border border-cyan-500/40 text-cyan-400 text-[9px] font-bold flex items-center justify-center mt-0.5">
+                  <span className="flex-shrink-0 w-5 h-5 rounded-full bg-green-500/20 border border-green-500/40 text-green-400 text-[9px] font-bold flex items-center justify-center mt-0.5">
                     {i + 1}
                   </span>
-                  <span className="text-xs text-slate-300">{step}</span>
+                  <span className="text-xs text-slate-300 leading-relaxed">{step}</span>
                 </li>
               ))}
             </ol>
-            <div className="bg-slate-900/60 border border-slate-700/40 rounded-lg px-3 py-2 space-y-1.5">
+
+            {/* פרטי חיבור */}
+            <div className="bg-slate-900/60 border border-slate-700/40 rounded-lg px-3 py-3 space-y-2">
+              <div className="text-[10px] text-slate-400 font-medium mb-1">פרטי חיבור לתוסף:</div>
               <div className="flex items-center gap-2">
-                <span className="text-[10px] text-slate-500">מפתח API:</span>
-                <code className="text-[10px] text-cyan-400 font-mono flex-1 truncate">{apiKey}</code>
+                <span className="text-[10px] text-slate-500">כתובת הסוכן המקומי:</span>
+                <code className="text-[10px] text-yellow-400 font-mono" dir="ltr">http://&lt;IP-שרת-הקבצים&gt;:4000</code>
+              </div>
+              <div className="text-[10px] text-slate-600 pr-2">
+                לדוגמה: <code className="text-yellow-400/70 font-mono" dir="ltr">http://10.0.0.50:4000</code>
+                {" "}(החלף בכתובת ה-IP בפועל של שרת הקבצים שלך)
+              </div>
+              <div className="flex items-center gap-2 pt-1 border-t border-slate-800">
+                <span className="text-[10px] text-slate-500">מפתח API של הדייר:</span>
+                <code className="text-[10px] text-cyan-400 font-mono flex-1 truncate" dir="ltr">{apiKey}</code>
                 <CopyButton text={apiKey} />
               </div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] text-slate-500">כתובת שרת:</span>
-                <code className="text-[10px] text-cyan-400 font-mono flex-1 truncate">{serverUrl}</code>
-                <CopyButton text={serverUrl} />
-              </div>
+            </div>
+
+            {/* הערת פריסה */}
+            <div className="flex items-start gap-2 bg-blue-500/5 border border-blue-500/20 rounded-lg px-3 py-2">
+              <Users size={12} className="text-blue-400 shrink-0 mt-0.5" />
+              <p className="text-[10px] text-slate-400 leading-relaxed">
+                <strong className="text-slate-300">פריסה ארגונית:</strong> ניתן להפיץ את התוסף לכלל תחנות העבודה דרך
+                {" "}<strong className="text-slate-300">Microsoft Intune</strong> (Windows) או{" "}
+                <strong className="text-slate-300">Jamf Pro</strong> (macOS) תוך הגדרה מרכזית של כתובת הסוכן ומפתח ה-API
+                — ללא צורך בהגדרה ידנית בכל מחשב.
+              </p>
             </div>
           </div>
         )}
@@ -346,7 +354,6 @@ export default function TenantDetailView({ tenant, superAdminKey, onBack }) {
       {/* הוראות חיבור */}
       <ConnectionInstructions
         tenant={tenant}
-        agents={agents}
         superAdminKey={superAdminKey}
         onAgentProvisioned={fetchData}
       />

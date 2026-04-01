@@ -1,7 +1,7 @@
 /**
  * cloud-sync.js – Sends telemetry metadata to the GhostLayer SaaS dashboard.
  *
- * CRITICAL: Only aggregate metadata counts are transmitted.
+ * CRITICAL: Only aggregate metadata counts and event metadata are transmitted.
  *           Sensitive content, entity names, file paths, embeddings, or any
  *           file content NEVER leave this machine.
  */
@@ -67,6 +67,54 @@ export async function sendHeartbeat({
   }
 
   return { ok: response.ok, status: response.status, body };
+}
+
+/**
+ * Send a single DLP action event to the cloud `/api/tenant-events` endpoint.
+ * Only metadata is transmitted – no raw sensitive text is ever included.
+ *
+ * This function is fire-and-forget: it silently absorbs network errors so that
+ * a cloud connectivity issue never interrupts the local DLP operation.
+ *
+ * @param {{
+ *   tenantApiKey: string,
+ *   serverUrl?: string,
+ *   userEmail?: string,
+ *   action: "BLOCKED" | "MASKED",
+ *   sensitivityLevel?: string,
+ *   matchedEntities?: string[],
+ * }} options
+ * @returns {Promise<void>}
+ */
+export async function sendTenantEvent({
+  tenantApiKey,
+  serverUrl,
+  userEmail       = "unknown",
+  action,
+  sensitivityLevel = "medium",
+  matchedEntities  = [],
+}) {
+  const baseUrl = (serverUrl || DEFAULT_SERVER_URL).replace(/\/$/, "");
+  const url = `${baseUrl}/api/tenant-events`;
+
+  const payload = {
+    tenantApiKey,
+    userEmail,
+    action,
+    sensitivityLevel,
+    matchedEntities,
+    timestamp: new Date().toISOString(),
+  };
+
+  try {
+    await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    // Network errors are non-critical – do not block local operation
+  }
 }
 
 /**

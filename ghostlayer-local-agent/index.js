@@ -231,6 +231,8 @@ async function startLiveMode({ opts, files, scanResults, localPort, verbose }) {
   const server = await startApiServer({
     port: localPort,
     verbose,
+    apiKey:    opts.apiKey,
+    serverUrl: opts.serverUrl,
     onCheck: (result) => {
       totalScans++;
       if (result.blocked) totalBlocks++;

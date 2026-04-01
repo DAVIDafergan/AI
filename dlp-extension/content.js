@@ -61,10 +61,11 @@ function debounce(fn, delay) {
 function loadSettings() {
   return new Promise((resolve) => {
     try {
-      chrome.storage.local.get(["localAgentUrl", "tenantApiKey"], (data) => {
+      chrome.storage.local.get(["localAgentUrl", "tenantApiKey", "employeeEmail"], (data) => {
         if (!chrome.runtime.lastError) {
           if (data.localAgentUrl) localAgentUrl = data.localAgentUrl;
           if (data.tenantApiKey)  tenantApiKey  = data.tenantApiKey;
+          if (data.employeeEmail) userEmail     = data.employeeEmail;
         }
         resolve();
       });
@@ -79,6 +80,8 @@ function loadSettings() {
    1C. User Email Auto-Detection
    ───────────────────────────────────────────── */
 function initUserEmail() {
+  // If the employee already set their email in Options, don't override it.
+  if (userEmail && userEmail !== "anonymous@unknown.com") return;
   try {
     chrome.runtime.sendMessage({ type: "GET_USER_EMAIL" }, (response) => {
       if (chrome.runtime.lastError) return;

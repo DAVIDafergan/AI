@@ -1,8 +1,14 @@
 import { NextResponse } from "next/server";
 import { requireSuperAdmin } from "../../../lib/superAdminAuth.js";
-import { connectMongo, TenantEvent } from "../../../lib/db.js";
+import { connectMongo, Tenant, TenantEvent } from "../../../lib/db.js";
 
-// GET /api/tenant-events – list events with filters + pagination
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin":  "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, x-super-admin-key",
+};
+
+// GET /api/tenant-events – list events with filters + pagination (super-admin only)
 export async function GET(request) {
   try {
     await requireSuperAdmin(request);
@@ -24,39 +30,97 @@ export async function GET(request) {
       TenantEvent.countDocuments(filter),
     ]);
 
-    return NextResponse.json({ events, total, page, pages: Math.ceil(total / limit) });
+    return NextResponse.json({ events, total, page, pages: Math.ceil(total / limit) }, { headers: CORS_HEADERS });
   } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: err.status || 500 });
+    return NextResponse.json({ error: err.message }, { status: err.status || 500, headers: CORS_HEADERS });
   }
 }
 
 // POST /api/tenant-events – create event
+// Accepts either super-admin auth OR a valid tenantApiKey in the body (from local agents).
 export async function POST(request) {
   try {
-    await requireSuperAdmin(request);
     await connectMongo();
     const body = await request.json();
-    const { tenantId, agentId, eventType, severity, category, details, userEmail, ip } = body;
 
-    if (!tenantId || !eventType) {
-      return NextResponse.json({ error: "tenantId and eventType are required" }, { status: 400 });
+    const {
+      // Agent-originated event fields
+      tenantApiKey,
+      action,
+      sensitivityLevel,
+      matchedEntities,
+      // Super-admin / legacy fields
+      tenantId: bodyTenantId,
+      agentId,
+      eventType: bodyEventType,
+      severity: bodySeverity,
+      category,
+      details,
+      userEmail,
+      ip,
+      timestamp,
+    } = body;
+
+    let resolvedTenantId;
+    let resolvedEventType;
+    let resolvedSeverity;
+    let resolvedDetails;
+
+    if (tenantApiKey) {
+      // ── Auth path: validate tenantApiKey and resolve tenant ──────────────
+      const tenant = await Tenant.findOne({ apiKey: tenantApiKey }).lean();
+      if (!tenant) {
+        return NextResponse.json({ error: "Invalid tenantApiKey" }, { status: 401, headers: CORS_HEADERS });
+      }
+      resolvedTenantId  = tenant._id;
+
+      // Map agent action → TenantEvent schema
+      resolvedEventType = action === "BLOCKED" ? "block" : "scan";
+      resolvedSeverity  = sensitivityLevel || "medium";
+      resolvedDetails   = { matchedEntities: matchedEntities || [], source: "local-agent" };
+    } else {
+      // ── Auth path: require super-admin ───────────────────────────────────
+      await requireSuperAdmin(request);
+      if (!bodyTenantId || !bodyEventType) {
+        return NextResponse.json({ error: "tenantId and eventType are required" }, { status: 400, headers: CORS_HEADERS });
+      }
+      resolvedTenantId  = bodyTenantId;
+      resolvedEventType = bodyEventType;
+      resolvedSeverity  = bodySeverity;
+      resolvedDetails   = details;
     }
 
     const event = await TenantEvent.create({
-      tenantId, agentId, eventType, severity, category, details, userEmail, ip,
+      tenantId:  resolvedTenantId,
+      agentId,
+      eventType: resolvedEventType,
+      severity:  resolvedSeverity,
+      category,
+      details:   resolvedDetails,
+      userEmail,
+      ip,
+      ...(timestamp ? { timestamp: new Date(timestamp) } : {}),
     });
-    return NextResponse.json({ event }, { status: 201 });
+
+    // Update tenant usage counters
+    if (resolvedEventType === "block") {
+      await Tenant.findByIdAndUpdate(resolvedTenantId, {
+        $inc: { "usage.totalBlocks": 1, "usage.totalScans": 1, "usage.monthlyScans": 1 },
+        $set: { "usage.lastActivity": new Date() },
+      });
+    } else {
+      await Tenant.findByIdAndUpdate(resolvedTenantId, {
+        $inc: { "usage.totalScans": 1, "usage.monthlyScans": 1 },
+        $set: { "usage.lastActivity": new Date() },
+      });
+    }
+
+    return NextResponse.json({ event }, { status: 201, headers: CORS_HEADERS });
   } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: err.status || 500 });
+    return NextResponse.json({ error: err.message }, { status: err.status || 500, headers: CORS_HEADERS });
   }
 }
 
 export async function OPTIONS() {
-  return new NextResponse(null, {
-    headers: {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, x-super-admin-key",
-    },
-  });
+  return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
 }

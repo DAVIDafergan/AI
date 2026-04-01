@@ -6,8 +6,9 @@
    • User email auto-detection
    ═══════════════════════════════════════════════════════════════ */
 
-const DLP_API_URL = "https://ai-production-ffa9.up.railway.app/api/check-text";
-const DLP_PREFIX  = "🛡️ DLP Shield:";
+const DLP_API_URL       = "https://ai-production-ffa9.up.railway.app/api/check-text";
+const LOCAL_AGENT_URL   = "http://localhost:3000/api/check";
+const DLP_PREFIX        = "🛡️ DLP Shield:";
 
 // ── User email (populated on init) ──
 let userEmail = "anonymous@unknown.com";
@@ -15,6 +16,9 @@ let userEmail = "anonymous@unknown.com";
 // ── Loop-prevention & caching ──
 const processedNodes   = new WeakSet();
 const restorationCache = new Map(); // synthetic → original
+
+// ── Per-element safe-state buffer (for real-time typing DLP) ──
+const safeStateMap = new WeakMap(); // element → last known safe value
 
 // ── Rate limiting for input interception ──
 let inputRequestPending = false;
@@ -417,14 +421,18 @@ async function interceptInput(element) {
     ? element.innerText || element.textContent
     : element.value;
 
-  if (!text || text.trim().length < 3) return;
+  if (!text || text.trim().length < 3) {
+    // Update safe state for short/empty content (it's safe by definition)
+    safeStateMap.set(element, text ?? "");
+    return;
+  }
 
   inputRequestPending = true;
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
 
-    const response = await fetch(DLP_API_URL, {
+    const response = await fetch(LOCAL_AGENT_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text, userEmail, source: "typing", mode: "input" }),
@@ -436,10 +444,22 @@ async function interceptInput(element) {
 
     const result = await response.json();
 
+    // ── Hard block: revert to safe state ──
+    if (result.blocked === true) {
+      const safeValue = safeStateMap.get(element) ?? "";
+      setReactInputValue(element, safeValue);
+      element.blur();
+      showBlockWarning();
+      console.warn(`${DLP_PREFIX} הקלדה נחסמה – שדה שוחזר למצב בטוח.`);
+      return;
+    }
+
+    // ── Soft redaction: replacements returned ──
     if (result.replacements && result.replacements.length > 0) {
       console.log(`${DLP_PREFIX} יירוט הקלדה: ${result.replacements.length} פריטים הוחלפו`);
       setReactInputValue(element, result.redactedText);
       flashGreen(element);
+      safeStateMap.set(element, result.redactedText);
 
       // Notify background
       try {
@@ -449,7 +469,11 @@ async function interceptInput(element) {
           userEmail,
         });
       } catch { /* ignore */ }
+      return;
     }
+
+    // ── Content is clean: update safe state ──
+    safeStateMap.set(element, text);
   } catch {
     // fail silently – never break the host page
   } finally {
@@ -457,7 +481,57 @@ async function interceptInput(element) {
   }
 }
 
-const debouncedInterceptInput = debounce(interceptInput, 400);
+const debouncedInterceptInput = debounce(interceptInput, 600);
+
+/* ─────────────────────────────────────────────
+   Show red blocking warning overlay (Hebrew)
+   ───────────────────────────────────────────── */
+function showBlockWarning() {
+  const existing = document.getElementById("dlp-block-warning");
+  if (existing) existing.remove();
+
+  const overlay = document.createElement("div");
+  overlay.id = "dlp-block-warning";
+  overlay.setAttribute("role", "alert");
+  overlay.setAttribute("aria-live", "assertive");
+
+  Object.assign(overlay.style, {
+    position:        "fixed",
+    top:             "0",
+    left:            "0",
+    width:           "100%",
+    padding:         "18px 24px",
+    zIndex:          "2147483647",
+    backgroundColor: "#c0392b",
+    color:           "#fff",
+    fontSize:        "16px",
+    fontWeight:      "700",
+    fontFamily:      "'Segoe UI', Arial, sans-serif",
+    direction:       "rtl",
+    textAlign:       "right",
+    boxShadow:       "0 4px 24px rgba(192,57,43,0.7)",
+    borderBottom:    "3px solid #922b21",
+    cursor:          "pointer",
+    userSelect:      "none",
+    transition:      "opacity 0.4s ease",
+    opacity:         "1",
+  });
+
+  overlay.textContent =
+    "GhostLayer: הפעולה נחסמה. זוהה ניסיון להקליד מידע ארגוני רגיש.";
+
+  overlay.addEventListener("click", () => {
+    overlay.style.opacity = "0";
+    setTimeout(() => overlay.remove(), 400);
+  });
+
+  (document.body || document.documentElement).appendChild(overlay);
+
+  setTimeout(() => {
+    overlay.style.opacity = "0";
+    setTimeout(() => overlay.remove(), 400);
+  }, 5000);
+}
 
 /* ─────────────────────────────────────────────
    1A. Attach observers/listeners to input element
@@ -466,12 +540,31 @@ function attachInputListeners(element) {
   if (!element || element._dlpAttached) return;
   element._dlpAttached = true;
 
-  // MutationObserver on the element itself (for React-controlled contentEditables)
-  const mutObs = new MutationObserver(() => debouncedInterceptInput(element));
-  mutObs.observe(element, { characterData: true, childList: true, subtree: true });
+  // Seed the safe state with whatever is currently in the field
+  const currentValue = element.isContentEditable
+    ? (element.innerText || element.textContent || "")
+    : (element.value || "");
+  safeStateMap.set(element, currentValue);
 
-  // Fallback: input event
+  // Track safe state on focus (user starts typing from this point)
+  element.addEventListener("focus", () => {
+    const val = element.isContentEditable
+      ? (element.innerText || element.textContent || "")
+      : (element.value || "");
+    safeStateMap.set(element, val);
+  }, true);
+
+  // input event – fires on every character change
   element.addEventListener("input", () => debouncedInterceptInput(element), true);
+
+  // keyup event – catches keys that don't trigger "input" (e.g. paste via keyboard)
+  element.addEventListener("keyup", () => debouncedInterceptInput(element), true);
+
+  // MutationObserver on the element itself (for React-controlled contentEditables)
+  if (element.isContentEditable) {
+    const mutObs = new MutationObserver(() => debouncedInterceptInput(element));
+    mutObs.observe(element, { characterData: true, childList: true, subtree: true });
+  }
 
   // Keydown: intercept Enter before send
   element.addEventListener("keydown", async (e) => {
@@ -481,33 +574,50 @@ function attachInputListeners(element) {
       await interceptInput(element);
     }
   }, true);
-
-  console.log(`${DLP_PREFIX} מאזין הקלדה מחובר לשדה קלט`);
 }
 
 /* ─────────────────────────────────────────────
-   1A. Watch for ChatGPT/Claude/Gemini input to appear
+   1A. Watch ALL input fields across the page
    ───────────────────────────────────────────── */
-function watchForInputField() {
-  const INPUT_SELECTORS = [
-    "#prompt-textarea",
-    "div[contenteditable='true']",
-    "textarea[data-id]",
-    ".ProseMirror",
-  ];
 
-  function tryAttach() {
-    for (const sel of INPUT_SELECTORS) {
-      const el = document.querySelector(sel);
-      if (el) attachInputListeners(el);
-    }
+// Moved outside function to avoid repeated allocation in hot path
+const ALL_INPUT_SELECTOR =
+  "input:not([type='hidden']):not([type='submit']):not([type='button'])" +
+  ":not([type='checkbox']):not([type='radio']):not([type='file'])" +
+  ":not([type='image']), textarea, [contenteditable='true'], [contenteditable='']";
+
+function watchAllInputs() {
+  function attachToAll() {
+    try {
+      document.querySelectorAll(ALL_INPUT_SELECTOR).forEach(attachInputListeners);
+    } catch { /* ignore */ }
   }
 
-  // Try immediately
-  tryAttach();
+  // Attach to all existing inputs immediately
+  attachToAll();
 
-  // Also watch for dynamic appearance (SPA)
-  const observer = new MutationObserver(tryAttach);
+  // Watch for new inputs added dynamically (SPA navigations).
+  // Use a simple flag to coalesce rapid bursts of mutations.
+  let pending = false;
+  const observer = new MutationObserver((mutations) => {
+    if (pending) return;
+    pending = true;
+    requestAnimationFrame(() => {
+      pending = false;
+      for (const mutation of mutations) {
+        for (const node of mutation.addedNodes) {
+          if (node.nodeType !== Node.ELEMENT_NODE) continue;
+          try {
+            if (node.matches(ALL_INPUT_SELECTOR)) attachInputListeners(node);
+          } catch { /* ignore */ }
+          try {
+            node.querySelectorAll(ALL_INPUT_SELECTOR).forEach(attachInputListeners);
+          } catch { /* ignore */ }
+        }
+      }
+    });
+  });
+
   observer.observe(document.body, { childList: true, subtree: true });
 }
 
@@ -801,8 +911,8 @@ function init() {
   // 1D. Register paste handler (capture phase)
   document.addEventListener("paste", handlePaste, true);
 
-  // 1A. Watch for AI chat input fields
-  watchForInputField();
+  // 1A. Watch ALL input fields on the page (real-time typing DLP)
+  watchAllInputs();
 
   // 1B. Watch for AI output / responses
   watchForAIOutput();

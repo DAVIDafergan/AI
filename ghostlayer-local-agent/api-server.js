@@ -6,7 +6,7 @@
  * index.  All processing is local – nothing is forwarded to the cloud.
  *
  * POST /api/check
- *   Body:  { "text": "<snippet from browser>" }
+ *   Body:  { "text": "<snippet from browser>", "userEmail": "<employee email>" }
  *   Reply (clean):    { "action": "allow",  "blocked": false, "reason": string }
  *   Reply (sensitive): { "action": "mask",   "blocked": true,
  *                        "maskedText": string, "vault": Record<string,string> }
@@ -17,6 +17,7 @@ import express from "express";
 import cors    from "cors";
 import { querySimilarity, loadIndex } from "./vector-store.js";
 import { initNLP } from "./nlp-engine.js";
+import { sendTenantEvent } from "./cloud-sync.js";
 
 // ── Similarity threshold above which a snippet is considered sensitive ────────
 const BLOCK_THRESHOLD = 0.82;
@@ -27,6 +28,10 @@ let _cachedIndex = null;
 // ── Cached NER pipeline (initialised lazily on first sensitive hit) ───────────
 let _nerPipelinePromise = null;
 
+// Runtime config set by startApiServer (used for cloud event reporting)
+let _tenantApiKey = "";
+let _serverUrl    = "";
+
 // ── Regex patterns used for token-based masking ───────────────────────────────
 const MASK_PATTERNS = [
   { type: "EMAIL",   re: /\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b/g },
@@ -35,6 +40,47 @@ const MASK_PATTERNS = [
   { type: "CREDIT",  re: /\b(?:\d[ \-]?){13,16}\b/g },
   { type: "ID",      re: /\b\d{9}\b/g },
 ];
+
+/**
+ * Detect entity types present in the given text using lightweight regex checks.
+ * Used for cloud telemetry metadata ONLY – no raw text is ever sent to the cloud.
+ * Returns entity type labels (never the actual matched values).
+ *
+ * @param {string} text
+ * @returns {string[]}
+ */
+function detectEntityTypes(text) {
+  const entities = [];
+  if (/\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b/.test(text))
+    entities.push("EMAIL");
+  if (/(?:\+?\d{1,3}[\s\-.]?)?\(?\d{2,4}\)?[\s\-.]?\d{3,4}[\s\-.]?\d{4}\b/.test(text))
+    entities.push("PHONE");
+  // Credit card: 13-16 digit sequences with optional separators
+  if (/\b(?:\d[ \-]?){13,16}\b/.test(text))
+    entities.push("CREDIT_CARD");
+  // Israeli ID: 9-digit number
+  if (/\b\d{9}\b/.test(text))
+    entities.push("ID_NUMBER");
+  if (/\b(password|secret|token|api.?key|credentials)\b/i.test(text))
+    entities.push("CREDENTIALS");
+  // PERSON is always included when a vector similarity match was found –
+  // callers must only invoke this function in the sensitive-match code path.
+  entities.push("PERSON");
+  return [...new Set(entities)];
+}
+
+/**
+ * Map a similarity score (0–1) to a human-readable sensitivity level.
+ *
+ * @param {number} score
+ * @returns {"low" | "medium" | "high" | "critical"}
+ */
+function scoreToLevel(score) {
+  if (score >= 0.95) return "critical";
+  if (score >= 0.90) return "high";
+  if (score >= 0.85) return "medium";
+  return "low";
+}
 
 /**
  * Escape a string for safe use inside a RegExp.
@@ -135,12 +181,18 @@ export async function warmCache() {
  *   port?: number,
  *   verbose?: boolean,
  *   failClosed?: boolean,
+ *   apiKey?: string,
+ *   serverUrl?: string,
  *   onCheck?: (result: { action: string, blocked: boolean, reason?: string }) => void,
  * }} [options]
  * @returns {Promise<import("http").Server>}
  */
 export async function startApiServer(options = {}) {
-  const { port = 4000, verbose = false, failClosed = true, onCheck } = options;
+  const { port = 4000, verbose = false, failClosed = true, apiKey, serverUrl, onCheck } = options;
+
+  // Store config for use inside request handlers
+  if (apiKey)    _tenantApiKey = apiKey;
+  if (serverUrl) _serverUrl    = serverUrl;
 
   // Pre-load the vector index once
   _cachedIndex = await loadIndex();
@@ -166,7 +218,8 @@ export async function startApiServer(options = {}) {
 
   // ── Sensitivity check endpoint ───────────────────────────────────────────
   app.post("/api/check", async (req, res) => {
-    const text = (req.body?.text ?? "").trim();
+    const text      = (req.body?.text      ?? "").trim();
+    const userEmail = (req.body?.userEmail ?? "").trim() || "unknown";
 
     if (!text) {
       return res.status(400).json({ action: "allow", blocked: false, reason: "No text provided." });
@@ -204,6 +257,18 @@ export async function startApiServer(options = {}) {
 
         if (verbose) {
           console.log(`[api-server] Masking ${Object.keys(vault).length} entit(ies): ${reason}`);
+        }
+
+        // ── Fire-and-forget cloud event (metadata only, no sensitive text) ──
+        if (_tenantApiKey) {
+          sendTenantEvent({
+            tenantApiKey:    _tenantApiKey,
+            serverUrl:       _serverUrl,
+            userEmail,
+            action:          "MASKED",
+            sensitivityLevel: scoreToLevel(matches[0].similarity),
+            matchedEntities: detectEntityTypes(text),
+          }).catch(() => { /* non-critical */ });
         }
 
         const result = { action: "mask", blocked: true, reason, maskedText, vault };

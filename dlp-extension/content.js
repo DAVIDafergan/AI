@@ -437,7 +437,7 @@ async function handlePaste(event) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
 
-    const response = await fetch(`${agentUrl}/api/check-text`, {
+    const response = await fetch(`${agentUrl}/api/check`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -455,19 +455,27 @@ async function handlePaste(event) {
 
     const result = await response.json();
 
-    if (result.safe === true) {
+    if (result.blocked !== true) {
       insertTextIntoField(target, text);
       showFallbackToast("✅ המידע בטוח – הודבק בהצלחה.", "success");
       return;
     }
 
-    const { redactedText, replacements } = result;
-    const overlayParts = buildOverlayDOM(replacements, redactedText);
+    // Hard block (no masked replacement available) – reject the paste
+    if (result.action !== "mask" || !result.maskedText) {
+      showFallbackToast("⚠️ חומת אש AI: תוכן רגיש זוהה. ההדבקה נחסמה.", "warning");
+      return;
+    }
+
+    const vault        = result.vault || {};
+    Object.assign(_vault, vault);
+    const replacements = Object.entries(vault).map(([synthetic, original]) => ({ original, synthetic }));
+    const overlayParts = buildOverlayDOM(replacements, result.maskedText);
     document.body.appendChild(overlayParts.backdrop);
 
     await runMorphAnimation(overlayParts);
 
-    insertTextIntoField(target, redactedText);
+    insertTextIntoField(target, result.maskedText);
     console.log(`${DLP_PREFIX} ✅ הודבק טקסט סינתטי (${replacements.length} החלפות)`);
 
     await sleep(TIMING.closeDelay);

@@ -81,6 +81,41 @@ function loadSettings() {
 }
 
 /* ─────────────────────────────────────────────
+   Read fresh settings right before a fetch.
+   Always reads ['localAgentUrl', 'tenantApiKey', 'userEmail', 'employeeEmail']
+   from chrome.storage.local.  localAgentUrl defaults to DEFAULT_LOCAL_AGENT_URL
+   when empty so we NEVER fall back to the production Railway URL.
+   ───────────────────────────────────────────── */
+function readSettings() {
+  return new Promise((resolve) => {
+    try {
+      chrome.storage.local.get(["localAgentUrl", "tenantApiKey", "userEmail", "employeeEmail"], (data) => {
+        if (chrome.runtime.lastError) {
+          resolve({
+            localAgentUrl: DEFAULT_LOCAL_AGENT_URL,
+            tenantApiKey:  "",
+            userEmail:     userEmail || "anonymous@unknown.com",
+          });
+          return;
+        }
+        resolve({
+          localAgentUrl: data.localAgentUrl || DEFAULT_LOCAL_AGENT_URL,
+          tenantApiKey:  data.tenantApiKey  || "",
+          userEmail:     data.employeeEmail || data.userEmail || userEmail || "anonymous@unknown.com",
+        });
+      });
+    } catch {
+      // extension context may be invalidated – fall back to safe defaults
+      resolve({
+        localAgentUrl: DEFAULT_LOCAL_AGENT_URL,
+        tenantApiKey:  "",
+        userEmail:     userEmail || "anonymous@unknown.com",
+      });
+    }
+  });
+}
+
+/* ─────────────────────────────────────────────
    1C. User Email Auto-Detection
    ───────────────────────────────────────────── */
 function initUserEmail() {
@@ -397,16 +432,18 @@ async function handlePaste(event) {
   const target = event.target;
 
   try {
+    const { localAgentUrl: agentUrl, tenantApiKey: apiKey, userEmail: email } = await readSettings();
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
 
-    const response = await fetch(DLP_API_URL, {
+    const response = await fetch(`${agentUrl}/api/check-text`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(tenantApiKey ? { "X-API-Key": tenantApiKey } : {}),
+        ...(apiKey ? { "X-API-Key": apiKey } : {}),
       },
-      body: JSON.stringify({ text, userEmail }),
+      body: JSON.stringify({ text, userEmail: email }),
       signal: controller.signal,
     });
     clearTimeout(timeout);
@@ -463,16 +500,18 @@ async function interceptInput(element) {
 
   inputRequestPending = true;
   try {
+    const { localAgentUrl: agentUrl, tenantApiKey: apiKey, userEmail: email } = await readSettings();
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
 
-    const response = await fetch(`${localAgentUrl}/api/check`, {
+    const response = await fetch(`${agentUrl}/api/check`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(tenantApiKey ? { "X-API-Key": tenantApiKey } : {}),
+        ...(apiKey ? { "X-API-Key": apiKey } : {}),
       },
-      body: JSON.stringify({ text, userEmail, source: "typing", mode: "input" }),
+      body: JSON.stringify({ text, userEmail: email, source: "typing", mode: "input" }),
       signal: controller.signal,
     });
     clearTimeout(timeout);
@@ -503,7 +542,7 @@ async function interceptInput(element) {
         chrome.runtime.sendMessage({
           type: "INTERCEPTION_REPORT",
           count: result.replacements.length,
-          userEmail,
+          userEmail: email,
         });
       } catch { /* ignore */ }
       return;
@@ -543,16 +582,18 @@ async function interceptSend(element, retriggerFn) {
   }
 
   try {
+    const { localAgentUrl: agentUrl, tenantApiKey: apiKey, userEmail: email } = await readSettings();
+
     const controller = new AbortController();
     const timeout    = setTimeout(() => controller.abort(), 8000);
 
-    const response = await fetch(`${localAgentUrl}/api/check`, {
+    const response = await fetch(`${agentUrl}/api/check`, {
       method:  "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(tenantApiKey ? { "X-API-Key": tenantApiKey } : {}),
+        ...(apiKey ? { "X-API-Key": apiKey } : {}),
       },
-      body:    JSON.stringify({ text, userEmail, source: "send" }),
+      body:    JSON.stringify({ text, userEmail: email, source: "send" }),
       signal:  controller.signal,
     });
     clearTimeout(timeout);
@@ -583,7 +624,7 @@ async function interceptSend(element, retriggerFn) {
         chrome.runtime.sendMessage({
           type:      "INTERCEPTION_REPORT",
           count:     Object.keys(result.vault).length,
-          userEmail,
+          userEmail: email,
         });
       } catch { /* ignore */ }
 

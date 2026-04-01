@@ -27,6 +27,10 @@ const safeStateMap = new WeakMap(); // element → last known safe value
 // ── Rate limiting for input interception ──
 let inputRequestPending = false;
 
+// ── Smart Masking: vault & re-trigger guard ──
+const _vault        = {};    // token → original value, e.g. { "[PERSON_1]": "David" }
+let   _maskingActive = false; // true only while programmatically re-triggering a masked send
+
 // ── Animation Timing (ms) ──
 const TIMING = {
   cardStagger:     350,
@@ -514,6 +518,93 @@ async function interceptInput(element) {
 const debouncedInterceptInput = debounce(interceptInput, 600);
 
 /* ─────────────────────────────────────────────
+   Pre-Send Interception (Failsafe)
+   Called synchronously from keydown/click/submit interceptors AFTER
+   preventDefault().  Checks the current input text with the Local Agent,
+   applies smart masking if needed, then calls retriggerFn() to re-fire
+   the original send action with the (now-safe) content.
+   ─────────────────────────────────────────────
+   @param {Element}        element      The input / contentEditable element.
+   @param {() => void}     retriggerFn  Fires the original send action again.
+   ─────────────────────────────────────────────── */
+async function interceptSend(element, retriggerFn) {
+  const text = (
+    element.isContentEditable
+      ? (element.innerText || element.textContent || "")
+      : (element.value || "")
+  ).trim();
+
+  if (!text || text.length < 3) {
+    retriggerFn?.();
+    return;
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeout    = setTimeout(() => controller.abort(), 8000);
+
+    const response = await fetch(`${localAgentUrl}/api/check`, {
+      method:  "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(tenantApiKey ? { "X-API-Key": tenantApiKey } : {}),
+      },
+      body:    JSON.stringify({ text, userEmail, source: "send" }),
+      signal:  controller.signal,
+    });
+    clearTimeout(timeout);
+
+    if (!response.ok) {
+      // Fail open – let the send proceed so as not to block legitimate use
+      retriggerFn?.();
+      return;
+    }
+
+    const result = await response.json();
+
+    // ── Smart Masking ────────────────────────────────────────────────────
+    if (result.action === "mask" && result.maskedText && result.vault) {
+      // Persist vault entries for de-anonymisation of the AI response
+      Object.assign(_vault, result.vault);
+
+      // Replace the input field content with the masked text
+      setReactInputValue(element, result.maskedText);
+      flashGreen(element);
+
+      console.log(
+        `${DLP_PREFIX} ✅ מסיכת ישויות: ${Object.keys(result.vault).length} ישויות הוחלפו`,
+      );
+
+      // Notify background script
+      try {
+        chrome.runtime.sendMessage({
+          type:      "INTERCEPTION_REPORT",
+          count:     Object.keys(result.vault).length,
+          userEmail,
+        });
+      } catch { /* ignore */ }
+
+      // Re-fire the send with the masked text
+      retriggerFn?.();
+      return;
+    }
+
+    // ── Hard block ───────────────────────────────────────────────────────
+    if (result.blocked === true) {
+      showBlockWarning();
+      console.warn(`${DLP_PREFIX} שליחה נחסמה – תוכן רגיש זוהה.`);
+      return; // do NOT retrigger
+    }
+
+    // ── Clean – let through ──────────────────────────────────────────────
+    retriggerFn?.();
+  } catch {
+    // Network / timeout error → fail open
+    retriggerFn?.();
+  }
+}
+
+/* ─────────────────────────────────────────────
    Show red blocking warning overlay (Hebrew)
    ───────────────────────────────────────────── */
 function showBlockWarning() {
@@ -596,13 +687,28 @@ function attachInputListeners(element) {
     mutObs.observe(element, { characterData: true, childList: true, subtree: true });
   }
 
-  // Keydown: intercept Enter before send
+  // Keydown: intercept Enter before send (failsafe – preventDefault immediately)
   element.addEventListener("keydown", async (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      // Cancel pending debounce and run immediately
-      debouncedInterceptInput.cancel();
-      await interceptInput(element);
-    }
+    if (e.key !== "Enter" || e.shiftKey) return;
+    if (_maskingActive) return; // re-triggered send – let it through
+
+    e.preventDefault();
+    e.stopPropagation();
+    debouncedInterceptInput.cancel();
+
+    await interceptSend(element, () => {
+      _maskingActive = true;
+      try {
+        element.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "Enter", code: "Enter", keyCode: 13,
+            bubbles: true, cancelable: true,
+          }),
+        );
+      } finally {
+        _maskingActive = false;
+      }
+    });
   }, true);
 }
 
@@ -652,6 +758,83 @@ function watchAllInputs() {
 }
 
 /* ─────────────────────────────────────────────
+   Helper: find the currently active input element
+   ─────────────────────────────────────────────── */
+function findActiveInputElement() {
+  const active = document.activeElement;
+  if (
+    active &&
+    active !== document.body &&
+    (active.tagName === "TEXTAREA" ||
+     active.tagName === "INPUT"    ||
+     active.isContentEditable)
+  ) {
+    return active;
+  }
+  // Fall back to the first visible input on the page
+  try {
+    return document.querySelector(ALL_INPUT_SELECTOR) || null;
+  } catch {
+    return null;
+  }
+}
+
+/* ─────────────────────────────────────────────
+   1A.2. Aggressive Send-button & Form interceptors
+   Catches clicks on "Send" buttons and form submits that bypass the
+   per-element keydown listener (e.g. mouse click on the ➤ button).
+   ─────────────────────────────────────────────── */
+function watchSendButtons() {
+  // ── Click on Send buttons ────────────────────────────────────────────────
+  document.addEventListener("click", async (e) => {
+    if (_maskingActive) return;
+
+    // Walk up the DOM to find a button ancestor
+    const btn = e.target.closest("button, [role='button']");
+    if (!btn) return;
+
+    const ariaLabel = (btn.getAttribute("aria-label") || btn.title || "").toLowerCase();
+    const hasSVG    = !!btn.querySelector("svg");
+
+    // Match explicit send/submit labels OR icon-only buttons that contain an SVG
+    // and have no accessible label (common pattern in ChatGPT, Claude, etc.)
+    const isSendButton =
+      /send|submit|שלח|go|run/i.test(ariaLabel) ||
+      (hasSVG && !ariaLabel && !btn.textContent.trim());
+
+    if (!isSendButton) return;
+
+    const input = findActiveInputElement();
+    if (!input) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    await interceptSend(input, () => {
+      _maskingActive = true;
+      try { btn.click(); } finally { _maskingActive = false; }
+    });
+  }, true);
+
+  // ── Form submit ──────────────────────────────────────────────────────────
+  document.addEventListener("submit", async (e) => {
+    if (_maskingActive) return;
+
+    const form  = e.target;
+    const input = form.querySelector(ALL_INPUT_SELECTOR);
+    if (!input) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    await interceptSend(input, () => {
+      _maskingActive = true;
+      try { form.submit(); } finally { _maskingActive = false; }
+    });
+  }, true);
+}
+
+/* ─────────────────────────────────────────────
    1B. Output Scanning & Restoration
    ───────────────────────────────────────────── */
 
@@ -662,6 +845,7 @@ const SYNTHETIC_PATTERNS = [
   /\b3\d{8}\b/g,                              // ID (starts with 3, 9 digits)
   /user_\d{3}@[a-z]+\.[a-z]{2,}/g,           // Synthetic email
   /4\d{3}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}/g,  // Credit card (Visa synthetic)
+  /\[[A-Z][A-Z0-9_]*_\d+\]/g,                   // Smart masking vault tokens: [PERSON_1], [ACCOUNT_1], …
 ];
 
 // AI response selectors
@@ -676,6 +860,11 @@ const AI_RESPONSE_SELECTORS = [
 ];
 
 async function lookupSynthetic(syntheticValue) {
+  // ── 1. Check local vault first (tokens from Smart Masking) ──
+  if (Object.prototype.hasOwnProperty.call(_vault, syntheticValue)) {
+    return _vault[syntheticValue];
+  }
+
   if (restorationCache.has(syntheticValue)) {
     return restorationCache.get(syntheticValue);
   }
@@ -947,10 +1136,13 @@ async function init() {
   // 1A. Watch ALL input fields on the page (real-time typing DLP)
   watchAllInputs();
 
-  // 1B. Watch for AI output / responses
+  // 1A.2. Aggressive Send-button & form submit interceptors
+  watchSendButtons();
+
+  // 1B. Watch for AI output / responses (+ vault token de-anonymisation)
   watchForAIOutput();
 
-  console.log(`${DLP_PREFIX} v3 נטען – יירוט הדבקות + הקלדה + סריקת תשובות AI פעילים.`);
+  console.log(`${DLP_PREFIX} v3 נטען – יירוט הדבקות + הקלדה + שליחה + סריקת תשובות AI פעילים.`);
 }
 
 init();

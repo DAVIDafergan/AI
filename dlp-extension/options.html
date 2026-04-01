@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DLP Shield – הגדרות</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0f172a;
+      color: #e2e8f0;
+      font-family: 'Segoe UI', Arial, sans-serif;
+      font-size: 15px;
+      min-height: 100vh;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 40px 16px;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 560px;
+    }
+
+    .header {
+      background: linear-gradient(135deg, #1e3a5f 0%, #1e293b 100%);
+      border-radius: 12px 12px 0 0;
+      padding: 20px 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      border-bottom: 1px solid #334155;
+    }
+
+    .header-icon { font-size: 30px; }
+
+    .header-text h1 {
+      font-size: 18px;
+      font-weight: 700;
+      color: #f1f5f9;
+    }
+
+    .header-text p {
+      font-size: 12px;
+      color: #94a3b8;
+      margin-top: 2px;
+    }
+
+    .card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-top: none;
+      border-radius: 0 0 12px 12px;
+      padding: 28px 24px;
+    }
+
+    .field-group {
+      margin-bottom: 22px;
+    }
+
+    .field-group label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: #94a3b8;
+      margin-bottom: 6px;
+    }
+
+    .field-group input {
+      width: 100%;
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 10px 14px;
+      color: #e2e8f0;
+      font-size: 14px;
+      outline: none;
+      direction: ltr;
+      transition: border-color 0.15s;
+    }
+
+    .field-group input:focus {
+      border-color: #3b82f6;
+    }
+
+    .field-hint {
+      font-size: 11px;
+      color: #64748b;
+      margin-top: 4px;
+    }
+
+    .btn-save {
+      width: 100%;
+      padding: 12px;
+      background: #2563eb;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+
+    .btn-save:hover { opacity: 0.88; }
+
+    #save-msg {
+      margin-top: 12px;
+      font-size: 13px;
+      color: #22c55e;
+      text-align: center;
+      min-height: 18px;
+    }
+
+    #save-msg.error { color: #f87171; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <span class="header-icon">🛡️</span>
+      <div class="header-text">
+        <h1>DLP Shield – הגדרות</h1>
+        <p>הגדר את כתובת הסוכן המקומי ומפתח ה-API</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="field-group">
+        <label for="local-agent-url">כתובת סוכן מקומי (Local Agent URL)</label>
+        <input
+          type="text"
+          id="local-agent-url"
+          placeholder="http://localhost:4000"
+        />
+        <div class="field-hint">ברירת מחדל: http://localhost:4000</div>
+      </div>
+
+      <div class="field-group">
+        <label for="tenant-api-key">מפתח API של הארגון (Tenant API Key)</label>
+        <input
+          type="password"
+          id="tenant-api-key"
+          placeholder="הזן את מפתח ה-API"
+        />
+        <div class="field-hint">מפתח זה נשלח בכותרת הבקשה לאימות הארגון</div>
+      </div>
+
+      <button class="btn-save" id="save-btn">💾 שמור הגדרות</button>
+      <div id="save-msg"></div>
+    </div>
+  </div>
+
+  <script src="options.js"></script>
+</body>
+</html>

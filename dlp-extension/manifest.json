@@ -22,12 +22,18 @@
   "host_permissions": [
     "*://ai-production-ffa9.up.railway.app/*",
     "http://localhost:3000/*",
-    "http://127.0.0.1:3000/*"
+    "http://127.0.0.1:3000/*",
+    "http://localhost:4000/*",
+    "http://127.0.0.1:4000/*"
   ],
   "background": {
     "service_worker": "background.js"
   },
   "action": {
     "default_popup": "popup.html"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
   }
 }

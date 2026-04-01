@@ -6,12 +6,16 @@
    • User email auto-detection
    ═══════════════════════════════════════════════════════════════ */
 
-const DLP_API_URL       = "https://ai-production-ffa9.up.railway.app/api/check-text";
-const LOCAL_AGENT_URL   = "http://localhost:3000/api/check";
-const DLP_PREFIX        = "🛡️ DLP Shield:";
+const DLP_API_URL                = "https://ai-production-ffa9.up.railway.app/api/check-text";
+const DEFAULT_LOCAL_AGENT_URL    = "http://localhost:4000";
+const DLP_PREFIX                 = "🛡️ DLP Shield:";
 
 // ── User email (populated on init) ──
 let userEmail = "anonymous@unknown.com";
+
+// ── Settings loaded from chrome.storage.local ──
+let localAgentUrl = DEFAULT_LOCAL_AGENT_URL;
+let tenantApiKey  = "";
 
 // ── Loop-prevention & caching ──
 const processedNodes   = new WeakSet();
@@ -49,6 +53,26 @@ function debounce(fn, delay) {
   }
   debounced.cancel = () => clearTimeout(timer);
   return debounced;
+}
+
+/* ─────────────────────────────────────────────
+   Load settings from chrome.storage.local
+   ───────────────────────────────────────────── */
+function loadSettings() {
+  return new Promise((resolve) => {
+    try {
+      chrome.storage.local.get(["localAgentUrl", "tenantApiKey"], (data) => {
+        if (!chrome.runtime.lastError) {
+          if (data.localAgentUrl) localAgentUrl = data.localAgentUrl;
+          if (data.tenantApiKey)  tenantApiKey  = data.tenantApiKey;
+        }
+        resolve();
+      });
+    } catch {
+      // extension context may be invalidated – ignore
+      resolve();
+    }
+  });
 }
 
 /* ─────────────────────────────────────────────
@@ -371,7 +395,10 @@ async function handlePaste(event) {
 
     const response = await fetch(DLP_API_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(tenantApiKey ? { "X-API-Key": tenantApiKey } : {}),
+      },
       body: JSON.stringify({ text, userEmail }),
       signal: controller.signal,
     });
@@ -432,9 +459,12 @@ async function interceptInput(element) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
 
-    const response = await fetch(LOCAL_AGENT_URL, {
+    const response = await fetch(`${localAgentUrl}/api/check`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(tenantApiKey ? { "X-API-Key": tenantApiKey } : {}),
+      },
       body: JSON.stringify({ text, userEmail, source: "typing", mode: "input" }),
       signal: controller.signal,
     });
@@ -904,7 +934,10 @@ function showFallbackToast(message, type = "info") {
 /* ─────────────────────────────────────────────
    Initialisation
    ───────────────────────────────────────────── */
-function init() {
+async function init() {
+  // Load settings (localAgentUrl, tenantApiKey) from storage
+  await loadSettings();
+
   // 1C. Get user email from background
   initUserEmail();
 

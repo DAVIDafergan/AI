@@ -1,22 +1,21 @@
 /**
- * cloud-sync.js – Sends an AI-powered scan report to the GhostLayer SaaS dashboard.
+ * cloud-sync.js – Sends telemetry metadata to the GhostLayer SaaS dashboard.
  *
- * CRITICAL: Only metadata / counts are transmitted.
- *           The actual sensitive content, entity names, file paths, or any
+ * CRITICAL: Only aggregate metadata counts are transmitted.
+ *           Sensitive content, entity names, file paths, embeddings, or any
  *           file content NEVER leave this machine.
  */
 
 // Use the built-in fetch available in Node ≥ 18.
-// For older Node versions the user can install node-fetch.
 
-const DEFAULT_SAAS_URL = "https://ghostlayer.up.railway.app";
+const DEFAULT_SERVER_URL = "https://ghostlayer.up.railway.app";
 
 /**
  * Send a heartbeat POST to the SaaS `/api/agents/heartbeat` endpoint.
  *
  * @param {{
  *   apiKey: string,
- *   saasUrl?: string,
+ *   serverUrl?: string,
  *   filesScanned: number,
  *   sensitiveTermsFound: number,
  *   highlySensitiveFiles?: number,
@@ -28,7 +27,7 @@ const DEFAULT_SAAS_URL = "https://ghostlayer.up.railway.app";
  */
 export async function sendHeartbeat({
   apiKey,
-  saasUrl,
+  serverUrl,
   filesScanned,
   sensitiveTermsFound,
   highlySensitiveFiles    = 0,
@@ -36,7 +35,7 @@ export async function sendHeartbeat({
   averageSensitivityScore = 0,
   entitiesFound           = { persons: 0, orgs: 0 },
 }) {
-  const baseUrl = (saasUrl || DEFAULT_SAAS_URL).replace(/\/$/, "");
+  const baseUrl = (serverUrl || DEFAULT_SERVER_URL).replace(/\/$/, "");
   const url = `${baseUrl}/api/agents/heartbeat`;
 
   const payload = {
@@ -47,8 +46,7 @@ export async function sendHeartbeat({
     sensitiveFiles,
     averageSensitivityScore,
     entitiesFound,
-    // The agent version – useful for the dashboard to detect outdated agents.
-    agentVersion: "2.0.0",
+    agentVersion: "3.0.0",
     timestamp:    new Date().toISOString(),
   };
 
@@ -56,7 +54,6 @@ export async function sendHeartbeat({
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      // Authenticate with the tenant API key
       "x-api-key": apiKey,
     },
     body: JSON.stringify(payload),
@@ -70,4 +67,49 @@ export async function sendHeartbeat({
   }
 
   return { ok: response.ok, status: response.status, body };
+}
+
+/**
+ * Start sending periodic telemetry (aggregate scan/block counts only) to the
+ * GhostLayer dashboard.  No sensitive content is ever included.
+ *
+ * @param {{
+ *   apiKey: string,
+ *   serverUrl?: string,
+ *   getMetrics: () => { totalScans: number, totalBlocks: number },
+ *   intervalMs?: number,
+ *   verbose?: boolean,
+ * }} options
+ * @returns {{ stop: () => void }}  Call stop() to cancel the interval.
+ */
+export function startPeriodicTelemetry({
+  apiKey,
+  serverUrl,
+  getMetrics,
+  intervalMs = 5 * 60 * 1000, // every 5 minutes by default
+  verbose    = false,
+}) {
+  const timer = setInterval(async () => {
+    const { totalScans, totalBlocks } = getMetrics();
+    try {
+      const result = await sendHeartbeat({
+        apiKey,
+        serverUrl,
+        filesScanned:        totalScans,
+        sensitiveTermsFound: totalBlocks,
+      });
+      if (verbose) {
+        console.log(
+          `[cloud-sync] Telemetry sent – scans: ${totalScans}, blocks: ${totalBlocks}` +
+          ` (HTTP ${result.status})`,
+        );
+      }
+    } catch (err) {
+      if (verbose) {
+        console.warn(`[cloud-sync] Telemetry error: ${err.message}`);
+      }
+    }
+  }, intervalMs);
+
+  return { stop: () => clearInterval(timer) };
 }

@@ -31,6 +31,12 @@ let inputRequestPending = false;
 const _vault        = {};    // token → original value, e.g. { "[PERSON_1]": "David" }
 let   _maskingActive = false; // true only while programmatically re-triggering a masked send
 
+// ── Input masking guard: prevents the programmatic field update from re-triggering the scanner ──
+let _inputMaskingActive = false;
+
+// ── Output scanning guard: prevents DOM changes made by scanAndRestore from re-triggering the observer ──
+let _dlpScanMutating = false;
+
 // ── Animation Timing (ms) ──
 const TIMING = {
   cardStagger:     350,
@@ -551,9 +557,16 @@ async function interceptInput(element) {
       // Preserve cursor position
       const cursorPos = element.isContentEditable ? null : element.selectionStart;
 
-      setReactInputValue(element, result.maskedText);
-      flashGreen(element);
-      safeStateMap.set(element, result.maskedText);
+      // Guard: prevent the programmatic field update from re-triggering the scanner
+      _inputMaskingActive = true;
+      try {
+        setReactInputValue(element, result.maskedText);
+        flashGreen(element);
+        safeStateMap.set(element, result.maskedText);
+        debouncedInterceptInput.cancel();
+      } finally {
+        _inputMaskingActive = false;
+      }
 
       // Restore cursor position (approximate — place at end of masked text or adjusted position)
       if (!element.isContentEditable && element.setSelectionRange) {
@@ -575,9 +588,17 @@ async function interceptInput(element) {
     // ── Soft redaction: replacements returned ──
     if (result.replacements && result.replacements.length > 0) {
       console.log(`${DLP_PREFIX} יירוט הקלדה: ${result.replacements.length} פריטים הוחלפו`);
-      setReactInputValue(element, result.redactedText);
-      flashGreen(element);
-      safeStateMap.set(element, result.redactedText);
+
+      // Guard: prevent the programmatic field update from re-triggering the scanner
+      _inputMaskingActive = true;
+      try {
+        setReactInputValue(element, result.redactedText);
+        flashGreen(element);
+        safeStateMap.set(element, result.redactedText);
+        debouncedInterceptInput.cancel();
+      } finally {
+        _inputMaskingActive = false;
+      }
 
       // Notify background
       try {
@@ -761,20 +782,27 @@ function attachInputListeners(element) {
   }, true);
 
   // input event – fires on every character change
-  element.addEventListener("input", () => debouncedInterceptInput(element), true);
+  // Guard: skip when the DLP itself is programmatically updating the field to avoid re-scan loops
+  element.addEventListener("input", () => {
+    if (!_inputMaskingActive) debouncedInterceptInput(element);
+  }, true);
 
   // keyup event – catches keys that don't trigger "input" (e.g. paste via keyboard)
-  element.addEventListener("keyup", () => debouncedInterceptInput(element), true);
+  element.addEventListener("keyup", () => {
+    if (!_inputMaskingActive) debouncedInterceptInput(element);
+  }, true);
 
   // MutationObserver on the element itself (for React-controlled contentEditables)
   if (element.isContentEditable) {
-    const mutObs = new MutationObserver(() => debouncedInterceptInput(element));
+    const mutObs = new MutationObserver(() => {
+      if (!_inputMaskingActive) debouncedInterceptInput(element);
+    });
     mutObs.observe(element, { characterData: true, childList: true, subtree: true });
   }
 
   // Keydown: immediate check on Space (cancel debounce and check now)
   element.addEventListener("keydown", (e) => {
-    if (e.key === " ") {
+    if (e.key === " " && !_inputMaskingActive) {
       debouncedInterceptInput.cancel();
       interceptInput(element);
     }
@@ -1106,7 +1134,13 @@ async function scanAndRestore(root) {
     }
 
     try {
-      textNode.parentNode?.replaceChild(fragment, textNode);
+      // Guard: suppress the MutationObserver from re-triggering a scan when we replace DOM nodes
+      _dlpScanMutating = true;
+      try {
+        textNode.parentNode?.replaceChild(fragment, textNode);
+      } finally {
+        _dlpScanMutating = false;
+      }
 
       // Notify background
       try {
@@ -1136,6 +1170,9 @@ function isAIResponseElement(el) {
 
 function watchForAIOutput() {
   const outputObserver = new MutationObserver((mutations) => {
+    // Skip mutations triggered by our own DOM replacements to avoid re-scan loops
+    if (_dlpScanMutating) return;
+
     for (const mutation of mutations) {
       // Check added nodes
       for (const addedNode of mutation.addedNodes) {

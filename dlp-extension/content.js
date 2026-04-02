@@ -557,12 +557,15 @@ async function interceptInput(element) {
       // Preserve cursor position
       const cursorPos = element.isContentEditable ? null : element.selectionStart;
 
-      // Guard: prevent the programmatic field update from re-triggering the scanner
+      // Guard: prevent the programmatic field update from re-triggering the scanner.
+      // setReactInputValue dispatches a synthetic "input" event; without this guard,
+      // that event would restart debouncedInterceptInput and cause an endless loop.
       _inputMaskingActive = true;
       try {
         setReactInputValue(element, result.maskedText);
         flashGreen(element);
         safeStateMap.set(element, result.maskedText);
+        // Cancel any pending debounced scan that may have been queued before the API returned
         debouncedInterceptInput.cancel();
       } finally {
         _inputMaskingActive = false;
@@ -589,12 +592,15 @@ async function interceptInput(element) {
     if (result.replacements && result.replacements.length > 0) {
       console.log(`${DLP_PREFIX} יירוט הקלדה: ${result.replacements.length} פריטים הוחלפו`);
 
-      // Guard: prevent the programmatic field update from re-triggering the scanner
+      // Guard: prevent the programmatic field update from re-triggering the scanner.
+      // setReactInputValue dispatches a synthetic "input" event; without this guard,
+      // that event would restart debouncedInterceptInput and cause an endless loop.
       _inputMaskingActive = true;
       try {
         setReactInputValue(element, result.redactedText);
         flashGreen(element);
         safeStateMap.set(element, result.redactedText);
+        // Cancel any pending debounced scan that may have been queued before the API returned
         debouncedInterceptInput.cancel();
       } finally {
         _inputMaskingActive = false;

@@ -40,7 +40,15 @@ export async function GET(request) {
         .limit(50)
         .lean(),
 
-      TenantEvent.find({ tenantId, eventType: "block" }, { userEmail: 1, timestamp: 1, category: 1, severity: 1 })
+      TenantEvent.find(
+        {
+          tenantId,
+          eventType: "block",
+          // Limit to last 30 days to keep aggregation performant as data grows
+          timestamp: { $gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) },
+        },
+        { userEmail: 1, timestamp: 1, category: 1, severity: 1 }
+      )
         .sort({ timestamp: -1 })
         .limit(1000)
         .lean(),

@@ -408,10 +408,10 @@ hdiutil detach /Volumes/GhostLayerShield -quiet`;
 
 function KpiStrip({ stats }) {
   const items = [
-    { icon: Replace,     label: "החלפות כולל",        value: formatNum(stats?.totalBlocks),     color: "text-cyan-400",   border: "border-cyan-500/20",   sub: `היום: ${formatNum(stats?.blocksToday)}`  },
-    { icon: Lock,        label: "חסימות היום",         value: formatNum(stats?.blocksToday),     color: "text-orange-400", border: "border-orange-500/20", sub: "פעולות חסימה"                           },
-    { icon: UserCheck,   label: "משתמשים מחוברים",     value: formatNum(stats?.onlineUsers ?? stats?.connectedAgents), color: "text-green-400",  border: "border-green-500/20",  sub: `${formatNum(stats?.totalUsers ?? 0)} סה"כ` },
-    { icon: Brain,       label: "סריקות כולל",        value: formatNum(stats?.totalScans),      color: "text-purple-400", border: "border-purple-500/20", sub: "סריקות DLP"                             },
+    { icon: Replace,   label: "החלפות כולל",        value: formatNum(stats?.totalBlocks),     color: "text-cyan-400",   border: "border-cyan-500/20",   sub: `היום: ${formatNum(stats?.blocksToday)}`  },
+    { icon: Wifi,      label: "נקודות קצה מחוברות", value: formatNum(stats?.connectedAgents), color: "text-purple-400", border: "border-purple-500/20", sub: `${formatNum(stats?.totalAgents ?? 0)} סוכנים`  },
+    { icon: UserCheck, label: "משתמשים מחוברים",    value: formatNum(stats?.onlineUsers ?? 0), color: "text-green-400",  border: "border-green-500/20",  sub: `${formatNum(stats?.totalUsers ?? 0)} סה"כ` },
+    { icon: Brain,     label: "סריקות כולל",        value: formatNum(stats?.totalScans),      color: "text-purple-400", border: "border-purple-500/20", sub: "סריקות DLP"                             },
   ];
   return (
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -447,11 +447,16 @@ function ConnectedUsersPanel({ userStats = [] }) {
   const [sortKey, setSortKey] = useState("replacements");
   const [sortDir, setSortDir] = useState("desc");
 
+  function getSortValue(user, key) {
+    if (key === "lastActivity") return user.lastActivity ? new Date(user.lastActivity).getTime() : 0;
+    return user[key] ?? 0;
+  }
+
   const filtered = userStats
     .filter((u) => !search || u.email.toLowerCase().includes(search.toLowerCase()))
     .sort((a, b) => {
-      const av = sortKey === "lastActivity" ? (a.lastActivity ? new Date(a.lastActivity).getTime() : 0) : (a[sortKey] ?? 0);
-      const bv = sortKey === "lastActivity" ? (b.lastActivity ? new Date(b.lastActivity).getTime() : 0) : (b[sortKey] ?? 0);
+      const av = getSortValue(a, sortKey);
+      const bv = getSortValue(b, sortKey);
       return sortDir === "desc" ? bv - av : av - bv;
     });
 

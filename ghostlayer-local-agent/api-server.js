@@ -217,7 +217,8 @@ export async function startApiServer(options = {}) {
   });
 
   // ── Sensitivity check endpoint ───────────────────────────────────────────
-  app.post("/api/check", async (req, res) => {
+  // /api/check-text is an alias used by browser extensions
+  app.post(["/api/check", "/api/check-text"], async (req, res) => {
     const text      = (req.body?.text      ?? "").trim();
     const userEmail = (req.body?.userEmail ?? "").trim() || "unknown";
 

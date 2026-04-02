@@ -153,6 +153,13 @@ async function getStats() {
   });
 }
 
+// ── Context menu: right-click on extension icon → open settings ───────────────
+chrome.contextMenus.onClicked.addListener((info) => {
+  if (info.menuItemId === "open-settings") {
+    chrome.runtime.openOptionsPage();
+  }
+});
+
 // ── Initialize on install / startup ──────────────────────────────────────────
 chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.set({
@@ -164,6 +171,12 @@ chrome.runtime.onInstalled.addListener(() => {
   });
   chrome.action.setBadgeText({ text: "" });
 
+  chrome.contextMenus.create({
+    id: "open-settings",
+    title: "⚙️ פתח הגדרות (Open Settings)",
+    contexts: ["action"],
+  });
+
   // Schedule periodic health check every 5 minutes
   chrome.alarms.create("healthCheck", { periodInMinutes: 5 });
 });
@@ -174,6 +187,13 @@ chrome.runtime.onStartup.addListener(() => {
     if (!alarm) {
       chrome.alarms.create("healthCheck", { periodInMinutes: 5 });
     }
+  });
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({
+      id: "open-settings",
+      title: "⚙️ פתח הגדרות (Open Settings)",
+      contexts: ["action"],
+    });
   });
 });
 

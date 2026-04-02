@@ -40,7 +40,9 @@ async function getXlsx() {
   return _xlsx || null;
 }
 
-/** All extensions we can extract text from. */
+// Directories to skip during tree traversal.
+const SKIP_DIRS = new Set(["node_modules", ".git", ".svn", "__pycache__"]);
+
 const TEXT_EXTENSIONS  = new Set([".txt", ".md", ".csv", ".json"]);
 const BINARY_EXTENSIONS = new Set([".pdf", ".docx", ".xlsx"]);
 const SUPPORTED_EXTENSIONS = new Set([...TEXT_EXTENSIONS, ...BINARY_EXTENSIONS]);
@@ -147,8 +149,8 @@ async function collectFiles(rootDir) {
       const fullPath = join(dir, entry.name);
 
       if (entry.isDirectory()) {
-        // Skip hidden directories (e.g. .git, node_modules)
-        if (!entry.name.startsWith(".") && entry.name !== "node_modules") {
+        // Skip hidden directories and well-known non-content dirs
+        if (!SKIP_DIRS.has(entry.name) && !entry.name.startsWith(".")) {
           await walk(fullPath);
         }
       } else if (entry.isFile()) {

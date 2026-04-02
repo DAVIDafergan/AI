@@ -30,6 +30,7 @@ import { sendTenantEvent } from "./cloud-sync.js";
 
 // ── Thresholds ────────────────────────────────────────────────────────────────
 const BLOCK_THRESHOLD = 0.82;
+const AGENT_VERSION   = "3.1.0";
 
 // Pre-loaded index shared across all requests (refreshed on startup)
 let _cachedIndex = null;
@@ -244,7 +245,8 @@ function maskEntities(text, nerEntities = [], customKws = []) {
 
   // ── 2. Tier-1 regex masking (EMAIL / PHONE / ACCOUNT / CREDIT / ID…) ────
   for (const { type, re } of MASK_PATTERNS) {
-    const globalRe = new RegExp(re.source, "gi");
+    // Recreate with only the global flag; avoid adding flags not in the original pattern.
+    const globalRe = new RegExp(re.source, "g");
     masked = masked.replace(globalRe, (match) => {
       const token = nextToken(type);
       vault[token] = match;
@@ -318,7 +320,7 @@ export async function startApiServer(options = {}) {
       status:        "ok",
       indexedDocs:   _cachedIndex.length,
       customKeywords: _customKeywords.length,
-      agentVersion:  "3.1.0",
+      agentVersion:  AGENT_VERSION,
     });
   });
 

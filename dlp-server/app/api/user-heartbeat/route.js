@@ -5,6 +5,10 @@ import { NextResponse } from "next/server";
 import { connectMongo } from "../../../lib/mongodb.js";
 import mongoose from "mongoose";
 
+// Active user window: a user is "active" if their last heartbeat is within
+// this window. Set to 1.5× the 10-minute ping interval for a little slack.
+const ACTIVE_USER_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
+
 // ── Schema ───────────────────────────────────────────────────────────────────
 const UserHeartbeatSchema = new mongoose.Schema(
   {
@@ -98,7 +102,7 @@ export async function GET(request) {
     const organizationId = await resolveOrgId(request);
     await connectMongo();
 
-    const cutoff = new Date(Date.now() - 15 * 60 * 1000); // 15 minutes ago
+    const cutoff = new Date(Date.now() - ACTIVE_USER_WINDOW_MS);
     const users  = await UserHeartbeat.find(
       { organizationId, lastSeenAt: { $gte: cutoff } },
       { userEmail: 1, interceptedCount: 1, extensionVersion: 1, lastSeenAt: 1, _id: 0 }

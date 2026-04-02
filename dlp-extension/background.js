@@ -252,7 +252,8 @@ async function sendUserHeartbeat() {
 
     const serverUrl = data.serverUrl || "https://ai-production-ffa9.up.railway.app";
     const apiKey    = data.tenantApiKey || "";
-    const email     = data.employeeEmail || data.userEmail || "anonymous@unknown.com";
+    const email     = data.employeeEmail || data.userEmail || null;
+    if (!email) return; // Skip heartbeat if no email configured – avoids invalid telemetry
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);

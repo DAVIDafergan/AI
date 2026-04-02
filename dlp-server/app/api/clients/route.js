@@ -91,6 +91,32 @@ function buildConnectionInstructions(serverUrl, apiKey) {
     `  --dir="/path/to/your/shared/drive" \\\n` +
     `  --local-port=4000`;
 
+  // Pre-configured extension bundle: a JSON object that employees can
+  // import directly via chrome.storage.local or the extension Options page.
+  // This eliminates manual copy-paste of keys during employee onboarding.
+  const extensionBundle = JSON.stringify(
+    {
+      serverUrl,
+      tenantApiKey: apiKey,
+      localAgentUrl: "http://localhost:4000",
+      enabled: true,
+    },
+    null,
+    2
+  );
+
+  // Managed storage policy (for enterprise Chrome deployment via GPO / MDM)
+  const managedStoragePolicy = JSON.stringify(
+    {
+      serverUrl,
+      tenantApiKey: apiKey,
+      localAgentUrl: "http://localhost:4000",
+      enabled: true,
+    },
+    null,
+    2
+  );
+
   return {
     browserExtension: [
       "התקן את התוסף DLP Shield מ-Chrome Web Store",
@@ -98,6 +124,10 @@ function buildConnectionInstructions(serverUrl, apiKey) {
       `בשדה "כתובת שרת DLP" הכנס: ${serverUrl}`,
       "מפתח ה-API יוזן אוטומטית דרך מנהל המערכת",
     ],
+    // Pre-configured bundle: import this JSON via the extension Options page
+    // or push via Chrome Enterprise Managed Storage to skip manual setup.
+    extensionBundle,
+    managedStoragePolicy,
     desktopShield: `# התקנה:\ncd dlp-server && npm install\n\n# הגדרת משתני סביבה:\nexport DLP_SERVER_URL="${serverUrl}"\nexport DLP_API_KEY="${apiKey}"\n\n# הפעלה:\nnpm run shield`,
     localAgent: agentCommand,
     curlExample: `curl -X POST ${serverUrl}/api/check-text \\\n  -H "Content-Type: application/json" \\\n  -H "x-api-key: ${apiKey}" \\\n  -d '{"text": "הטקסט לבדיקה", "source": "api"}'`,

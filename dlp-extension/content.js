@@ -27,6 +27,51 @@ const safeStateMap = new WeakMap(); // element → last known safe value
 // ── Rate limiting for input interception ──
 let inputRequestPending = false;
 
+// ── Web Worker for pre-flight regex screening (keeps UI at 60 fps) ──
+// Lazily instantiated so we don't pay the cost on pages where DLP never fires.
+let _dlpWorker = null;
+let _workerMsgId = 0;
+const _workerCallbacks = new Map(); // id → { resolve, reject }
+
+function getDlpWorker() {
+  if (_dlpWorker) return _dlpWorker;
+  try {
+    _dlpWorker = new Worker(chrome.runtime.getURL("dlp-worker.js"));
+    _dlpWorker.onmessage = ({ data }) => {
+      const cb = _workerCallbacks.get(data.id);
+      if (cb) { _workerCallbacks.delete(data.id); cb.resolve(data.result); }
+    };
+    _dlpWorker.onerror = (err) => {
+      console.warn(`${DLP_PREFIX} Worker error:`, err.message);
+      // Resolve all pending with an error so callers fall back to API
+      for (const [id, cb] of _workerCallbacks) {
+        _workerCallbacks.delete(id);
+        cb.resolve({ error: "worker error" });
+      }
+      _dlpWorker = null; // reset so next call recreates it
+    };
+  } catch {
+    // Worker unavailable – callers should fall back to the API path
+  }
+  return _dlpWorker;
+}
+
+/**
+ * Ask the Web Worker to do a fast pre-flight regex scan.
+ * Resolves with { hasSensitive, types } or { error } on failure.
+ * @param {string} text
+ * @returns {Promise<{ hasSensitive: boolean, types: string[] } | { error: string }>}
+ */
+function workerPreflight(text) {
+  return new Promise((resolve) => {
+    const worker = getDlpWorker();
+    if (!worker) { resolve({ error: "no worker" }); return; }
+    const id = ++_workerMsgId;
+    _workerCallbacks.set(id, { resolve, reject: resolve });
+    worker.postMessage({ type: "PREFLIGHT", id, payload: { text } });
+  });
+}
+
 // ── Smart Masking: vault & re-trigger guard ──
 const _vault        = {};    // token → original value, e.g. { "[PERSON_1]": "David" }
 let   _maskingActive = false; // true only while programmatically re-triggering a masked send
@@ -36,6 +81,22 @@ let _inputMaskingActive = false;
 
 // ── Output scanning guard: prevents DOM changes made by scanAndRestore from re-triggering the observer ──
 let _dlpScanMutating = false;
+
+// ── Unified internal-operation lock: set whenever DLP is modifying the DOM itself ──
+// Guards against any recursive scan triggered by DLP's own text insertions.
+// Consolidates _maskingActive, _inputMaskingActive, and _dlpScanMutating under one roof.
+let isInternalOperation = false;
+
+/** Set all re-trigger guards at once so no single guard is accidentally left unset. */
+function setInternalOperation(val) {
+  isInternalOperation  = val;
+  _maskingActive       = val;
+  _inputMaskingActive  = val;
+  _dlpScanMutating     = val;
+}
+
+// ── DOM attribute used as a bypass marker on elements being programmatically updated ──
+const DLP_BYPASS_ATTR = "data-dlp-bypass";
 
 // ── Animation Timing (ms) ──
 const TIMING = {
@@ -356,34 +417,48 @@ function setNativeValue(element, value) {
 }
 
 /* ─────────────────────────────────────────────
-   Insert text into the target field
+   Insert text into the target field.
+   Marks the element with DLP_BYPASS_ATTR so that
+   input listeners know this change originated from
+   DLP itself and must not trigger a new scan.
    ───────────────────────────────────────────── */
 function insertTextIntoField(element, text) {
-  element.focus();
+  element.setAttribute(DLP_BYPASS_ATTR, "1");
+  setInternalOperation(true);
+  try {
+    element.focus();
 
-  if (element.isContentEditable) {
-    document.execCommand("insertText", false, text);
-    return;
+    if (element.isContentEditable) {
+      document.execCommand("insertText", false, text);
+      return;
+    }
+
+    const start  = element.selectionStart ?? element.value.length;
+    const end    = element.selectionEnd   ?? element.value.length;
+    const before = element.value.slice(0, start);
+    const after  = element.value.slice(end);
+
+    // Use native setter to avoid breaking React's internal state (e.g. ChatGPT)
+    setNativeValue(element, before + text + after);
+
+    const newPos = start + text.length;
+    element.setSelectionRange(newPos, newPos);
+
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+  } finally {
+    // Remove bypass marker after a microtask so queued event handlers see it
+    Promise.resolve().then(() => {
+      element.removeAttribute(DLP_BYPASS_ATTR);
+      setInternalOperation(false);
+    });
   }
-
-  const start  = element.selectionStart ?? element.value.length;
-  const end    = element.selectionEnd   ?? element.value.length;
-  const before = element.value.slice(0, start);
-  const after  = element.value.slice(end);
-
-  // Use native setter to avoid breaking React's internal state (e.g. ChatGPT)
-  setNativeValue(element, before + text + after);
-
-  const newPos = start + text.length;
-  element.setSelectionRange(newPos, newPos);
-
-  element.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
 /* ─────────────────────────────────────────────
    React-compatible text setter for input fields
    ───────────────────────────────────────────── */
 function setReactInputValue(element, newText) {
+  element.setAttribute(DLP_BYPASS_ATTR, "1");
   try {
     if (element.isContentEditable) {
       // For React-controlled contentEditable (e.g. ChatGPT's ProseMirror editor),
@@ -410,6 +485,8 @@ function setReactInputValue(element, newText) {
     }
   } catch (err) {
     console.error(`${DLP_PREFIX} שגיאה בעדכון ערך שדה:`, err);
+  } finally {
+    Promise.resolve().then(() => element.removeAttribute(DLP_BYPASS_ATTR));
   }
 }
 
@@ -439,6 +516,16 @@ async function handlePaste(event) {
   const target = event.target;
 
   try {
+    // ── Fast pre-flight in the Web Worker (no network round-trip) ──────────
+    // If no regex patterns match we skip the full API call entirely, keeping
+    // the UI at 60 fps for the vast majority of "clean" paste events.
+    const preflight = await workerPreflight(text);
+    if (!preflight?.error && !preflight?.hasSensitive) {
+      // Nothing suspicious – paste immediately without going to the API
+      insertTextIntoField(target, text);
+      return;
+    }
+
     const { localAgentUrl: agentUrl, tenantApiKey: apiKey, userEmail: email } = await readSettings();
 
     const result = await new Promise((resolve, reject) => {
@@ -503,6 +590,9 @@ async function handlePaste(event) {
 async function interceptInput(element) {
   if (inputRequestPending) return; // rate limit: skip if previous still pending
 
+  // Skip if DLP itself triggered this event
+  if (isInternalOperation || element.hasAttribute(DLP_BYPASS_ATTR)) return;
+
   const text = element.isContentEditable
     ? element.innerText || element.textContent
     : element.value;
@@ -510,6 +600,14 @@ async function interceptInput(element) {
   if (!text || text.trim().length < 3) {
     // Update safe state for short/empty content (it's safe by definition)
     safeStateMap.set(element, text ?? "");
+    return;
+  }
+
+  // Smooth Undo: if text is shorter than the last safe state the user is deleting –
+  // update safe state and skip the API scan (deletion always makes content safer).
+  const prevSafeState = safeStateMap.get(element) ?? "";
+  if (text.length < prevSafeState.length) {
+    safeStateMap.set(element, text);
     return;
   }
 
@@ -779,6 +877,11 @@ function attachInputListeners(element) {
     : (element.value || "");
   safeStateMap.set(element, currentValue);
 
+  // Helper: return true when this event was triggered by DLP's own DOM update
+  function isDlpInternal() {
+    return isInternalOperation || _inputMaskingActive || element.hasAttribute(DLP_BYPASS_ATTR);
+  }
+
   // Track safe state on focus (user starts typing from this point)
   element.addEventListener("focus", () => {
     const val = element.isContentEditable
@@ -790,25 +893,25 @@ function attachInputListeners(element) {
   // input event – fires on every character change
   // Guard: skip when the DLP itself is programmatically updating the field to avoid re-scan loops
   element.addEventListener("input", () => {
-    if (!_inputMaskingActive) debouncedInterceptInput(element);
+    if (!isDlpInternal()) debouncedInterceptInput(element);
   }, true);
 
   // keyup event – catches keys that don't trigger "input" (e.g. paste via keyboard)
   element.addEventListener("keyup", () => {
-    if (!_inputMaskingActive) debouncedInterceptInput(element);
+    if (!isDlpInternal()) debouncedInterceptInput(element);
   }, true);
 
   // MutationObserver on the element itself (for React-controlled contentEditables)
   if (element.isContentEditable) {
     const mutObs = new MutationObserver(() => {
-      if (!_inputMaskingActive) debouncedInterceptInput(element);
+      if (!isDlpInternal()) debouncedInterceptInput(element);
     });
     mutObs.observe(element, { characterData: true, childList: true, subtree: true });
   }
 
   // Keydown: immediate check on Space (cancel debounce and check now)
   element.addEventListener("keydown", (e) => {
-    if (e.key === " " && !_inputMaskingActive) {
+    if (e.key === " " && !isDlpInternal()) {
       debouncedInterceptInput.cancel();
       interceptInput(element);
     }
@@ -1215,44 +1318,86 @@ function watchForAIOutput() {
 }
 
 /* ─────────────────────────────────────────────
-   Fallback Toast
+   Shadow DOM Toast – non-intrusive, style-isolated notification.
+   Injects into a shadow root so page CSS cannot clash with the toast.
+   Falls back gracefully if Shadow DOM is unavailable.
    ───────────────────────────────────────────── */
 function showFallbackToast(message, type = "info") {
-  const existing = document.getElementById("dlp-toast");
-  if (existing) existing.remove();
-
-  const toast = document.createElement("div");
-  toast.id = "dlp-toast";
-  toast.textContent = message;
+  // Remove any existing toast host
+  const existingHost = document.getElementById("dlp-toast-host");
+  if (existingHost) existingHost.remove();
 
   const colors = { success: "#34C759", warning: "#F57C00", info: "#1976D2" };
+  const bg = colors[type] || colors.info;
 
-  Object.assign(toast.style, {
-    position: "fixed",
-    top: "20px",
-    left: "50%",
-    transform: "translateX(-50%)",
-    zIndex: "2147483647",
-    padding: "12px 24px",
-    borderRadius: "10px",
-    backgroundColor: colors[type] || colors.info,
-    color: "#FFFFFF",
-    fontSize: "15px",
-    fontWeight: "600",
-    fontFamily: "'Segoe UI', Arial, sans-serif",
-    direction: "rtl",
-    textAlign: "right",
-    boxShadow: "0 4px 20px rgba(0,0,0,0.3)",
-    opacity: "0",
-    transition: "opacity 0.3s ease",
+  const host = document.createElement("div");
+  host.id = "dlp-toast-host";
+  Object.assign(host.style, {
+    position:       "fixed",
+    top:            "20px",
+    left:           "50%",
+    transform:      "translateX(-50%)",
+    zIndex:         "2147483647",
+    pointerEvents:  "none",
   });
 
-  document.body.appendChild(toast);
-  requestAnimationFrame(() => (toast.style.opacity = "1"));
+  // Use Shadow DOM to isolate styles from the host page
+  let container;
+  if (host.attachShadow) {
+    const shadow = host.attachShadow({ mode: "closed" });
+    shadow.innerHTML = `
+      <style>
+        .dlp-toast {
+          display: inline-block;
+          padding: 12px 24px;
+          border-radius: 10px;
+          background: ${bg};
+          color: #fff;
+          font-size: 15px;
+          font-weight: 600;
+          font-family: 'Segoe UI', Arial, sans-serif;
+          direction: rtl;
+          text-align: right;
+          box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+          opacity: 0;
+          transition: opacity 0.3s ease;
+          white-space: nowrap;
+        }
+        .dlp-toast.visible { opacity: 1; }
+      </style>
+      <div class="dlp-toast">${message}</div>`;
+    container = shadow.querySelector(".dlp-toast");
+  } else {
+    // Fallback: no Shadow DOM support
+    container = document.createElement("div");
+    Object.assign(container.style, {
+      padding: "12px 24px", borderRadius: "10px", background: bg,
+      color: "#fff", fontSize: "15px", fontWeight: "600",
+      fontFamily: "'Segoe UI', Arial, sans-serif", direction: "rtl",
+      boxShadow: "0 4px 20px rgba(0,0,0,0.3)", opacity: "0",
+      transition: "opacity 0.3s ease",
+    });
+    container.textContent = message;
+    host.appendChild(container);
+  }
+
+  (document.body || document.documentElement).appendChild(host);
+
+  requestAnimationFrame(() => {
+    if (container.classList) {
+      container.classList.add("visible");
+    } else {
+      container.style.opacity = "1";
+    }
+  });
 
   setTimeout(() => {
-    toast.style.opacity = "0";
-    setTimeout(() => toast.remove(), 300);
+    if (container.classList) {
+      container.classList.remove("visible");
+    } else {
+      container.style.opacity = "0";
+    }
+    setTimeout(() => host.remove(), 350);
   }, 3000);
 }
 

@@ -15,6 +15,7 @@ import {
   Terminal, AlertCircle, Wifi, RefreshCw, UserCheck, Replace,
   TrendingUp, Clock, Filter, Search, ChevronDown, ChevronUp,
 } from "lucide-react";
+import ActiveUsersPanel from "./components/ActiveUsersPanel";
 
 function clsx(...cls) { return cls.filter(Boolean).join(" "); }
 function formatNum(n) { return (n ?? 0).toLocaleString("he-IL"); }
@@ -817,6 +818,8 @@ export default function CommandCenterDashboard() {
         </div>
 
         <ConnectedUsersPanel userStats={data?.userStats || []} />
+
+        <ActiveUsersPanel apiKey={apiKey} />
 
         <RecentEvents events={data?.recentEvents || []} />
 

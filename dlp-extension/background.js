@@ -181,14 +181,17 @@ chrome.runtime.onInstalled.addListener(() => {
 
   // Schedule periodic health check every 5 minutes
   chrome.alarms.create("healthCheck", { periodInMinutes: 5 });
+  // Schedule user heartbeat every 10 minutes so Admin can track active users
+  chrome.alarms.create("userHeartbeat", { periodInMinutes: 10 });
 });
 
 // ── Restore alarms on startup (service worker may be restarted) ───────────────
 chrome.runtime.onStartup.addListener(() => {
   chrome.alarms.get("healthCheck", (alarm) => {
-    if (!alarm) {
-      chrome.alarms.create("healthCheck", { periodInMinutes: 5 });
-    }
+    if (!alarm) chrome.alarms.create("healthCheck", { periodInMinutes: 5 });
+  });
+  chrome.alarms.get("userHeartbeat", (alarm) => {
+    if (!alarm) chrome.alarms.create("userHeartbeat", { periodInMinutes: 10 });
   });
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
@@ -199,10 +202,13 @@ chrome.runtime.onStartup.addListener(() => {
   });
 });
 
-// ── Alarm handler: periodic health check ─────────────────────────────────────
+// ── Alarm handler: periodic health check + user heartbeat ────────────────────
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === "healthCheck") {
     performHealthCheck();
+  }
+  if (alarm.name === "userHeartbeat") {
+    sendUserHeartbeat();
   }
 });
 
@@ -226,5 +232,49 @@ async function performHealthCheck() {
     }
   } catch {
     await chrome.storage.local.set({ lastHealthCheck: Date.now(), serverHealthy: false });
+  }
+}
+
+/**
+ * Send a lightweight heartbeat to the server every 10 minutes so the Admin
+ * dashboard can display "Active Users" in real time.
+ * Only metadata is sent – no text content ever leaves the browser.
+ */
+async function sendUserHeartbeat() {
+  try {
+    const data = await new Promise((resolve) => {
+      chrome.storage.local.get(
+        ["serverUrl", "tenantApiKey", "employeeEmail", "userEmail", "enabled", "interceptedCount"],
+        resolve
+      );
+    });
+    if (!data.enabled) return;
+
+    const serverUrl = data.serverUrl || "https://ai-production-ffa9.up.railway.app";
+    const apiKey    = data.tenantApiKey || "";
+    const email     = data.employeeEmail || data.userEmail || null;
+    if (!email) return; // Skip heartbeat if no email configured – avoids invalid telemetry
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+
+    await fetch(`${serverUrl}/api/user-heartbeat`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(apiKey ? { "x-api-key": apiKey } : {}),
+      },
+      body: JSON.stringify({
+        userEmail:         email,
+        interceptedCount:  data.interceptedCount || 0,
+        extensionVersion:  chrome.runtime.getManifest().version,
+        timestamp:         new Date().toISOString(),
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeout);
+  } catch {
+    // Non-critical – heartbeat failures are silently ignored
   }
 }

@@ -118,6 +118,52 @@ export async function sendTenantEvent({
 }
 
 /**
+ * Send a scan report POST to the SaaS `/api/reports/scan` endpoint.
+ * Reports aggregate file scan statistics – no sensitive content is included.
+ *
+ * @param {{
+ *   apiKey: string,
+ *   serverUrl?: string,
+ *   totalFilesScanned: number,
+ *   durationSeconds: number,
+ * }} options
+ * @returns {Promise<{ ok: boolean, status: number, body: object }>}
+ */
+export async function sendScanReport({
+  apiKey,
+  serverUrl,
+  totalFilesScanned,
+  durationSeconds,
+}) {
+  const baseUrl = (serverUrl || DEFAULT_SERVER_URL).replace(/\/$/, "");
+  const url = `${baseUrl}/api/reports/scan`;
+
+  const payload = {
+    totalFilesScanned,
+    durationSeconds,
+    timestamp: new Date().toISOString(),
+  };
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  let body = {};
+  try {
+    body = await response.json();
+  } catch {
+    // Non-JSON response – not critical
+  }
+
+  return { ok: response.ok, status: response.status, body };
+}
+
+/**
  * Start sending periodic telemetry (aggregate scan/block counts only) to the
  * GhostLayer dashboard.  No sensitive content is ever included.
  *

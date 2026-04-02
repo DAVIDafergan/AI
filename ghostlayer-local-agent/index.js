@@ -27,7 +27,7 @@ import {
 } from "./nlp-engine.js";
 import { ingestDocuments }          from "./vector-store.js";
 import { startApiServer, warmCache } from "./api-server.js";
-import { sendHeartbeat, startPeriodicTelemetry } from "./cloud-sync.js";
+import { sendHeartbeat, startPeriodicTelemetry, sendScanReport } from "./cloud-sync.js";
 
 // ── CLI definition ────────────────────────────────────────────────────────────
 
@@ -87,6 +87,26 @@ async function run() {
 
   console.log(`   ✅ ${files.length} file(s) read in ${(scanMs / 1000).toFixed(1)}s`);
   console.log();
+
+  // Report scan statistics to the cloud dashboard (aggregate counts only)
+  if (!dryRun) {
+    try {
+      const reportResult = await sendScanReport({
+        apiKey:            opts.apiKey,
+        serverUrl:         opts.serverUrl,
+        totalFilesScanned: files.length,
+        durationSeconds:   scanMs / 1000,
+      });
+      if (reportResult.ok) {
+        console.log(`   ☁️  Scan report saved to dashboard. (HTTP ${reportResult.status})`);
+      } else {
+        console.warn(`   ⚠️  Scan report not saved (HTTP ${reportResult.status}).`);
+      }
+    } catch (err) {
+      console.warn(`   ⚠️  Could not send scan report: ${err.message}`);
+    }
+    console.log();
+  }
 
   if (files.length === 0) {
     console.warn("⚠️  No supported files found (.txt, .md, .csv, .json). Exiting.");

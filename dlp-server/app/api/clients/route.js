@@ -84,6 +84,13 @@ export async function OPTIONS() {
 
 // ── בניית הוראות חיבור ──
 function buildConnectionInstructions(serverUrl, apiKey) {
+  const agentCommand =
+    `npx ghostlayer-agent \\\n` +
+    `  --api-key="${apiKey}" \\\n` +
+    `  --server-url="${serverUrl}" \\\n` +
+    `  --dir="/path/to/your/shared/drive" \\\n` +
+    `  --local-port=4000`;
+
   return {
     browserExtension: [
       "התקן את התוסף DLP Shield מ-Chrome Web Store",
@@ -92,6 +99,7 @@ function buildConnectionInstructions(serverUrl, apiKey) {
       "מפתח ה-API יוזן אוטומטית דרך מנהל המערכת",
     ],
     desktopShield: `# התקנה:\ncd dlp-server && npm install\n\n# הגדרת משתני סביבה:\nexport DLP_SERVER_URL="${serverUrl}"\nexport DLP_API_KEY="${apiKey}"\n\n# הפעלה:\nnpm run shield`,
+    localAgent: agentCommand,
     curlExample: `curl -X POST ${serverUrl}/api/check-text \\\n  -H "Content-Type: application/json" \\\n  -H "x-api-key: ${apiKey}" \\\n  -d '{"text": "הטקסט לבדיקה", "source": "api"}'`,
     sdkExample: `const response = await fetch('${serverUrl}/api/check-text', {\n  method: 'POST',\n  headers: {\n    'Content-Type': 'application/json',\n    'x-api-key': '${apiKey}'\n  },\n  body: JSON.stringify({ text: 'הטקסט לבדיקה', source: 'sdk' })\n});\nconst result = await response.json();\n// result.safe → boolean\n// result.redactedText → טקסט מנוקה`,
   };

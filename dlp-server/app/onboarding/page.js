@@ -2,7 +2,7 @@
 
 // דף Onboarding ציבורי – ללא צורך באימות
 import { useState } from "react";
-import { Shield, Key, Copy, Check, ChevronRight, Building2, Globe, Terminal, Code2 } from "lucide-react";
+import { Shield, Key, Copy, Check, ChevronRight, Building2, Globe, Terminal, Code2, Bot } from "lucide-react";
 
 // כפתור העתקה
 function CopyButton({ text, label }) {
@@ -231,11 +231,34 @@ export default function OnboardingPage() {
                 </ol>
               </div>
 
+              {/* GhostLayer Local Agent */}
+              <div className="bg-slate-900 border border-blue-500/30 rounded-xl p-5">
+                <div className="flex items-center gap-2 mb-3">
+                  <Bot className="w-4 h-4 text-blue-400" />
+                  <h4 className="text-sm font-semibold text-white">ב. GhostLayer Local Agent (סריקת תיקיות)</h4>
+                </div>
+                <p className="text-xs text-slate-400 mb-3">
+                  הרץ את הסוכן המקומי על שרת הקבצים שלך. הוא סורק את הכוננים, בונה AI מקומי, ושולח סטטיסטיקות מצטברות בלבד לדשבורד.
+                </p>
+                <div className="space-y-2 text-xs text-slate-300 mb-3">
+                  <p className="font-semibold text-slate-200">דרישות לפני ההרצה:</p>
+                  <ul className="list-disc list-inside space-y-1 text-slate-400">
+                    <li>Node.js גרסה 18 ומעלה</li>
+                    <li>גישה לתיקיית הקבצים המשותפת (Shared Drive)</li>
+                    <li>חיבור לאינטרנט לשליחת מטה-דאטה לדשבורד</li>
+                  </ul>
+                </div>
+                <CodeBlock code={result.instructions?.localAgent || ""} language="bash" />
+                <p className="text-xs text-slate-500 mt-2">
+                  💡 החלף <code className="text-slate-300">/path/to/your/shared/drive</code> בנתיב האמיתי לכונן המשותף שלך.
+                </p>
+              </div>
+
               {/* Desktop Shield */}
               <div className="bg-slate-900 border border-slate-700/50 rounded-xl p-5">
                 <div className="flex items-center gap-2 mb-3">
                   <Terminal className="w-4 h-4 text-violet-400" />
-                  <h4 className="text-sm font-semibold text-white">ב. Desktop Shield (Clipboard)</h4>
+                  <h4 className="text-sm font-semibold text-white">ג. Desktop Shield (Clipboard)</h4>
                 </div>
                 <CodeBlock code={result.instructions?.desktopShield || ""} language="bash" />
               </div>
@@ -244,7 +267,7 @@ export default function OnboardingPage() {
               <div className="bg-slate-900 border border-slate-700/50 rounded-xl p-5">
                 <div className="flex items-center gap-2 mb-3">
                   <Terminal className="w-4 h-4 text-orange-400" />
-                  <h4 className="text-sm font-semibold text-white">ג. cURL – חיבור ישיר</h4>
+                  <h4 className="text-sm font-semibold text-white">ד. cURL – חיבור ישיר</h4>
                 </div>
                 <CodeBlock code={result.instructions?.curlExample || ""} language="bash" />
               </div>
@@ -253,7 +276,7 @@ export default function OnboardingPage() {
               <div className="bg-slate-900 border border-slate-700/50 rounded-xl p-5">
                 <div className="flex items-center gap-2 mb-3">
                   <Code2 className="w-4 h-4 text-green-400" />
-                  <h4 className="text-sm font-semibold text-white">ד. JavaScript SDK</h4>
+                  <h4 className="text-sm font-semibold text-white">ה. JavaScript SDK</h4>
                 </div>
                 <CodeBlock code={result.instructions?.sdkExample || ""} language="javascript" />
               </div>

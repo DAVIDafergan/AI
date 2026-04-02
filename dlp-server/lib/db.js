@@ -142,6 +142,10 @@ function seed() {
     apiKeys.set("dev-api-key-12345", defaultOrgId);
     apiKeys.set("test-api-key-99999", defaultOrgId);
   }
+  // מפתח קבוע מ-env (עובד גם ב-production, שרד הפעלות מחדש)
+  if (process.env.DEFAULT_API_KEY) {
+    apiKeys.set(process.env.DEFAULT_API_KEY, defaultOrgId);
+  }
 }
 seed();
 

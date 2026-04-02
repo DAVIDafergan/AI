@@ -12,7 +12,8 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import {
   Shield, Brain, Cpu, Server, Download, Copy, CheckCheck,
   Activity, Users, Zap, Lock, Eye, ChevronRight,
-  Terminal, AlertCircle, Wifi, RefreshCw,
+  Terminal, AlertCircle, Wifi, RefreshCw, UserCheck, Replace,
+  TrendingUp, Clock, Filter, Search, ChevronDown, ChevronUp,
 } from "lucide-react";
 
 function clsx(...cls) { return cls.filter(Boolean).join(" "); }
@@ -407,46 +408,264 @@ hdiutil detach /Volumes/GhostLayerShield -quiet`;
 
 function KpiStrip({ stats }) {
   const items = [
-    { icon: Lock,        label: "חסימות כולל",        value: formatNum(stats?.totalBlocks),     color: "text-rose-400",   border: "border-rose-500/20"   },
-    { icon: AlertCircle, label: "חסימות היום",         value: formatNum(stats?.blocksToday),     color: "text-orange-400", border: "border-orange-500/20" },
-    { icon: Wifi,        label: "נקודות קצה מחוברות", value: formatNum(stats?.connectedAgents), color: "text-purple-400", border: "border-purple-500/20" },
-    { icon: Brain,       label: "סריקות כולל",        value: formatNum(stats?.totalScans),      color: "text-cyan-400",   border: "border-cyan-500/20"   },
+    { icon: Replace,   label: "החלפות כולל",        value: formatNum(stats?.totalBlocks),     color: "text-cyan-400",   border: "border-cyan-500/20",   sub: `היום: ${formatNum(stats?.blocksToday)}`  },
+    { icon: Wifi,      label: "נקודות קצה מחוברות", value: formatNum(stats?.connectedAgents), color: "text-purple-400", border: "border-purple-500/20", sub: `${formatNum(stats?.totalAgents ?? 0)} סוכנים`  },
+    { icon: UserCheck, label: "משתמשים מחוברים",    value: formatNum(stats?.onlineUsers ?? 0), color: "text-green-400",  border: "border-green-500/20",  sub: `${formatNum(stats?.totalUsers ?? 0)} סה"כ` },
+    { icon: Brain,     label: "סריקות כולל",        value: formatNum(stats?.totalScans),      color: "text-purple-400", border: "border-purple-500/20", sub: "סריקות DLP"                             },
   ];
   return (
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-      {items.map(({ icon: Icon, label, value, color, border }) => (
-        <MetricCard key={label} icon={Icon} label={label} value={value} color={color} border={border} />
+      {items.map(({ icon: Icon, label, value, color, border, sub }) => (
+        <MetricCard key={label} icon={Icon} label={label} value={value} sub={sub} color={color} border={border} />
       ))}
     </div>
   );
 }
 
 const EVENT_LABELS = {
-  scan: "סריקה", block: "חסימה", alert: "התראה",
+  scan: "סריקה", block: "החלפה", alert: "התראה",
   agent_connect: "חיבור סוכן", agent_disconnect: "ניתוק סוכן",
   config_change: "שינוי הגדרות", user_action: "פעולת משתמש",
 };
 const SEVERITY_COLOR = { low: "text-slate-400", medium: "text-yellow-400", high: "text-orange-400", critical: "text-red-400" };
 
+function relativeTime(ts) {
+  if (!ts) return "—";
+  const diff = Date.now() - new Date(ts).getTime();
+  const s = Math.floor(diff / 1000);
+  if (s < 60)  return `לפני ${s} שנ'`;
+  const m = Math.floor(s / 60);
+  if (m < 60)  return `לפני ${m} דק'`;
+  const h = Math.floor(m / 60);
+  if (h < 24)  return `לפני ${h} שע'`;
+  return `לפני ${Math.floor(h / 24)} ימ'`;
+}
+
+function ConnectedUsersPanel({ userStats = [] }) {
+  const [search, setSearch] = useState("");
+  const [expanded, setExpanded] = useState(null);
+  const [sortKey, setSortKey] = useState("replacements");
+  const [sortDir, setSortDir] = useState("desc");
+
+  function getSortValue(user, key) {
+    if (key === "lastActivity") return user.lastActivity ? new Date(user.lastActivity).getTime() : 0;
+    return user[key] ?? 0;
+  }
+
+  const filtered = userStats
+    .filter((u) => !search || u.email.toLowerCase().includes(search.toLowerCase()))
+    .sort((a, b) => {
+      const av = getSortValue(a, sortKey);
+      const bv = getSortValue(b, sortKey);
+      return sortDir === "desc" ? bv - av : av - bv;
+    });
+
+  function toggleSort(key) {
+    if (sortKey === key) setSortDir((d) => (d === "desc" ? "asc" : "desc"));
+    else { setSortKey(key); setSortDir("desc"); }
+  }
+
+  const SortIcon = ({ k }) =>
+    sortKey === k
+      ? (sortDir === "desc" ? <ChevronDown className="w-3 h-3 inline ml-0.5" /> : <ChevronUp className="w-3 h-3 inline ml-0.5" />)
+      : null;
+
+  const onlineCount = userStats.filter((u) => u.online).length;
+
+  return (
+    <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl p-5 space-y-4">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5">
+          <div className="p-2 rounded-lg bg-green-500/10 border border-green-500/20">
+            <Users className="w-4 h-4 text-green-400" />
+          </div>
+          <div>
+            <h3 className="text-sm font-bold text-white">ניהול משתמשים מחוברים</h3>
+            <p className="text-xs text-slate-500">
+              <span className="text-green-400 font-semibold">{onlineCount} מחוברים כעת</span>
+              {" · "}
+              {userStats.length} משתמשים סה"כ
+            </p>
+          </div>
+        </div>
+        <div className="relative">
+          <Search className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="חיפוש לפי אימייל..."
+            dir="ltr"
+            className="bg-slate-800/60 border border-slate-700/50 rounded-lg pr-8 pl-3 py-2 text-xs text-slate-200 placeholder-slate-600 outline-none focus:border-cyan-600/60 w-56"
+          />
+        </div>
+      </div>
+
+      {/* Table */}
+      {filtered.length === 0 ? (
+        <div className="text-center py-8 text-slate-600 text-sm">
+          {search ? "לא נמצאו משתמשים" : "אין נתוני משתמשים עדיין"}
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-slate-700/40">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-slate-800/60 border-b border-slate-700/40 text-slate-400 uppercase tracking-wide text-[10px]">
+                <th className="text-right px-4 py-3">סטטוס</th>
+                <th className="text-right px-4 py-3">אימייל</th>
+                <th
+                  className="text-center px-4 py-3 cursor-pointer hover:text-slate-200 transition-colors"
+                  onClick={() => toggleSort("replacements")}
+                >
+                  החלפות <SortIcon k="replacements" />
+                </th>
+                <th
+                  className="text-right px-4 py-3 hidden sm:table-cell cursor-pointer hover:text-slate-200 transition-colors"
+                  onClick={() => toggleSort("lastActivity")}
+                >
+                  פעילות אחרונה <SortIcon k="lastActivity" />
+                </th>
+                <th className="text-center px-4 py-3">פירוט</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((user) => (
+                <>
+                  <tr
+                    key={user.email}
+                    className={clsx(
+                      "border-b border-slate-800/50 transition-colors cursor-pointer",
+                      expanded === user.email ? "bg-slate-800/40" : "hover:bg-slate-800/20"
+                    )}
+                    onClick={() => setExpanded(expanded === user.email ? null : user.email)}
+                  >
+                    <td className="px-4 py-3">
+                      <span className="flex items-center gap-1.5">
+                        <span className={clsx("w-2 h-2 rounded-full shrink-0", user.online ? "bg-green-400 animate-pulse" : "bg-slate-600")} />
+                        <span className={clsx("text-[10px] font-medium", user.online ? "text-green-400" : "text-slate-500")}>
+                          {user.online ? "פעיל" : "לא מחובר"}
+                        </span>
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-slate-200 font-mono" dir="ltr">{user.email}</td>
+                    <td className="px-4 py-3 text-center">
+                      <span className={clsx(
+                        "inline-flex items-center gap-1 px-2.5 py-1 rounded-full font-bold text-xs border",
+                        user.replacements > 50 ? "bg-red-500/15 text-red-400 border-red-500/25" :
+                        user.replacements > 10 ? "bg-orange-500/15 text-orange-400 border-orange-500/25" :
+                        user.replacements > 0  ? "bg-cyan-500/15 text-cyan-400 border-cyan-500/25" :
+                        "bg-slate-800/50 text-slate-500 border-slate-700/30"
+                      )}>
+                        <Replace className="w-3 h-3" />
+                        {formatNum(user.replacements)}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-slate-500 hidden sm:table-cell">{relativeTime(user.lastActivity)}</td>
+                    <td className="px-4 py-3 text-center">
+                      <button
+                        className="text-slate-400 hover:text-cyan-400 transition-colors"
+                        onClick={(e) => { e.stopPropagation(); setExpanded(expanded === user.email ? null : user.email); }}
+                      >
+                        {expanded === user.email ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                      </button>
+                    </td>
+                  </tr>
+                  {expanded === user.email && (
+                    <tr key={`${user.email}-detail`} className="bg-slate-800/30 border-b border-slate-800/50">
+                      <td colSpan={5} className="px-6 py-4">
+                        <div className="space-y-3">
+                          <div className="flex flex-wrap gap-4 text-xs">
+                            <div className="bg-slate-900/60 rounded-lg px-3 py-2 border border-slate-700/40">
+                              <p className="text-slate-500 mb-1">פעילות אחרונה</p>
+                              <p className="text-slate-200 font-medium">
+                                {user.lastActivity ? new Date(user.lastActivity).toLocaleString("he-IL") : "—"}
+                              </p>
+                            </div>
+                            <div className="bg-slate-900/60 rounded-lg px-3 py-2 border border-slate-700/40">
+                              <p className="text-slate-500 mb-1">סה"כ החלפות</p>
+                              <p className="text-cyan-400 font-bold text-lg">{formatNum(user.replacements)}</p>
+                            </div>
+                          </div>
+                          {Object.keys(user.categories || {}).length > 0 && (
+                            <div>
+                              <p className="text-[10px] text-slate-500 mb-1.5 uppercase tracking-wide">פירוט קטגוריות</p>
+                              <div className="flex flex-wrap gap-2">
+                                {Object.entries(user.categories).map(([cat, count]) => (
+                                  <span key={cat} className="bg-slate-700/60 text-slate-300 text-xs px-2.5 py-1 rounded-full border border-slate-600/40">
+                                    {cat}: <strong className="text-white">{count}</strong>
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RecentEvents({ events }) {
+  const [showAll, setShowAll] = useState(false);
+  const displayed = showAll ? events : events.slice(0, 10);
+
   return (
     <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl p-5 space-y-3">
-      <div className="flex items-center gap-2">
-        <Activity className="w-4 h-4 text-red-400" />
-        <span className="text-sm font-semibold text-white">אירועים אחרונים</span>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Activity className="w-4 h-4 text-red-400" />
+          <span className="text-sm font-semibold text-white">יומן אירועים אחרונים</span>
+          <span className="text-xs text-slate-500">({events.length})</span>
+        </div>
+        {events.length > 10 && (
+          <button
+            onClick={() => setShowAll((v) => !v)}
+            className="text-xs text-cyan-400 hover:text-cyan-300 transition-colors"
+          >
+            {showAll ? "הצג פחות ▲" : `הצג הכל (${events.length}) ▼`}
+          </button>
+        )}
       </div>
       {events.length === 0 ? (
         <p className="text-xs text-slate-600 text-center py-4">אין אירועים עדיין</p>
       ) : (
-        <div className="space-y-1.5">
-          {events.slice(0, 15).map((e) => (
-            <div key={e._id} className="flex items-center justify-between text-xs py-1 border-b border-slate-800/40">
-              <span className="text-slate-300">{EVENT_LABELS[e.eventType] || e.eventType}</span>
-              <span className={SEVERITY_COLOR[e.severity] || "text-slate-500"}>{e.severity}</span>
-              {e.userEmail && <span className="text-slate-500 hidden sm:block truncate max-w-[120px]">{e.userEmail}</span>}
-              <span className="text-slate-600 shrink-0">{e.timestamp ? new Date(e.timestamp).toLocaleString("he-IL") : ""}</span>
-            </div>
-          ))}
+        <div className="overflow-x-auto rounded-lg border border-slate-800/60">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-slate-800/50 border-b border-slate-800/60 text-slate-500 uppercase tracking-wide text-[10px]">
+                <th className="text-right px-3 py-2">אירוע</th>
+                <th className="text-right px-3 py-2 hidden sm:table-cell">אימייל</th>
+                <th className="text-center px-3 py-2">חומרה</th>
+                <th className="text-right px-3 py-2">זמן</th>
+              </tr>
+            </thead>
+            <tbody>
+              {displayed.map((e, i) => (
+                <tr key={e._id || i} className="border-b border-slate-800/40 hover:bg-slate-800/20 transition-colors">
+                  <td className="px-3 py-2 text-slate-300 font-medium">{EVENT_LABELS[e.eventType] || e.eventType}</td>
+                  <td className="px-3 py-2 text-slate-500 hidden sm:table-cell font-mono truncate max-w-[160px]" dir="ltr">
+                    {e.userEmail || "—"}
+                  </td>
+                  <td className="px-3 py-2 text-center">
+                    <span className={clsx("font-semibold", SEVERITY_COLOR[e.severity] || "text-slate-500")}>
+                      {e.severity || "—"}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2 text-slate-600 shrink-0">
+                    {e.timestamp ? relativeTime(e.timestamp) : "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>
@@ -596,6 +815,8 @@ export default function CommandCenterDashboard() {
         <div className="bg-slate-900/40 border border-slate-700/40 rounded-2xl p-6 lg:p-8 shadow-xl shadow-black/20">
           <WorkerShieldPhase data={data} />
         </div>
+
+        <ConnectedUsersPanel userStats={data?.userStats || []} />
 
         <RecentEvents events={data?.recentEvents || []} />
 

@@ -32,15 +32,27 @@ export async function GET(request) {
     const now = Date.now();
 
     // שלוף סוכנים, אירועים והיסטוריית חסימות במקביל
-    const [agents, recentEvents, totalBlocks, totalScans, blocksToday] = await Promise.all([
+    const [agents, recentEvents, allBlockEvents, totalScans, blocksToday] = await Promise.all([
       Agent.find({ tenantId }).sort({ deployedAt: -1 }).lean(),
 
       TenantEvent.find({ tenantId })
         .sort({ timestamp: -1 })
-        .limit(30)
+        .limit(50)
         .lean(),
 
-      TenantEvent.countDocuments({ tenantId, eventType: "block" }),
+      TenantEvent.find(
+        {
+          tenantId,
+          eventType: "block",
+          // Limit to last 30 days to keep aggregation performant as data grows
+          timestamp: { $gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) },
+        },
+        { userEmail: 1, timestamp: 1, category: 1, severity: 1 }
+      )
+        .sort({ timestamp: -1 })
+        .limit(1000)
+        .lean(),
+
       TenantEvent.countDocuments({ tenantId, eventType: "scan" }),
       TenantEvent.countDocuments({
         tenantId,
@@ -48,6 +60,8 @@ export async function GET(request) {
         timestamp: { $gte: new Date(new Date().setHours(0, 0, 0, 0)) },
       }),
     ]);
+
+    const totalBlocks = await TenantEvent.countDocuments({ tenantId, eventType: "block" });
 
     // הוסף סטטוס דינמי לכל סוכן
     const enrichedAgents = agents.map((a) => {
@@ -62,6 +76,28 @@ export async function GET(request) {
     });
 
     const connectedAgents = enrichedAgents.filter((a) => a.syncStatus !== "offline").length;
+
+    // בנה סטטיסטיקות per-user מהאירועים
+    const userMap = {};
+    for (const ev of allBlockEvents) {
+      const email = ev.userEmail || "anonymous@unknown.com";
+      if (!userMap[email]) {
+        userMap[email] = { email, replacements: 0, lastActivity: null, categories: {} };
+      }
+      userMap[email].replacements += 1;
+      const ts = ev.timestamp ? new Date(ev.timestamp).getTime() : 0;
+      if (!userMap[email].lastActivity || ts > new Date(userMap[email].lastActivity).getTime()) {
+        userMap[email].lastActivity = ev.timestamp;
+      }
+      if (ev.category) {
+        userMap[email].categories[ev.category] = (userMap[email].categories[ev.category] || 0) + 1;
+      }
+    }
+    // סמן משתמשים שהיו פעילים ב-5 דקות האחרונות כ-"online"
+    const userStats = Object.values(userMap).map((u) => {
+      const lastMs = u.lastActivity ? new Date(u.lastActivity).getTime() : 0;
+      return { ...u, online: lastMs > 0 && now - lastMs < 5 * 60 * 1000 };
+    }).sort((a, b) => b.replacements - a.replacements);
 
     // בנה פקודת התקנת סוכן שרת (אם יש סוכן ראשון)
     const primaryAgent = enrichedAgents[0] || null;
@@ -87,9 +123,12 @@ export async function GET(request) {
           blocksToday,
           monthlyQuota: tenant.usage?.monthlyQuota || 10000,
           monthlyScans: tenant.usage?.monthlyScans || 0,
+          totalUsers: userStats.length,
+          onlineUsers: userStats.filter((u) => u.online).length,
         },
         agents: enrichedAgents,
-        recentEvents,
+        recentEvents: recentEvents.slice(0, 30),
+        userStats,
         serverUrl,
         deploymentConfig,
       },

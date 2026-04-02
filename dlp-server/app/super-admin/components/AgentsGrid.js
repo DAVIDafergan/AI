@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Cpu, LayoutGrid, List, RefreshCw } from "lucide-react";
+import { Cpu, LayoutGrid, List, RefreshCw, Trash2 } from "lucide-react";
 
 const STATUS_COLORS = {
   active:   { dot: "bg-green-400",  text: "text-green-400",  border: "border-green-700/40" },
@@ -18,7 +18,7 @@ function StatusDot({ status }) {
   );
 }
 
-function AgentCard({ agent, onClick }) {
+function AgentCard({ agent, onClick, onDelete }) {
   const c = STATUS_COLORS[agent.syncStatus] || STATUS_COLORS.offline;
   return (
     <div
@@ -30,9 +30,18 @@ function AgentCard({ agent, onClick }) {
           <Cpu size={16} className={c.text} />
           <span className="text-sm text-slate-200 font-medium">{agent.name}</span>
         </div>
-        <div className="flex items-center gap-1.5">
-          <StatusDot status={agent.syncStatus} />
-          <span className={`text-xs ${c.text}`}>{agent.syncStatus}</span>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
+            <StatusDot status={agent.syncStatus} />
+            <span className={`text-xs ${c.text}`}>{agent.syncStatus}</span>
+          </div>
+          <button
+            onClick={(e) => { e.stopPropagation(); onDelete?.(agent); }}
+            title="מחק סוכן"
+            className="p-1 rounded hover:bg-red-900/40 text-slate-600 hover:text-red-400 transition-colors"
+          >
+            <Trash2 size={12} />
+          </button>
         </div>
       </div>
 
@@ -52,20 +61,29 @@ function AgentCard({ agent, onClick }) {
   );
 }
 
-function AgentRow({ agent, onClick }) {
+function AgentRow({ agent, onClick, onDelete }) {
   const c = STATUS_COLORS[agent.syncStatus] || STATUS_COLORS.offline;
   return (
-    <tr onClick={() => onClick?.(agent)} className="cursor-pointer border-b border-slate-800/60 hover:bg-slate-800/30 transition-colors">
-      <td className="px-4 py-2.5 text-slate-200 text-sm">{agent.name}</td>
-      <td className="px-4 py-2.5">
+    <tr className="border-b border-slate-800/60 hover:bg-slate-800/30 transition-colors">
+      <td onClick={() => onClick?.(agent)} className="cursor-pointer px-4 py-2.5 text-slate-200 text-sm">{agent.name}</td>
+      <td onClick={() => onClick?.(agent)} className="cursor-pointer px-4 py-2.5">
         <span className={`inline-flex items-center gap-1.5 text-xs ${c.text}`}>
           <StatusDot status={agent.syncStatus} /> {agent.syncStatus}
         </span>
       </td>
-      <td className="px-4 py-2.5 text-slate-400 font-mono text-xs">{agent.metrics?.scansPerformed ?? 0}</td>
-      <td className="px-4 py-2.5 text-slate-400 font-mono text-xs">{agent.metrics?.blocksExecuted ?? 0}</td>
-      <td className="px-4 py-2.5 text-slate-500 text-xs">
+      <td onClick={() => onClick?.(agent)} className="cursor-pointer px-4 py-2.5 text-slate-400 font-mono text-xs">{agent.metrics?.scansPerformed ?? 0}</td>
+      <td onClick={() => onClick?.(agent)} className="cursor-pointer px-4 py-2.5 text-slate-400 font-mono text-xs">{agent.metrics?.blocksExecuted ?? 0}</td>
+      <td onClick={() => onClick?.(agent)} className="cursor-pointer px-4 py-2.5 text-slate-500 text-xs">
         {agent.lastPing ? new Date(agent.lastPing).toLocaleTimeString("he-IL") : "—"}
+      </td>
+      <td className="px-4 py-2.5">
+        <button
+          onClick={() => onDelete?.(agent)}
+          title="מחק סוכן"
+          className="p-1.5 rounded hover:bg-red-900/30 text-slate-500 hover:text-red-400 transition-colors"
+        >
+          <Trash2 size={13} />
+        </button>
       </td>
     </tr>
   );
@@ -88,6 +106,20 @@ export default function AgentsGrid({ superAdminKey, onSelectAgent }) {
       setLastRefresh(new Date());
     } finally {
       setLoading(false);
+    }
+  };
+
+  const deleteAgent = async (agent) => {
+    if (!confirm(`האם למחוק את הסוכן "${agent.name}"?`)) return;
+    try {
+      const res = await fetch(`/api/agents/${agent._id}`, {
+        method: "DELETE",
+        headers: { "x-super-admin-key": superAdminKey },
+      });
+      if (!res.ok) throw new Error((await res.json()).error || "שגיאה במחיקה");
+      setAgents((prev) => prev.filter((a) => a._id !== agent._id));
+    } catch (e) {
+      alert(`שגיאה במחיקת הסוכן: ${e.message}`);
     }
   };
 
@@ -126,7 +158,7 @@ export default function AgentsGrid({ superAdminKey, onSelectAgent }) {
           {agents.length === 0 ? (
             <p className="col-span-full text-center text-slate-600 py-8">אין סוכנים פרוסים</p>
           ) : agents.map((a) => (
-            <AgentCard key={a._id} agent={a} onClick={onSelectAgent} />
+            <AgentCard key={a._id} agent={a} onClick={onSelectAgent} onDelete={deleteAgent} />
           ))}
         </div>
       ) : (
@@ -134,16 +166,16 @@ export default function AgentsGrid({ superAdminKey, onSelectAgent }) {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-800">
-                {["שם", "סטטוס", "סריקות", "חסימות", "Ping אחרון"].map((h) => (
-                  <th key={h} className="px-4 py-3 text-right text-xs text-slate-500 uppercase tracking-wider">{h}</th>
+                {["שם", "סטטוס", "סריקות", "חסימות", "Ping אחרון", ""].map((h) => (
+                  <th key={h || "actions"} className="px-4 py-3 text-right text-xs text-slate-500 uppercase tracking-wider">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {agents.length === 0 ? (
-                <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-600">אין סוכנים</td></tr>
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-600">אין סוכנים</td></tr>
               ) : agents.map((a) => (
-                <AgentRow key={a._id} agent={a} onClick={onSelectAgent} />
+                <AgentRow key={a._id} agent={a} onClick={onSelectAgent} onDelete={deleteAgent} />
               ))}
             </tbody>
           </table>

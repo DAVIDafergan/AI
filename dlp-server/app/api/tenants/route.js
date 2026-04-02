@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { requireSuperAdmin } from "../../../lib/superAdminAuth.js";
-import { connectMongo, Tenant } from "../../../lib/db.js";
+import { connectMongo, Tenant, Agent } from "../../../lib/db.js";
 import { randomUUID } from "crypto";
+
+const AGENT_ONLINE_THRESHOLD_MS = 60000;
 
 function slugify(name) {
   return name
@@ -10,13 +12,35 @@ function slugify(name) {
     .replace(/^-|-$/g, "");
 }
 
-// GET /api/tenants – list all tenants
+// GET /api/tenants – list all tenants enriched with agent counts
 export async function GET(request) {
   try {
     await requireSuperAdmin(request);
     await connectMongo();
     const tenants = await Tenant.find({}).sort({ createdAt: -1 }).lean();
-    return NextResponse.json({ tenants });
+
+    // Enrich each tenant with agentCount and onlineAgentCount
+    const now = Date.now();
+    const agentsByTenant = await Agent.find(
+      { tenantId: { $in: tenants.map((t) => t._id) } },
+      { tenantId: 1, lastPing: 1 }
+    ).lean();
+
+    const countMap = {};
+    const onlineMap = {};
+    for (const a of agentsByTenant) {
+      const key = String(a.tenantId);
+      countMap[key] = (countMap[key] || 0) + 1;
+      const isOnline = a.lastPing && now - new Date(a.lastPing).getTime() < AGENT_ONLINE_THRESHOLD_MS;
+      if (isOnline) onlineMap[key] = (onlineMap[key] || 0) + 1;
+    }
+
+    const enriched = tenants.map((t) => {
+      const key = String(t._id);
+      return { ...t, agentCount: countMap[key] || 0, onlineAgentCount: onlineMap[key] || 0 };
+    });
+
+    return NextResponse.json({ tenants: enriched });
   } catch (err) {
     return NextResponse.json({ error: err.message }, { status: err.status || 500 });
   }

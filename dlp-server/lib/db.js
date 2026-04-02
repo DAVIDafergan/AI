@@ -39,6 +39,7 @@ const TenantSchema = new mongoose.Schema(
     contactEmail:  { type: String, required: true },
     contactName:   { type: String },
     domain:        { type: String },
+    serverUrl: { type: String, default: "" },
     settings: {
       autoBlockThreshold: { type: Number, default: 80 },
       retentionDays:      { type: Number, default: 30 },

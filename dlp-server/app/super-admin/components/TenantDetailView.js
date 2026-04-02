@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import {
   Building2, ArrowLeft, Cpu, Activity, Terminal, Copy, CheckCheck,
-  Server, Users, Plus, Loader2, Link, Shield,
+  Server, Users, Plus, Loader2, Link, Shield, Trash2, Save,
 } from "lucide-react";
 
 function formatNum(n) { return (n ?? 0).toLocaleString("he-IL"); }
@@ -57,6 +57,7 @@ function CopyButton({ text, label = "העתק" }) {
 
 function ConnectionInstructions({ tenant, superAdminKey, onAgentProvisioned }) {
   const serverUrl =
+    tenant.serverUrl ||
     process.env.NEXT_PUBLIC_DLP_SERVER_URL ||
     (typeof window !== "undefined" ? window.location.origin : "");
   const apiKey = tenant.apiKey || "";
@@ -285,6 +286,9 @@ export default function TenantDetailView({ tenant, superAdminKey, onBack }) {
   const [agents, setAgents]   = useState([]);
   const [events, setEvents]   = useState([]);
   const [loading, setLoading] = useState(true);
+  const [serverUrlEdit, setServerUrlEdit] = useState(tenant?.serverUrl || "");
+  const [savingUrl, setSavingUrl]         = useState(false);
+  const [urlSaveMsg, setUrlSaveMsg]       = useState("");
 
   const fetchData = useCallback(async () => {
     if (!tenant) return;
@@ -304,6 +308,40 @@ export default function TenantDetailView({ tenant, superAdminKey, onBack }) {
       setLoading(false);
     }
   }, [tenant, superAdminKey]);
+
+  const saveServerUrl = async () => {
+    setSavingUrl(true);
+    setUrlSaveMsg("");
+    try {
+      const res = await fetch(`/api/tenants/${tenant._id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "x-super-admin-key": superAdminKey },
+        body: JSON.stringify({ serverUrl: serverUrlEdit }),
+      });
+      if (!res.ok) throw new Error((await res.json()).error || "שגיאה");
+      setUrlSaveMsg("✓ נשמר");
+      tenant.serverUrl = serverUrlEdit;
+    } catch (e) {
+      setUrlSaveMsg(`✗ ${e.message}`);
+    } finally {
+      setSavingUrl(false);
+      setTimeout(() => setUrlSaveMsg(""), 3000);
+    }
+  };
+
+  const deleteAgent = async (agentId, agentName) => {
+    if (!confirm(`האם למחוק את הסוכן "${agentName}"?`)) return;
+    try {
+      const res = await fetch(`/api/agents/${agentId}`, {
+        method: "DELETE",
+        headers: { "x-super-admin-key": superAdminKey },
+      });
+      if (!res.ok) throw new Error((await res.json()).error || "שגיאה במחיקה");
+      setAgents((prev) => prev.filter((a) => a._id !== agentId));
+    } catch (e) {
+      alert(`שגיאה במחיקת הסוכן: ${e.message}`);
+    }
+  };
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -379,7 +417,16 @@ export default function TenantDetailView({ tenant, superAdminKey, onBack }) {
                 <div key={a._id} className="bg-slate-900/40 rounded-lg p-3 space-y-1">
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-slate-200 font-medium">{a.name}</span>
-                    <span className={`text-xs ${st.cls}`}>{st.label}</span>
+                    <div className="flex items-center gap-2">
+                      <span className={`text-xs ${st.cls}`}>{st.label}</span>
+                      <button
+                        onClick={() => deleteAgent(a._id, a.name)}
+                        title="מחק סוכן"
+                        className="p-1 rounded hover:bg-red-900/40 text-slate-500 hover:text-red-400 transition-colors"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-xs text-slate-600">
                     <span>מסמכים: <span className="text-slate-400">{formatNum(a.metrics?.documentsIndexed)}</span></span>
@@ -436,6 +483,33 @@ export default function TenantDetailView({ tenant, superAdminKey, onBack }) {
         {tenant.contactName && <div>שם: <span className="text-slate-200">{tenant.contactName}</span></div>}
         {tenant.domain && <div>דומיין: <span className="text-slate-200">{tenant.domain}</span></div>}
         <div>נוצר: <span className="text-slate-200">{tenant.createdAt ? new Date(tenant.createdAt).toLocaleDateString("he-IL") : "—"}</span></div>
+
+        {/* כתובת שרת DLP */}
+        <div className="pt-2 border-t border-slate-800">
+          <label className="block text-slate-400 mb-1.5">כתובת שרת DLP (לסוכן ולתוסף):</label>
+          <div className="flex items-center gap-2">
+            <input
+              value={serverUrlEdit}
+              onChange={(e) => setServerUrlEdit(e.target.value)}
+              placeholder="https://dlp.company.com"
+              dir="ltr"
+              className="flex-1 bg-slate-900/60 border border-slate-700/60 rounded-lg px-3 py-1.5 text-xs text-slate-200 font-mono outline-none focus:border-cyan-600/60"
+            />
+            <button
+              onClick={saveServerUrl}
+              disabled={savingUrl}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-600/40 rounded-lg text-xs text-cyan-300 transition-colors disabled:opacity-40"
+            >
+              {savingUrl ? <Loader2 size={11} className="animate-spin" /> : <Save size={11} />}
+              שמור
+            </button>
+          </div>
+          {urlSaveMsg && (
+            <p className={`mt-1 text-[10px] ${urlSaveMsg.startsWith("✓") ? "text-green-400" : "text-red-400"}`}>
+              {urlSaveMsg}
+            </p>
+          )}
+        </div>
       </div>
     </div>
   );

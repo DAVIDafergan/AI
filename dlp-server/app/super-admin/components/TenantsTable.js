@@ -51,7 +51,7 @@ export default function TenantsTable({ tenants = [], onView, onEdit, onSuspend, 
     { key: "name",     label: "שם" },
     { key: "status",   label: "סטטוס" },
     { key: "plan",     label: "תוכנית" },
-    { key: "agents",   label: "סוכנים", sortable: false },
+    { key: "agents",   label: "סוכנים פעילים/כולל", sortable: false },
     { key: "usage.totalScans",  label: "סריקות" },
     { key: "usage.totalBlocks", label: "חסימות" },
     { key: "usage.lastActivity", label: "פעיל לאחרונה" },
@@ -110,7 +110,14 @@ export default function TenantsTable({ tenants = [], onView, onEdit, onSuspend, 
                     </span>
                   </td>
                   <td className={`px-4 py-3 font-medium ${PLAN_COLORS[t.plan] || ""}`}>{t.plan}</td>
-                  <td className="px-4 py-3 text-slate-400">{t.agentCount ?? 0}</td>
+                  <td className="px-4 py-3 text-slate-400">
+                    {t.onlineAgentCount != null && t.onlineAgentCount > 0
+                      ? <span className="text-green-400 font-medium">{t.onlineAgentCount}</span>
+                      : <span>{t.agentCount ?? 0}</span>}
+                    {t.onlineAgentCount != null && (
+                      <span className="text-slate-600">/{t.agentCount ?? 0}</span>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-slate-400 font-mono">{t.usage?.totalScans ?? 0}</td>
                   <td className="px-4 py-3 text-slate-400 font-mono">{t.usage?.totalBlocks ?? 0}</td>
                   <td className="px-4 py-3 text-slate-500 text-xs">

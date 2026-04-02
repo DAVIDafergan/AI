@@ -1,9 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { X, Cpu, RefreshCw, Pause, Settings, Activity, Loader2 } from "lucide-react";
+import { X, Cpu, RefreshCw, Pause, Settings, Activity, Loader2, Trash2 } from "lucide-react";
 
-export default function AgentDetailPanel({ agent, superAdminKey, onClose, onUpdated }) {
+export default function AgentDetailPanel({ agent, superAdminKey, onClose, onUpdated, onDeleted }) {
   const [tab, setTab]         = useState("metrics");
   const [editForm, setEditForm] = useState(null);
   const [loading, setLoading]  = useState(false);
@@ -165,6 +165,29 @@ export default function AgentDetailPanel({ agent, superAdminKey, onClose, onUpda
               className="w-full flex items-center gap-2 py-2.5 px-4 bg-yellow-500/10 border border-yellow-700/40 rounded-lg text-sm text-yellow-300 hover:bg-yellow-500/20 transition-colors"
             >
               <Pause size={14} /> השהיה
+            </button>
+            <button
+              onClick={async () => {
+                if (!confirm(`האם למחוק את הסוכן "${agent.name}"?`)) return;
+                setLoading(true);
+                try {
+                  const res = await fetch(`/api/agents/${agent._id}`, {
+                    method: "DELETE",
+                    headers: { "x-super-admin-key": superAdminKey },
+                  });
+                  if (!res.ok) throw new Error((await res.json()).error);
+                  onDeleted?.();
+                  onClose?.();
+                } catch (e) {
+                  setMsg(`✗ ${e.message}`);
+                } finally {
+                  setLoading(false);
+                }
+              }}
+              disabled={loading}
+              className="w-full flex items-center gap-2 py-2.5 px-4 bg-red-500/10 border border-red-700/40 rounded-lg text-sm text-red-300 hover:bg-red-500/20 transition-colors"
+            >
+              <Trash2 size={14} /> מחיקת סוכן
             </button>
           </div>
         )}

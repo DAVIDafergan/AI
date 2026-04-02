@@ -271,6 +271,7 @@ export default function SuperAdminPage() {
           superAdminKey={adminKey}
           onClose={() => setSelectedAgent(null)}
           onUpdated={(updated) => setSelectedAgent(updated)}
+          onDeleted={() => { setSelectedAgent(null); fetchStats(); }}
         />
       )}
 

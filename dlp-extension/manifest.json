@@ -20,13 +20,7 @@
   ],
   "permissions": ["storage", "identity", "identity.email", "alarms", "activeTab", "contextMenus"],
   "host_permissions": [
-    "*://ai-production-ffa9.up.railway.app/*",
-    "http://localhost/*",
-    "http://127.0.0.1/*",
-    "http://localhost:3000/*",
-    "http://127.0.0.1:3000/*",
-    "http://localhost:4000/*",
-    "http://127.0.0.1:4000/*"
+    "<all_urls>"
   ],
   "background": {
     "service_worker": "background.js"

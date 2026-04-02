@@ -98,7 +98,7 @@ function readSettings() {
           });
           return;
         }
-        const finalUrl = data.serverUrl || data.localAgentUrl || DEFAULT_LOCAL_AGENT_URL;
+        const finalUrl = data.localAgentUrl || data.serverUrl || DEFAULT_LOCAL_AGENT_URL;
         resolve({
           localAgentUrl: finalUrl,
           tenantApiKey:  data.tenantApiKey  || "",

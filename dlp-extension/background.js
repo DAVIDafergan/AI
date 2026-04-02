@@ -162,12 +162,14 @@ chrome.contextMenus.onClicked.addListener((info) => {
 
 // ── Initialize on install / startup ──────────────────────────────────────────
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.storage.local.set({
-    restoredCount: 0,
-    interceptedCount: 0,
-    sessionStart: Date.now(),
-    serverUrl: "https://ai-production-ffa9.up.railway.app",
-    enabled: true,
+  chrome.storage.local.get(["serverUrl", "enabled"], (existing) => {
+    chrome.storage.local.set({
+      restoredCount: 0,
+      interceptedCount: 0,
+      sessionStart: Date.now(),
+      serverUrl: existing.serverUrl || "https://ai-production-ffa9.up.railway.app",
+      enabled: existing.enabled !== undefined ? existing.enabled : true,
+    });
   });
   chrome.action.setBadgeText({ text: "" });
 

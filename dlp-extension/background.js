@@ -48,6 +48,56 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     handleInterceptionReport(message);
     sendResponse({ ok: true });
   }
+  // ── Proxy fetch to /api/check (avoids CORS in content scripts) ──
+  if (message.type === "CHECK_TEXT") {
+    const { text, userEmail, source, mode, apiKey, agentUrl } = message;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    fetch(`${agentUrl}/api/check-text`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(apiKey ? { "x-api-key": apiKey } : {}),
+      },
+      body: JSON.stringify({ text, userEmail, source, mode }),
+      signal: controller.signal,
+    })
+      .then((res) => {
+        clearTimeout(timeout);
+        if (!res.ok) {
+          sendResponse({ error: true, message: `HTTP ${res.status}` });
+          return;
+        }
+        res.json().then(sendResponse).catch((err) => {
+          sendResponse({ error: true, message: err.message || "JSON parse failed" });
+        });
+      })
+      .catch((err) => {
+        clearTimeout(timeout);
+        sendResponse({ error: true, message: err.message || "fetch failed" });
+      });
+    return true; // async
+  }
+  // ── Proxy lookup for synthetic vault tokens ──
+  if (message.type === "LOOKUP_SYNTHETIC") {
+    const { syntheticValue, apiUrl } = message;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    fetch(`${apiUrl}?tag=${encodeURIComponent(syntheticValue)}`, { signal: controller.signal })
+      .then((res) => {
+        clearTimeout(timeout);
+        if (!res.ok) {
+          sendResponse({ error: true });
+          return;
+        }
+        res.json().then(sendResponse).catch(() => sendResponse({ error: true }));
+      })
+      .catch(() => {
+        clearTimeout(timeout);
+        sendResponse({ error: true });
+      });
+    return true; // async
+  }
 });
 
 // ── Handle interception report from content script ────────────────────────────

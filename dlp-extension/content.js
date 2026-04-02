@@ -82,14 +82,14 @@ function loadSettings() {
 
 /* ─────────────────────────────────────────────
    Read fresh settings right before a fetch.
-   Always reads ['localAgentUrl', 'tenantApiKey', 'userEmail', 'employeeEmail']
-   from chrome.storage.local.  localAgentUrl defaults to DEFAULT_LOCAL_AGENT_URL
-   when empty so we NEVER fall back to the production Railway URL.
+   Reads ['serverUrl', 'localAgentUrl', 'tenantApiKey', 'userEmail', 'employeeEmail']
+   from chrome.storage.local.  serverUrl (saved by popup.js) takes priority over
+   localAgentUrl (saved by options.js).  Falls back to DEFAULT_LOCAL_AGENT_URL.
    ───────────────────────────────────────────── */
 function readSettings() {
   return new Promise((resolve) => {
     try {
-      chrome.storage.local.get(["localAgentUrl", "tenantApiKey", "userEmail", "employeeEmail"], (data) => {
+      chrome.storage.local.get(["serverUrl", "localAgentUrl", "tenantApiKey", "userEmail", "employeeEmail"], (data) => {
         if (chrome.runtime.lastError) {
           resolve({
             localAgentUrl: DEFAULT_LOCAL_AGENT_URL,
@@ -98,8 +98,9 @@ function readSettings() {
           });
           return;
         }
+        const finalUrl = data.serverUrl || data.localAgentUrl || DEFAULT_LOCAL_AGENT_URL;
         resolve({
-          localAgentUrl: data.localAgentUrl || DEFAULT_LOCAL_AGENT_URL,
+          localAgentUrl: finalUrl,
           tenantApiKey:  data.tenantApiKey  || "",
           userEmail:     data.employeeEmail || data.userEmail || userEmail || "anonymous@unknown.com",
         });

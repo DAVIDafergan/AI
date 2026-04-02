@@ -53,11 +53,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const { text, userEmail, source, mode, apiKey, agentUrl } = message;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);
-    fetch(`${agentUrl}/api/check`, {
+    fetch(`${agentUrl}/api/check-text`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(apiKey ? { "X-API-Key": apiKey } : {}),
+        ...(apiKey ? { "x-api-key": apiKey } : {}),
       },
       body: JSON.stringify({ text, userEmail, source, mode }),
       signal: controller.signal,

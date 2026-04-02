@@ -434,26 +434,26 @@ async function handlePaste(event) {
   try {
     const { localAgentUrl: agentUrl, tenantApiKey: apiKey, userEmail: email } = await readSettings();
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-
-    const response = await fetch(`${agentUrl}/api/check`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(apiKey ? { "X-API-Key": apiKey } : {}),
-      },
-      body: JSON.stringify({ text, userEmail: email }),
-      signal: controller.signal,
+    const result = await new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({
+        type: "CHECK_TEXT",
+        text,
+        userEmail: email,
+        source: "paste",
+        apiKey,
+        agentUrl,
+      }, (response) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        if (response?.error) {
+          reject(new Error(response.message || "Background fetch failed"));
+          return;
+        }
+        resolve(response);
+      });
     });
-    clearTimeout(timeout);
-
-    if (!response.ok) {
-      showFallbackToast("⚠️ חומת אש AI: לא ניתן להתחבר לשרת. ההדבקה נחסמה.", "warning");
-      return;
-    }
-
-    const result = await response.json();
 
     if (result.blocked !== true) {
       insertTextIntoField(target, text);
@@ -510,23 +510,27 @@ async function interceptInput(element) {
   try {
     const { localAgentUrl: agentUrl, tenantApiKey: apiKey, userEmail: email } = await readSettings();
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-
-    const response = await fetch(`${agentUrl}/api/check`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(apiKey ? { "X-API-Key": apiKey } : {}),
-      },
-      body: JSON.stringify({ text, userEmail: email, source: "typing", mode: "input" }),
-      signal: controller.signal,
+    const result = await new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({
+        type: "CHECK_TEXT",
+        text,
+        userEmail: email,
+        source: "typing",
+        mode: "input",
+        apiKey,
+        agentUrl,
+      }, (response) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        if (response?.error) {
+          reject(new Error(response.message || "Background fetch failed"));
+          return;
+        }
+        resolve(response);
+      });
     });
-    clearTimeout(timeout);
-
-    if (!response.ok) return;
-
-    const result = await response.json();
 
     // ── Hard block: revert to safe state ──
     if (result.blocked === true) {
@@ -535,6 +539,35 @@ async function interceptInput(element) {
       element.blur();
       showBlockWarning();
       console.warn(`${DLP_PREFIX} הקלדה נחסמה – שדה שוחזר למצב בטוח.`);
+      return;
+    }
+
+    // ── Smart Masking (action: "mask") ──
+    if (result.action === "mask" && result.maskedText) {
+      const vault = result.vault || {};
+      Object.assign(_vault, vault);
+
+      // Preserve cursor position
+      const cursorPos = element.isContentEditable ? null : element.selectionStart;
+
+      setReactInputValue(element, result.maskedText);
+      flashGreen(element);
+      safeStateMap.set(element, result.maskedText);
+
+      // Restore cursor position (approximate — place at end of masked text or adjusted position)
+      if (!element.isContentEditable && element.setSelectionRange) {
+        const newPos = Math.min(cursorPos ?? result.maskedText.length, result.maskedText.length);
+        try { element.setSelectionRange(newPos, newPos); } catch { /* ignore */ }
+      }
+
+      // Notify background
+      try {
+        chrome.runtime.sendMessage({
+          type: "INTERCEPTION_REPORT",
+          count: Object.keys(vault).length,
+          userEmail: email,
+        });
+      } catch { /* ignore */ }
       return;
     }
 
@@ -592,27 +625,26 @@ async function interceptSend(element, retriggerFn) {
   try {
     const { localAgentUrl: agentUrl, tenantApiKey: apiKey, userEmail: email } = await readSettings();
 
-    const controller = new AbortController();
-    const timeout    = setTimeout(() => controller.abort(), 8000);
-
-    const response = await fetch(`${agentUrl}/api/check`, {
-      method:  "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(apiKey ? { "X-API-Key": apiKey } : {}),
-      },
-      body:    JSON.stringify({ text, userEmail: email, source: "send" }),
-      signal:  controller.signal,
+    const result = await new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({
+        type: "CHECK_TEXT",
+        text,
+        userEmail: email,
+        source: "send",
+        apiKey,
+        agentUrl,
+      }, (response) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        if (response?.error) {
+          reject(new Error(response.message || "Background fetch failed"));
+          return;
+        }
+        resolve(response);
+      });
     });
-    clearTimeout(timeout);
-
-    if (!response.ok) {
-      // Fail open – let the send proceed so as not to block legitimate use
-      retriggerFn?.();
-      return;
-    }
-
-    const result = await response.json();
 
     // ── Smart Masking ────────────────────────────────────────────────────
     if (result.action === "mask" && result.maskedText && result.vault) {
@@ -738,6 +770,14 @@ function attachInputListeners(element) {
     const mutObs = new MutationObserver(() => debouncedInterceptInput(element));
     mutObs.observe(element, { characterData: true, childList: true, subtree: true });
   }
+
+  // Keydown: immediate check on Space (cancel debounce and check now)
+  element.addEventListener("keydown", (e) => {
+    if (e.key === " ") {
+      debouncedInterceptInput.cancel();
+      interceptInput(element);
+    }
+  }, true);
 
   // Keydown: intercept Enter before send (failsafe – preventDefault immediately)
   element.addEventListener("keydown", async (e) => {
@@ -922,17 +962,17 @@ async function lookupSynthetic(syntheticValue) {
   }
 
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-    const encoded = encodeURIComponent(syntheticValue);
-    const res = await fetch(
-      `${DLP_API_URL}?tag=${encoded}`,
-      { signal: controller.signal }
-    );
-    clearTimeout(timeout);
-
-    if (!res.ok) return null;
-    const data = await res.json();
+    const data = await new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({
+        type: "LOOKUP_SYNTHETIC",
+        syntheticValue,
+        apiUrl: DLP_API_URL,
+      }, (response) => {
+        if (chrome.runtime.lastError) { reject(new Error(chrome.runtime.lastError.message)); return; }
+        if (response?.error) { reject(new Error("Lookup failed")); return; }
+        resolve(response);
+      });
+    });
     if (data.found && data.originalText) {
       restorationCache.set(syntheticValue, data.originalText);
       return data.originalText;

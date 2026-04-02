@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import mongoose from "mongoose";
-import { connectToDB } from "../../../../lib/mongodb.js";
+import { connectMongo, Tenant } from "../../../../lib/db.js";
 
 // ── ScanReport Schema ──
 const ScanReportSchema = new mongoose.Schema(
   {
+    tenantId:          { type: mongoose.Schema.Types.ObjectId, ref: "Tenant", required: true, index: true },
     totalFilesScanned: { type: Number, required: true },
     durationSeconds:   { type: Number, required: true },
     timestamp:         { type: Date,   required: true },
@@ -19,12 +20,31 @@ const ScanReport =
 // POST /api/reports/scan – local agent calls this after the file scanning phase
 export async function POST(request) {
   try {
+    await connectMongo();
+
+    // ── Authentication ───────────────────────────────────────────────────────
     const apiKey = request.headers.get("x-api-key");
-    if (!apiKey || apiKey !== process.env.DLP_API_KEY) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!apiKey) {
+      return NextResponse.json({ error: "Missing x-api-key header" }, { status: 401 });
     }
 
-    const body = await request.json();
+    const tenant = await Tenant.findOne({ apiKey }).lean();
+    if (!tenant) {
+      return NextResponse.json({ error: "Invalid API key" }, { status: 403 });
+    }
+
+    if (tenant.status === "suspended") {
+      return NextResponse.json({ error: "Tenant account is suspended" }, { status: 403 });
+    }
+
+    // ── Parse body ───────────────────────────────────────────────────────────
+    let body = {};
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
+
     const { totalFilesScanned, durationSeconds, timestamp } = body;
 
     if (totalFilesScanned == null || durationSeconds == null) {
@@ -34,9 +54,9 @@ export async function POST(request) {
       );
     }
 
-    await connectToDB();
-
+    // ── Persist ──────────────────────────────────────────────────────────────
     const report = await ScanReport.create({
+      tenantId: tenant._id,
       totalFilesScanned,
       durationSeconds,
       timestamp: timestamp ? new Date(timestamp) : new Date(),

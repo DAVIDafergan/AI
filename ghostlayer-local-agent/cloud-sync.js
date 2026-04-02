@@ -144,14 +144,20 @@ export async function sendScanReport({
     timestamp: new Date().toISOString(),
   };
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-    },
-    body: JSON.stringify(payload),
-  });
+  let response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (err) {
+    // Network failure – return a structured error so callers can handle gracefully
+    return { ok: false, status: 0, body: { error: err.message } };
+  }
 
   let body = {};
   try {

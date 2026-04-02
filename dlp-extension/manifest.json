@@ -18,7 +18,7 @@
       "run_at": "document_idle"
     }
   ],
-  "permissions": ["storage", "identity", "identity.email", "alarms", "activeTab"],
+  "permissions": ["storage", "identity", "identity.email", "alarms", "activeTab", "contextMenus"],
   "host_permissions": [
     "*://ai-production-ffa9.up.railway.app/*",
     "http://localhost/*",

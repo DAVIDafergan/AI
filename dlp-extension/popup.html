@@ -48,6 +48,25 @@
       font-size: 11px;
     }
 
+    .user-bar.server-bar {
+      background: #0f1e3a;
+      font-size: 10px;
+      color: #64748b;
+    }
+
+    .server-icon { font-size: 11px; }
+
+    #server-display {
+      color: #3b82f6;
+      font-family: monospace;
+      font-size: 10px;
+      direction: ltr;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 220px;
+    }
+
     .user-icon { font-size: 14px; }
 
     #user-email {
@@ -253,6 +272,12 @@
   <div class="user-bar">
     <span class="user-icon">👤</span>
     <span id="user-email">טוען...</span>
+  </div>
+
+  <!-- Server bar -->
+  <div class="user-bar server-bar">
+    <span class="server-icon">🖥️</span>
+    <span id="server-display">—</span>
   </div>
 
   <div class="status-bar">

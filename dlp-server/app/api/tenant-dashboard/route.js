@@ -7,6 +7,9 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Headers": "Content-Type, x-api-key",
 };
 
+// Severity levels that trigger the critical-leak red badge in the dashboard.
+const CRITICAL_SEVERITIES = new Set(["critical", "high"]);
+
 export async function OPTIONS() {
   return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
 }
@@ -82,7 +85,14 @@ export async function GET(request) {
     for (const ev of allBlockEvents) {
       const email = ev.userEmail || "anonymous@unknown.com";
       if (!userMap[email]) {
-        userMap[email] = { email, replacements: 0, lastActivity: null, categories: {} };
+        userMap[email] = {
+          email,
+          replacements: 0,
+          lastActivity: null,
+          categories: {},
+          criticalCount: 0,
+          lastCriticalEvent: null,
+        };
       }
       userMap[email].replacements += 1;
       const ts = ev.timestamp ? new Date(ev.timestamp).getTime() : 0;
@@ -91,6 +101,20 @@ export async function GET(request) {
       }
       if (ev.category) {
         userMap[email].categories[ev.category] = (userMap[email].categories[ev.category] || 0) + 1;
+      }
+      // Track high/critical severity events for the red-badge indicator
+      if (ev.severity && CRITICAL_SEVERITIES.has(ev.severity)) {
+        userMap[email].criticalCount += 1;
+        if (
+          !userMap[email].lastCriticalEvent ||
+          ts > new Date(userMap[email].lastCriticalEvent.timestamp).getTime()
+        ) {
+          userMap[email].lastCriticalEvent = {
+            timestamp: ev.timestamp,
+            category:  ev.category,
+            severity:  ev.severity,
+          };
+        }
       }
     }
     // סמן משתמשים שהיו פעילים ב-5 דקות האחרונות כ-"online"

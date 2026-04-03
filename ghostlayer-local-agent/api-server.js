@@ -225,15 +225,24 @@ function mergeAdjacentNerEntities(entities, text) {
       continue;
     }
 
-    const sameType = label === cursor._label;
+    const sameType   = label === cursor._label;
     const hasOffsets = entity.start != null && cursor.end != null;
-    const adjacent   = hasOffsets && /^\s*$/.test(text.slice(cursor.end, entity.start));
+    // Also require that the next entity starts at or after where the current one
+    // ends, so that overlapping or out-of-order NER output is never merged.
+    const adjacent   = hasOffsets &&
+                       entity.start >= cursor.end &&
+                       /^\s*$/.test(text.slice(cursor.end, entity.start));
 
     if (sameType && adjacent) {
-      // Extend the current entity to include this adjacent one
+      // Extend the current entity to include this adjacent one.
+      // Prefer slicing the original text (which preserves exact spacing) when
+      // character offsets are available; fall back to a single-space join.
+      const mergedWord = hasOffsets
+        ? text.slice(cursor.start, entity.end)
+        : `${cursor.word} ${entity.word.trim()}`;
       cursor = {
         ...cursor,
-        word:  hasOffsets ? text.slice(cursor.start, entity.end) : `${cursor.word} ${entity.word}`,
+        word:  mergedWord,
         end:   entity.end,
         score: Math.min(cursor.score ?? 1, entity.score ?? 1),
       };

@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { Bell, Clock, Plus, Shield, Building2, Settings, LogOut } from "lucide-react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { Bell, Clock, Plus, Shield, Building2, Settings, LogOut, RefreshCw, Activity, Users, AlertTriangle } from "lucide-react";
 import { logoutAction } from "../actions/auth";
 import TenantsTable from "../super-admin/components/TenantsTable";
 import AddTenantModal from "../super-admin/components/AddTenantModal";
@@ -11,6 +11,8 @@ import GlobalThreatMap from "../super-admin/components/GlobalThreatMap";
 import LiveEventsStream from "../super-admin/components/LiveEventsStream";
 import AgentsGrid from "../super-admin/components/AgentsGrid";
 import AgentDetailPanel from "../super-admin/components/AgentDetailPanel";
+
+const REFRESH_INTERVAL_MS = 15000;
 
 // ── System clock ────────────────────────────────────────────────
 function SystemClock() {
@@ -29,10 +31,64 @@ function SystemClock() {
   );
 }
 
+// ── Refresh countdown ─────────────────────────────────────────────
+function RefreshCountdown({ onRefresh, isLoading }) {
+  const [countdown, setCountdown] = useState(REFRESH_INTERVAL_MS / 1000);
+  const countRef = useRef(REFRESH_INTERVAL_MS / 1000);
+
+  useEffect(() => {
+    countRef.current = REFRESH_INTERVAL_MS / 1000;
+    setCountdown(REFRESH_INTERVAL_MS / 1000);
+    const id = setInterval(() => {
+      countRef.current -= 1;
+      setCountdown(countRef.current);
+      if (countRef.current <= 0) {
+        countRef.current = REFRESH_INTERVAL_MS / 1000;
+        setCountdown(REFRESH_INTERVAL_MS / 1000);
+      }
+    }, 1000);
+    return () => clearInterval(id);
+  }, [isLoading]);
+
+  return (
+    <button
+      onClick={onRefresh}
+      title="רענן נתונים"
+      className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs text-slate-400 hover:text-cyan-300 hover:bg-slate-800 transition-colors"
+    >
+      <RefreshCw size={12} className={isLoading ? "animate-spin text-cyan-400" : ""} />
+      <span className="tabular-nums text-slate-500">{countdown}s</span>
+    </button>
+  );
+}
+
+// ── Toast notification ────────────────────────────────────────────
+function Toast({ message, type = "info", onClose }) {
+  useEffect(() => {
+    const id = setTimeout(onClose, 3000);
+    return () => clearTimeout(id);
+  }, [onClose]);
+
+  const colors = {
+    success: "bg-green-900/80 border-green-500/40 text-green-300",
+    error: "bg-red-900/80 border-red-500/40 text-red-300",
+    info: "bg-cyan-900/80 border-cyan-500/40 text-cyan-300",
+  };
+
+  return (
+    <div className={`fixed bottom-4 left-4 z-50 flex items-center gap-2 px-4 py-2.5 rounded-lg border text-xs font-medium shadow-xl animate-in slide-in-from-bottom ${colors[type]}`}>
+      {type === "success" && "✓ "}
+      {type === "error" && "✗ "}
+      {message}
+    </div>
+  );
+}
+
 // ── Sidebar ─────────────────────────────────────────────────────
 const SIDEBAR_ITEMS = [
   { id: "clients",  label: "ניהול לקוחות",      icon: Building2 },
   { id: "add",      label: "הוספת לקוח חדש",    icon: Plus },
+  { id: "agents",   label: "סוכנים",             icon: Activity },
   { id: "settings", label: "הגדרות מערכת",       icon: Settings },
 ];
 
@@ -82,6 +138,24 @@ function Sidebar({ activeTab, onTabChange, onAddClient }) {
   );
 }
 
+// ── Skeleton loader ───────────────────────────────────────────────
+function SkeletonCard() {
+  return (
+    <div className="bg-[#0d0d14] border border-slate-700/40 rounded-xl p-5 animate-pulse">
+      <div className="h-3 w-24 bg-slate-700/60 rounded mb-3" />
+      <div className="h-8 w-16 bg-slate-700/60 rounded" />
+    </div>
+  );
+}
+
+function KpiSkeleton() {
+  return (
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      {[...Array(4)].map((_, i) => <SkeletonCard key={i} />)}
+    </div>
+  );
+}
+
 // ── System Settings view ─────────────────────────────────────────
 function SystemSettings() {
   return (
@@ -117,10 +191,17 @@ export default function DashboardClient({ initialClients = [] }) {
   const [activeTab, setActiveTab]           = useState("clients");
   const [clients, setClients]               = useState(initialClients);
   const [stats, setStats]                   = useState(null);
+  const [isLoading, setIsLoading]           = useState(false);
   const [showAddClient, setShowAddClient]   = useState(false);
   const [selectedClient, setSelectedClient] = useState(null);
   const [selectedAgent, setSelectedAgent]   = useState(null);
   const [notifCount, setNotifCount]         = useState(0);
+  const [toast, setToast]                   = useState(null);
+  const isInitialLoad                       = useRef(true);
+
+  const showToast = useCallback((message, type = "info") => {
+    setToast({ message, type });
+  }, []);
 
   const fetchClients = useCallback(async () => {
     try {
@@ -145,12 +226,21 @@ export default function DashboardClient({ initialClients = [] }) {
     } catch {}
   }, []);
 
+  const refreshAll = useCallback(async (showFeedback = false) => {
+    setIsLoading(true);
+    await Promise.all([fetchClients(), fetchStats()]);
+    setIsLoading(false);
+    if (showFeedback) showToast("נתונים עודכנו בהצלחה", "success");
+  }, [fetchClients, fetchStats, showToast]);
+
   useEffect(() => {
-    fetchClients();
-    fetchStats();
-    const id = setInterval(() => { fetchClients(); fetchStats(); }, 15000);
+    if (isInitialLoad.current) {
+      isInitialLoad.current = false;
+      refreshAll();
+    }
+    const id = setInterval(() => refreshAll(), REFRESH_INTERVAL_MS);
     return () => clearInterval(id);
-  }, [fetchClients, fetchStats]);
+  }, [refreshAll]);
 
   const handleSuspend = async (client) => {
     const newStatus = client.status === "suspended" ? "active" : "suspended";
@@ -160,16 +250,22 @@ export default function DashboardClient({ initialClients = [] }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: newStatus }),
       });
-      fetchClients();
-    } catch {}
+      await fetchClients();
+      showToast(`סטטוס "${client.name}" עודכן`, "success");
+    } catch {
+      showToast("שגיאה בעדכון הסטטוס", "error");
+    }
   };
 
   const handleDelete = async (client) => {
     if (!confirm(`האם למחוק את "${client.name}"?`)) return;
     try {
       await fetch(`/api/tenants/${client._id}`, { method: "DELETE" });
-      fetchClients();
-    } catch {}
+      await fetchClients();
+      showToast(`"${client.name}" נמחק`, "success");
+    } catch {
+      showToast("שגיאה במחיקת הלקוח", "error");
+    }
   };
 
   const renderContent = () => {
@@ -188,12 +284,15 @@ export default function DashboardClient({ initialClients = [] }) {
         return (
           <div className="space-y-5">
             {/* KPI bar */}
-            {stats && <GlobalKpiBar stats={stats} />}
+            {stats ? <GlobalKpiBar stats={stats} /> : <KpiSkeleton />}
 
             {/* Clients master table */}
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-slate-200">טבלת לקוחות ראשית</h2>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-sm font-semibold text-slate-200">טבלת לקוחות ראשית</h2>
+                  <span className="text-xs text-slate-500 bg-slate-800/60 border border-slate-700/40 rounded-full px-2 py-0.5">{clients.length}</span>
+                </div>
                 <button
                   onClick={() => setShowAddClient(true)}
                   className="flex items-center gap-1.5 px-4 py-2 bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-600/40 rounded-lg text-sm text-cyan-300 font-medium transition-colors"
@@ -201,10 +300,22 @@ export default function DashboardClient({ initialClients = [] }) {
                   <Plus size={14} /> + הוסף לקוח חדש
                 </button>
               </div>
-              {clients.length === 0 ? (
+              {isLoading && clients.length === 0 ? (
+                <div className="space-y-2">
+                  {[...Array(3)].map((_, i) => (
+                    <div key={i} className="h-14 bg-[#0d0d14] border border-slate-700/40 rounded-xl animate-pulse" />
+                  ))}
+                </div>
+              ) : clients.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-16 bg-[#0d0d14] border border-slate-700/40 rounded-xl text-center">
                   <Building2 className="text-slate-600 mb-4" size={40} />
                   <p className="text-slate-400 text-sm font-medium">אין לקוחות פעילים עדיין</p>
+                  <button
+                    onClick={() => setShowAddClient(true)}
+                    className="mt-4 flex items-center gap-1.5 px-4 py-2 bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-600/40 rounded-lg text-sm text-cyan-300 font-medium transition-colors"
+                  >
+                    <Plus size={14} /> הוסף לקוח ראשון
+                  </button>
                 </div>
               ) : (
                 <TenantsTable
@@ -221,16 +332,24 @@ export default function DashboardClient({ initialClients = [] }) {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <LiveEventsStream superAdminKey="" />
               <div className="bg-[#0d0d14] border border-slate-700/40 rounded-xl p-4">
-                <h3 className="text-xs text-slate-500 uppercase tracking-wider mb-3">אירועים קריטיים אחרונים</h3>
+                <div className="flex items-center gap-2 mb-3">
+                  <AlertTriangle size={14} className="text-red-400" />
+                  <h3 className="text-xs text-slate-500 uppercase tracking-wider">אירועים קריטיים אחרונים</h3>
+                  {(stats?.recentCriticalEvents?.length || 0) > 0 && (
+                    <span className="ml-auto text-xs font-bold text-red-400 bg-red-500/10 border border-red-500/30 rounded-full px-2 py-0.5">
+                      {stats.recentCriticalEvents.length}
+                    </span>
+                  )}
+                </div>
                 {!stats?.recentCriticalEvents?.length ? (
-                  <p className="text-xs text-slate-600">אין אירועים קריטיים</p>
+                  <p className="text-xs text-slate-600 text-center py-4">אין אירועים קריטיים ✓</p>
                 ) : (
-                  <div className="space-y-2">
+                  <div className="space-y-1.5">
                     {stats.recentCriticalEvents.slice(0, 5).map((e) => (
-                      <div key={e._id} className="flex items-center justify-between text-xs py-1 border-b border-slate-800/40">
-                        <span className="text-red-400">{e.eventType}</span>
-                        <span className="text-slate-400">{e.userEmail || "—"}</span>
-                        <span className="text-slate-600">{e.timestamp ? new Date(e.timestamp).toLocaleTimeString("he-IL") : ""}</span>
+                      <div key={e._id} className="flex items-center justify-between text-xs py-1.5 px-2 rounded-lg border border-red-900/30 bg-red-900/10">
+                        <span className="text-red-400 font-medium">{e.eventType}</span>
+                        <span className="text-slate-400 truncate max-w-[140px] font-mono">{e.userEmail || "—"}</span>
+                        <span className="text-slate-600 shrink-0">{e.timestamp ? new Date(e.timestamp).toLocaleTimeString("he-IL") : ""}</span>
                       </div>
                     ))}
                   </div>
@@ -269,6 +388,7 @@ export default function DashboardClient({ initialClients = [] }) {
           </div>
           <div className="flex items-center gap-4">
             <SystemClock />
+            <RefreshCountdown onRefresh={() => refreshAll(true)} isLoading={isLoading} />
             <div className="relative">
               <button className="p-1.5 rounded-lg hover:bg-slate-800 transition-colors text-slate-400 hover:text-slate-200">
                 <Bell size={15} />
@@ -304,6 +424,15 @@ export default function DashboardClient({ initialClients = [] }) {
           superAdminKey=""
           onClose={() => setShowAddClient(false)}
           onCreated={() => { fetchClients(); setShowAddClient(false); }}
+        />
+      )}
+
+      {/* Toast notification */}
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast(null)}
         />
       )}
     </div>

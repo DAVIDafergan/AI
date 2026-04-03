@@ -12,6 +12,9 @@ import {
   saveAlert,
   trackRequest,
   recordUserActivity,
+  connectMongo,
+  Tenant,
+  TenantEvent,
 } from "../../../lib/db.js";
 import { getDefaultPolicies, SEVERITY_SCORES } from "../../../lib/policies.js";
 import { runTriageWithStats } from "../../../lib/triage.js";
@@ -274,6 +277,39 @@ export async function POST(request) {
         message: `ציון איום קריטי: ${threatScore}/100 – ${replacements.length} פריטי PII זוהו`,
         severity: "critical",
       });
+    }
+
+    // ── 9. שמירה ל-MongoDB לחיבור עם הדשבורד ──
+    const rawApiKey = request.headers.get("x-api-key");
+    if (rawApiKey) {
+      try {
+        await connectMongo();
+        const tenant = await Tenant.findOne({ apiKey: rawApiKey }).lean();
+        if (tenant) {
+          const eventType = replacements.length > 0 ? "block" : "scan";
+          const sev =
+            threatScore >= 80 ? "critical" :
+            threatScore >= 50 ? "high" :
+            threatScore >= 20 ? "medium" : "low";
+          await TenantEvent.create({
+            tenantId: tenant._id,
+            eventType,
+            severity: sev,
+            category: replacements[0]?.category,
+            userEmail,
+            details: { threatScore, detectionCount: replacements.length, source },
+          });
+          const usageInc = replacements.length > 0
+            ? { "usage.totalBlocks": 1, "usage.totalScans": 1, "usage.monthlyScans": 1 }
+            : { "usage.totalScans": 1, "usage.monthlyScans": 1 };
+          await Tenant.updateOne(
+            { _id: tenant._id },
+            { $inc: usageInc, $set: { "usage.lastActivity": new Date() } }
+          );
+        }
+      } catch (mongoErr) {
+        console.warn("[check-text] MongoDB event save failed:", mongoErr.message);
+      }
     }
 
     return NextResponse.json(

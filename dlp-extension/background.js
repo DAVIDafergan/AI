@@ -137,7 +137,7 @@ function updateBadge(count) {
 async function getStats() {
   return new Promise((resolve) => {
     chrome.storage.local.get(
-      ["restoredCount", "interceptedCount", "sessionStart", "serverUrl", "enabled", "userEmail", "employeeEmail", "dlp_user_stats"],
+      ["restoredCount", "interceptedCount", "sessionStart", "serverUrl", "enabled", "userEmail", "employeeEmail", "dlp_user_stats", "tenantApiKey"],
       (data) => {
         resolve({
           restoredCount: data.restoredCount || 0,
@@ -148,6 +148,7 @@ async function getStats() {
           userEmail: data.userEmail || null,
           employeeEmail: data.employeeEmail || null,
           userStats: data.dlp_user_stats || {},
+          tenantApiKey: data.tenantApiKey || null,
         });
       }
     );

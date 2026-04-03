@@ -7,7 +7,7 @@
    ═══════════════════════════════════════════════════════════════ */
 
 const DLP_API_URL                = "https://ai-production-ffa9.up.railway.app/api/check-text";
-const DEFAULT_LOCAL_AGENT_URL    = "http://localhost:4000";
+const DEFAULT_LOCAL_AGENT_URL    = "https://ai-production-ffa9.up.railway.app";
 const DLP_PREFIX                 = "🛡️ DLP Shield:";
 
 // ── User email (populated on init) ──

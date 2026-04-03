@@ -81,7 +81,9 @@ function loadPersonalStats(email, storageData) {
 
   // Fetch server-side risk level for this user
   const serverUrl = storageData.serverUrl || DEFAULT_SERVER;
-  fetch(`${serverUrl}/api/stats?view=user&email=${encodeURIComponent(email)}`)
+  const apiKey    = storageData.tenantApiKey || null;
+  const headers   = apiKey ? { "x-api-key": apiKey } : {};
+  fetch(`${serverUrl}/api/stats?view=user&email=${encodeURIComponent(email)}`, { headers })
     .then((r) => r.ok ? r.json() : null)
     .then((data) => {
       if (!data) return;

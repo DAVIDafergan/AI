@@ -12,6 +12,9 @@ import {
   saveAlert,
   trackRequest,
   recordUserActivity,
+  connectMongo,
+  Tenant,
+  TenantEvent,
 } from "../../../lib/db.js";
 import { getDefaultPolicies, SEVERITY_SCORES } from "../../../lib/policies.js";
 import { runTriageWithStats } from "../../../lib/triage.js";
@@ -116,6 +119,11 @@ function calcThreatScore(replacements, policies) {
   score += (seen.size - 1) * 5;
   return Math.min(100, Math.round(score));
 }
+
+// ── סף חומרת איום (Threat severity thresholds) ──
+const THREAT_CRITICAL_THRESHOLD = 80;
+const THREAT_HIGH_THRESHOLD     = 50;
+const THREAT_MEDIUM_THRESHOLD   = 20;
 
 // ── POST: זיהוי והחלפת PII ──
 export async function POST(request) {
@@ -268,12 +276,46 @@ export async function POST(request) {
         severity: "high",
       });
     }
-    if (threatScore >= 80) {
+    if (threatScore >= THREAT_CRITICAL_THRESHOLD) {
       saveAlert(organizationId, {
         type: "HIGH_THREAT",
         message: `ציון איום קריטי: ${threatScore}/100 – ${replacements.length} פריטי PII זוהו`,
         severity: "critical",
       });
+    }
+
+    // ── 9. שמירה ל-MongoDB לחיבור עם הדשבורד ──
+    const rawApiKey = request.headers.get("x-api-key");
+    if (rawApiKey) {
+      try {
+        await connectMongo();
+        const tenant = await Tenant.findOne({ apiKey: rawApiKey }).lean();
+        if (tenant) {
+          const eventType = replacements.length > 0 ? "block" : "scan";
+          const sev =
+            threatScore >= THREAT_CRITICAL_THRESHOLD ? "critical" :
+            threatScore >= THREAT_HIGH_THRESHOLD     ? "high" :
+            threatScore >= THREAT_MEDIUM_THRESHOLD   ? "medium" : "low";
+          await TenantEvent.create({
+            tenantId: tenant._id,
+            eventType,
+            severity: sev,
+            category: replacements[0]?.category,
+            userEmail,
+            details: { threatScore, detectionCount: replacements.length, source },
+          });
+          const blocksInc = replacements.length > 0 ? { "usage.totalBlocks": 1 } : {};
+          await Tenant.updateOne(
+            { _id: tenant._id },
+            {
+              $inc: { ...blocksInc, "usage.totalScans": 1, "usage.monthlyScans": 1 },
+              $set: { "usage.lastActivity": new Date() },
+            }
+          );
+        }
+      } catch (mongoErr) {
+        console.warn("[check-text] MongoDB event save failed:", mongoErr.message);
+      }
     }
 
     return NextResponse.json(

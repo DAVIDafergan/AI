@@ -6,7 +6,7 @@
    • User email auto-detection
    ═══════════════════════════════════════════════════════════════ */
 
-const DLP_API_URL                = "https://ai-production-ffa9.up.railway.app/api/check-text";
+
 const DEFAULT_LOCAL_AGENT_URL    = "https://ai-production-ffa9.up.railway.app";
 const DLP_PREFIX                 = "🛡️ DLP Shield:";
 
@@ -1113,11 +1113,12 @@ async function lookupSynthetic(syntheticValue) {
   }
 
   try {
+    const { localAgentUrl: agentUrl } = await readSettings();
     const data = await new Promise((resolve, reject) => {
       chrome.runtime.sendMessage({
         type: "LOOKUP_SYNTHETIC",
         syntheticValue,
-        apiUrl: DLP_API_URL,
+        apiUrl: `${agentUrl}/api/check-text`,
       }, (response) => {
         if (chrome.runtime.lastError) { reject(new Error(chrome.runtime.lastError.message)); return; }
         if (response?.error) { reject(new Error("Lookup failed")); return; }

@@ -17,6 +17,7 @@ import {
   AlertTriangle, X,
 } from "lucide-react";
 import ActiveUsersPanel from "./components/ActiveUsersPanel";
+import CustomKeywordsManager from "./components/CustomKeywordsManager";
 
 function clsx(...cls) { return cls.filter(Boolean).join(" "); }
 function formatNum(n) { return (n ?? 0).toLocaleString("he-IL"); }
@@ -923,6 +924,8 @@ export default function CommandCenterDashboard() {
         <ConnectedUsersPanel userStats={data?.userStats || []} />
 
         <ActiveUsersPanel apiKey={apiKey} />
+
+        <CustomKeywordsManager apiKey={apiKey} />
 
         <RecentEvents events={data?.recentEvents || []} />
 

@@ -182,8 +182,8 @@ chrome.runtime.onInstalled.addListener(() => {
 
   // Schedule periodic health check every 5 minutes
   chrome.alarms.create("healthCheck", { periodInMinutes: 5 });
-  // Schedule user heartbeat every 10 minutes so Admin can track active users
-  chrome.alarms.create("userHeartbeat", { periodInMinutes: 10 });
+  // Schedule user heartbeat every 5 minutes so Admin can track active users in real time
+  chrome.alarms.create("userHeartbeat", { periodInMinutes: 5 });
 });
 
 // ── Restore alarms on startup (service worker may be restarted) ───────────────
@@ -192,7 +192,7 @@ chrome.runtime.onStartup.addListener(() => {
     if (!alarm) chrome.alarms.create("healthCheck", { periodInMinutes: 5 });
   });
   chrome.alarms.get("userHeartbeat", (alarm) => {
-    if (!alarm) chrome.alarms.create("userHeartbeat", { periodInMinutes: 10 });
+    if (!alarm) chrome.alarms.create("userHeartbeat", { periodInMinutes: 5 });
   });
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({

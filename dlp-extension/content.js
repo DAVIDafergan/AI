@@ -76,6 +76,16 @@ function workerPreflight(text) {
 const _vault        = {};    // token → original value, e.g. { "[PERSON_1]": "David" }
 let   _maskingActive = false; // true only while programmatically re-triggering a masked send
 
+/* Persist the vault to chrome.storage.local so tokens survive page reloads and
+   multi-turn conversations where the AI echoes back a token from an earlier turn. */
+function persistVault() {
+  try {
+    chrome.storage.local.set({ dlp_vault: _vault });
+  } catch {
+    // extension context may be invalidated – ignore
+  }
+}
+
 // ── Input masking guard: prevents the programmatic field update from re-triggering the scanner ──
 let _inputMaskingActive = false;
 
@@ -563,6 +573,7 @@ async function handlePaste(event) {
 
     const vault        = result.vault || {};
     Object.assign(_vault, vault);
+    persistVault();
     const replacements = Object.entries(vault).map(([synthetic, original]) => ({ original, synthetic }));
     const overlayParts = buildOverlayDOM(replacements, result.maskedText);
     document.body.appendChild(overlayParts.backdrop);
@@ -651,6 +662,7 @@ async function interceptInput(element) {
     if (result.action === "mask" && result.maskedText) {
       const vault = result.vault || {};
       Object.assign(_vault, vault);
+      persistVault();
 
       // Preserve cursor position
       const cursorPos = element.isContentEditable ? null : element.selectionStart;
@@ -776,6 +788,7 @@ async function interceptSend(element, retriggerFn) {
     if (result.action === "mask" && result.maskedText && result.vault) {
       // Persist vault entries for de-anonymisation of the AI response
       Object.assign(_vault, result.vault);
+      persistVault();
 
       // Replace the input field content with the masked text
       setReactInputValue(element, result.maskedText);
@@ -1407,6 +1420,35 @@ function showFallbackToast(message, type = "info") {
 async function init() {
   // Load settings (localAgentUrl, tenantApiKey) from storage
   await loadSettings();
+
+  // Restore persisted vault so tokens from previous turns/sessions are recognised
+  await new Promise((resolve) => {
+    try {
+      chrome.storage.local.get(["dlp_vault"], (data) => {
+        if (!chrome.runtime.lastError && data.dlp_vault && typeof data.dlp_vault === "object") {
+          Object.assign(_vault, data.dlp_vault);
+        }
+        resolve();
+      });
+    } catch {
+      // extension context may be invalidated – ignore
+      resolve();
+    }
+  });
+
+  // Live-sync settings: if the user updates Email or Agent URL in the Popup/Options,
+  // pick up the change immediately without requiring a page reload.
+  try {
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area !== "local") return;
+      if (changes.localAgentUrl?.newValue) localAgentUrl = changes.localAgentUrl.newValue;
+      if (changes.serverUrl?.newValue)     localAgentUrl = changes.serverUrl.newValue;
+      if (changes.tenantApiKey?.newValue)  tenantApiKey  = changes.tenantApiKey.newValue;
+      if (changes.employeeEmail?.newValue) userEmail     = changes.employeeEmail.newValue;
+    });
+  } catch {
+    // extension context may be invalidated – ignore
+  }
 
   // 1C. Get user email from background
   initUserEmail();

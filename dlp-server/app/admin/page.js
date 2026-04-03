@@ -14,6 +14,7 @@ import {
   Activity, Users, Zap, Lock, Eye, ChevronRight,
   Terminal, AlertCircle, Wifi, RefreshCw, UserCheck, Replace,
   TrendingUp, Clock, Filter, Search, ChevronDown, ChevronUp,
+  AlertTriangle, X,
 } from "lucide-react";
 import ActiveUsersPanel from "./components/ActiveUsersPanel";
 
@@ -447,6 +448,7 @@ function ConnectedUsersPanel({ userStats = [] }) {
   const [expanded, setExpanded] = useState(null);
   const [sortKey, setSortKey] = useState("replacements");
   const [sortDir, setSortDir] = useState("desc");
+  const [criticalModal, setCriticalModal] = useState(null); // user object
 
   function getSortValue(user, key) {
     if (key === "lastActivity") return user.lastActivity ? new Date(user.lastActivity).getTime() : 0;
@@ -472,9 +474,84 @@ function ConnectedUsersPanel({ userStats = [] }) {
       : null;
 
   const onlineCount = userStats.filter((u) => u.online).length;
+  const criticalCount = userStats.filter((u) => (u.criticalCount || 0) > 0).length;
 
   return (
     <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl p-5 space-y-4">
+      {/* Critical leak modal */}
+      {criticalModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={() => setCriticalModal(null)}>
+          <div
+            className="bg-[#0d0d14] border border-red-500/40 rounded-2xl p-6 max-w-md w-full mx-4 shadow-[0_0_40px_rgba(239,68,68,0.25)]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5 text-red-400" />
+                <h3 className="text-sm font-bold text-red-300">דליפה קריטית — {criticalModal.email}</h3>
+              </div>
+              <button onClick={() => setCriticalModal(null)} className="text-slate-500 hover:text-slate-200 transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div className="bg-red-500/10 border border-red-500/25 rounded-lg px-4 py-3 flex items-center justify-between">
+                <span className="text-xs text-slate-400">אירועים קריטיים / גבוהים</span>
+                <span className="text-red-400 font-bold text-lg">{formatNum(criticalModal.criticalCount)}</span>
+              </div>
+
+              {criticalModal.lastCriticalEvent && (
+                <div className="bg-slate-800/60 rounded-lg px-4 py-3 space-y-1.5 text-xs">
+                  <p className="text-slate-500 uppercase tracking-wide text-[10px]">אירוע אחרון</p>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400">חומרה:</span>
+                    <span className={clsx(
+                      "font-semibold px-2 py-0.5 rounded-full border text-[10px]",
+                      criticalModal.lastCriticalEvent.severity === "critical"
+                        ? "bg-red-500/20 text-red-400 border-red-500/30"
+                        : "bg-orange-500/20 text-orange-400 border-orange-500/30"
+                    )}>
+                      {criticalModal.lastCriticalEvent.severity === "critical" ? "🔴 קריטי" : "🟠 גבוה"}
+                    </span>
+                  </div>
+                  {criticalModal.lastCriticalEvent.category && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400">קטגוריה:</span>
+                      <span className="text-white font-medium">{criticalModal.lastCriticalEvent.category}</span>
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400">זמן:</span>
+                    <span className="text-slate-300">{relativeTime(criticalModal.lastCriticalEvent.timestamp)}</span>
+                  </div>
+                </div>
+              )}
+
+              {Object.keys(criticalModal.categories || {}).length > 0 && (
+                <div className="bg-slate-800/60 rounded-lg px-4 py-3 space-y-2 text-xs">
+                  <p className="text-slate-500 uppercase tracking-wide text-[10px]">פירוט קטגוריות שנחסמו</p>
+                  <div className="flex flex-wrap gap-2">
+                    {Object.entries(criticalModal.categories).sort(([, a], [, b]) => b - a).map(([cat, count]) => (
+                      <span key={cat} className="bg-slate-700/60 text-slate-300 px-2.5 py-1 rounded-full border border-slate-600/40">
+                        {cat}: <strong className="text-white">{count}</strong>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <button
+              onClick={() => setCriticalModal(null)}
+              className="mt-4 w-full py-2 rounded-lg bg-slate-700/60 text-slate-300 text-xs hover:bg-slate-600/60 transition-colors"
+            >
+              סגור
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-2.5">
@@ -487,6 +564,9 @@ function ConnectedUsersPanel({ userStats = [] }) {
               <span className="text-green-400 font-semibold">{onlineCount} מחוברים כעת</span>
               {" · "}
               {userStats.length} משתמשים סה"כ
+              {criticalCount > 0 && (
+                <> · <span className="text-red-400 font-semibold">{criticalCount} עם דליפה קריטית</span></>
+              )}
             </p>
           </div>
         </div>
@@ -547,6 +627,17 @@ function ConnectedUsersPanel({ userStats = [] }) {
                         <span className={clsx("text-[10px] font-medium", user.online ? "text-green-400" : "text-slate-500")}>
                           {user.online ? "פעיל" : "לא מחובר"}
                         </span>
+                        {/* Red badge for critical leak */}
+                        {(user.criticalCount || 0) > 0 && (
+                          <button
+                            title="דליפה קריטית – לחץ לפרטים"
+                            onClick={(e) => { e.stopPropagation(); setCriticalModal(user); }}
+                            className="flex items-center gap-0.5 bg-red-500/20 border border-red-500/40 text-red-400 rounded-full px-1.5 py-0.5 text-[9px] font-bold hover:bg-red-500/35 transition-colors animate-pulse"
+                          >
+                            <AlertTriangle className="w-2.5 h-2.5" />
+                            {user.criticalCount}
+                          </button>
+                        )}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-slate-200 font-mono" dir="ltr">{user.email}</td>
@@ -587,6 +678,18 @@ function ConnectedUsersPanel({ userStats = [] }) {
                               <p className="text-slate-500 mb-1">סה"כ החלפות</p>
                               <p className="text-cyan-400 font-bold text-lg">{formatNum(user.replacements)}</p>
                             </div>
+                            {(user.criticalCount || 0) > 0 && (
+                              <div
+                                className="bg-red-500/10 rounded-lg px-3 py-2 border border-red-500/25 cursor-pointer hover:bg-red-500/20 transition-colors"
+                                onClick={() => setCriticalModal(user)}
+                              >
+                                <p className="text-red-400/70 mb-1">אירועים קריטיים</p>
+                                <p className="text-red-400 font-bold text-lg flex items-center gap-1">
+                                  <AlertTriangle className="w-4 h-4" />
+                                  {formatNum(user.criticalCount)}
+                                </p>
+                              </div>
+                            )}
                           </div>
                           {Object.keys(user.categories || {}).length > 0 && (
                             <div>

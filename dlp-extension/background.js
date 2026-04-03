@@ -137,7 +137,7 @@ function updateBadge(count) {
 async function getStats() {
   return new Promise((resolve) => {
     chrome.storage.local.get(
-      ["restoredCount", "interceptedCount", "sessionStart", "serverUrl", "enabled", "userEmail", "dlp_user_stats"],
+      ["restoredCount", "interceptedCount", "sessionStart", "serverUrl", "enabled", "userEmail", "employeeEmail", "dlp_user_stats"],
       (data) => {
         resolve({
           restoredCount: data.restoredCount || 0,
@@ -146,6 +146,7 @@ async function getStats() {
           serverUrl: data.serverUrl || "https://ai-production-ffa9.up.railway.app",
           enabled: data.enabled !== false,
           userEmail: data.userEmail || null,
+          employeeEmail: data.employeeEmail || null,
           userStats: data.dlp_user_stats || {},
         });
       }

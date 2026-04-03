@@ -4,6 +4,7 @@
 const DEFAULT_SERVER = "https://ai-production-ffa9.up.railway.app";
 
 const userEmailEl       = document.getElementById("user-email");
+const serverDisplayEl   = document.getElementById("server-display");
 const restoredCountEl   = document.getElementById("restored-count");
 const interceptedCountEl = document.getElementById("intercepted-count");
 const riskLevelEl       = document.getElementById("risk-level");
@@ -41,13 +42,19 @@ chrome.runtime.sendMessage({ type: "GET_STATS" }, (data) => {
   serverUrlInput.value          = data.serverUrl || DEFAULT_SERVER;
   enabledToggle.checked         = data.enabled !== false;
 
-  // Display user email
-  const email = data.userEmail || null;
-  if (email) {
-    userEmailEl.textContent = email;
-    loadPersonalStats(email, data);
+  // Show the active server URL in the header bar
+  const activeServer = data.serverUrl || DEFAULT_SERVER;
+  if (serverDisplayEl) serverDisplayEl.textContent = activeServer;
+
+  // Resolve the best available email:
+  // Priority: employeeEmail (manually set in Options) > userEmail (Chrome identity) > anonymous
+  const resolvedFromStorage = data.employeeEmail || data.userEmail || null;
+
+  if (resolvedFromStorage) {
+    userEmailEl.textContent = resolvedFromStorage;
+    loadPersonalStats(resolvedFromStorage, data);
   } else {
-    // Request email from identity API
+    // Request email from identity API as last resort
     chrome.runtime.sendMessage({ type: "GET_USER_EMAIL" }, (res) => {
       if (chrome.runtime.lastError) return;
       const resolvedEmail = res?.email || "anonymous@unknown.com";
@@ -106,6 +113,7 @@ saveBtn.addEventListener("click", () => {
   const enabled = enabledToggle.checked;
   chrome.storage.local.set({ serverUrl: url, enabled }, () => {
     saveMsg.textContent = "✅ הגדרות נשמרו";
+    if (serverDisplayEl) serverDisplayEl.textContent = url;
     setTimeout(() => { saveMsg.textContent = ""; }, 2000);
     checkConnection(url);
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {

@@ -3,10 +3,15 @@
  * scanner.js – Recursive local file scanner
  *
  * Crawls a directory tree and reads the contents of supported file types:
- *   Plain text : .txt, .md, .csv, .json
+ *   Plain text : .txt, .md, .csv, .json, .html, .xml, .yaml, .log, .env,
+ *                .eml, .rtf, .sql, .sh, .py, .ts, .js, and more
  *   PDF        : .pdf   (via pdf-parse)
  *   Word       : .docx  (via mammoth)
- *   Spreadsheet: .xlsx  (via xlsx)
+ *   Spreadsheet: .xlsx  (via exceljs)
+ *   PowerPoint : .pptx  (via jszip – parses DrawingML slide XML)
+ *
+ * BLOCKED_EXTENSIONS lists file types that should always be blocked on
+ * upload/share regardless of content (executables, archives, certs, media).
  *
  * All processing is local – zero data leaves this machine during the scan phase.
  */
@@ -18,6 +23,7 @@ import { join, extname }     from "path";
 let _pdfParse = null;
 let _mammoth  = null;
 let _xlsx     = null;
+let _jszip    = null;
 
 async function getPdfParse() {
   if (!_pdfParse) {
@@ -40,14 +46,95 @@ async function getXlsx() {
   return _xlsx || null;
 }
 
+async function getJszip() {
+  if (!_jszip) {
+    try { _jszip = (await import("jszip")).default; } catch { _jszip = false; }
+  }
+  return _jszip || null;
+}
+
 // Directories to skip during tree traversal.
 const SKIP_DIRS = new Set(["node_modules", ".git", ".svn", "__pycache__"]);
 
-const TEXT_EXTENSIONS  = new Set([".txt", ".md", ".csv", ".json"]);
-const BINARY_EXTENSIONS = new Set([".pdf", ".docx", ".xlsx"]);
+// Plain-text formats – read directly as UTF-8.
+const TEXT_EXTENSIONS = new Set([
+  ".txt", ".md", ".csv", ".json",
+  ".html", ".htm", ".xml", ".xhtml",
+  ".yaml", ".yml",
+  ".log", ".ini", ".conf", ".cfg",
+  ".env", ".properties",
+  ".eml", ".rtf",
+  ".sql", ".sh", ".bash", ".ps1", ".bat", ".cmd",
+  ".ts", ".js", ".py", ".rb", ".java", ".cs", ".go", ".rs", ".cpp", ".c", ".h",
+]);
+
+// Binary formats that require a dedicated parser.
+const BINARY_EXTENSIONS = new Set([".pdf", ".docx", ".xlsx", ".pptx"]);
+
 const SUPPORTED_EXTENSIONS = new Set([...TEXT_EXTENSIONS, ...BINARY_EXTENSIONS]);
 
+/**
+ * File types that should always be BLOCKED when detected in uploads or shares,
+ * regardless of content – either because they carry no scannable text or because
+ * they are inherently high-risk (executables, archives, cryptographic material).
+ */
+export const BLOCKED_EXTENSIONS = new Set([
+  // Executables / compiled code
+  ".exe", ".dll", ".so", ".dylib", ".bin", ".com", ".msi", ".app",
+  // Archives (may contain many files – expand separately if needed)
+  ".zip", ".tar", ".gz", ".bz2", ".7z", ".rar", ".tgz", ".xz",
+  // Disk images
+  ".iso", ".img", ".dmg", ".vhd", ".vmdk",
+  // Cryptographic / credential files
+  ".pem", ".key", ".p12", ".pfx", ".jks", ".crt", ".cer", ".der",
+  ".htpasswd", ".shadow", ".passwd",
+  // Media (no text content)
+  ".mp4", ".mp3", ".avi", ".mov", ".mkv", ".flac", ".wav", ".ogg",
+  ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff", ".ico",
+]);
+
 // ── File-type parsers ─────────────────────────────────────────────────────────
+
+/**
+ * Extract plain text from a .pptx file.
+ * PowerPoint files are ZIP archives; slides live at ppt/slides/slide*.xml.
+ * Text is stored in <a:t> elements inside the DrawingML namespace.
+ * @param {string} filePath
+ * @returns {Promise<string>}
+ */
+async function parsePptx(filePath) {
+  const JSZip = await getJszip();
+  if (!JSZip) return "";
+  try {
+    const buffer = await readFile(filePath);
+    const zip    = await JSZip.loadAsync(buffer);
+    const texts  = [];
+
+    const slideKeys = Object.keys(zip.files).filter(
+      (name) => /^ppt\/slides\/slide\d+\.xml$/.test(name)
+    );
+    // Sort slides in order (slide1, slide2, …)
+    slideKeys.sort((a, b) => {
+      const numA = parseInt(a.match(/\d+/)?.[0] || "0", 10);
+      const numB = parseInt(b.match(/\d+/)?.[0] || "0", 10);
+      return numA - numB;
+    });
+
+    for (const key of slideKeys) {
+      const xml = await zip.files[key].async("string");
+      // Extract all <a:t>…</a:t> text nodes (DrawingML)
+      const matches = xml.match(/<a:t(?:\s[^>]*)?>([^<]*)<\/a:t>/g) || [];
+      for (const m of matches) {
+        const text = m.replace(/<[^>]+>/g, "").trim();
+        if (text) texts.push(text);
+      }
+    }
+
+    return texts.join("\n");
+  } catch {
+    return "";
+  }
+}
 
 /**
  * Extract plain text from a PDF file.
@@ -182,10 +269,22 @@ async function readFileContent(filePath) {
   if (ext === ".pdf")  return parsePdf(filePath);
   if (ext === ".docx") return parseDocx(filePath);
   if (ext === ".xlsx") return parseXlsx(filePath);
+  if (ext === ".pptx") return parsePptx(filePath);
   return "";
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
+
+/**
+ * Returns true if the given file extension should be auto-blocked
+ * (i.e. the file type is inherently high-risk or contains no scannable text).
+ *
+ * @param {string} ext  File extension including leading dot, e.g. ".exe"
+ * @returns {boolean}
+ */
+export function isBlocked(ext) {
+  return BLOCKED_EXTENSIONS.has(ext.toLowerCase());
+}
 
 /**
  * Scan all supported files under `rootDir` and return an array of

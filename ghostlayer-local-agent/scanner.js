@@ -97,14 +97,16 @@ export const BLOCKED_EXTENSIONS = new Set([
 
 /** Decode common XML character entities so extracted text is readable. */
 function decodeXmlEntities(str) {
+  // Decode numeric/hex entities and named entities – &amp; must come last to
+  // avoid double-unescaping sequences like &amp;lt; → &lt; → <.
   return str
-    .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&apos;/g, "'")
-    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+    .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&amp;/g, "&"); // must be last
 }
 
 /**
@@ -125,12 +127,9 @@ async function parsePptx(filePath) {
     const slideKeys = Object.keys(zip.files).filter(
       (name) => /^ppt\/slides\/slide\d+\.xml$/.test(name)
     );
-    // Sort slides in order (slide1, slide2, …)
-    slideKeys.sort((a, b) => {
-      const numA = parseInt(a.match(/\d+/)?.[0] || "0", 10);
-      const numB = parseInt(b.match(/\d+/)?.[0] || "0", 10);
-      return numA - numB;
-    });
+    // Sort slides in presentation order (slide1, slide2, …)
+    const slideNum = (name) => parseInt(name.match(/\d+/)?.[0] || "0", 10);
+    slideKeys.sort((a, b) => slideNum(a) - slideNum(b));
 
     for (const key of slideKeys) {
       const xml = await zip.files[key].async("string");

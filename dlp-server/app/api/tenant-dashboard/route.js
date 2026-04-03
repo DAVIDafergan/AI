@@ -103,7 +103,7 @@ export async function GET(request) {
         userMap[email].categories[ev.category] = (userMap[email].categories[ev.category] || 0) + 1;
       }
       // Track high/critical severity events for the red-badge indicator
-      if (CRITICAL_SEVERITIES.has(ev.severity)) {
+      if (ev.severity && CRITICAL_SEVERITIES.has(ev.severity)) {
         userMap[email].criticalCount += 1;
         if (
           !userMap[email].lastCriticalEvent ||

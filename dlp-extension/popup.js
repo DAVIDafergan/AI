@@ -47,7 +47,9 @@ chrome.runtime.sendMessage({ type: "GET_STATS" }, (data) => {
   if (serverDisplayEl) serverDisplayEl.textContent = activeServer;
 
   // Resolve the best available email:
-  // Priority: employeeEmail (manually set in Options) > userEmail (Chrome identity) > anonymous
+  // Priority: employeeEmail (manually configured in Options page by the user)
+  //         > userEmail     (auto-fetched from Chrome identity API on first run)
+  //         > anonymous fallback (triggers a fresh Chrome identity lookup below)
   const resolvedFromStorage = data.employeeEmail || data.userEmail || null;
 
   if (resolvedFromStorage) {

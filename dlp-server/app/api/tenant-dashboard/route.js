@@ -7,6 +7,9 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Headers": "Content-Type, x-api-key",
 };
 
+// Severity levels that trigger the critical-leak red badge in the dashboard.
+const CRITICAL_SEVERITIES = new Set(["critical", "high"]);
+
 export async function OPTIONS() {
   return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
 }
@@ -100,7 +103,7 @@ export async function GET(request) {
         userMap[email].categories[ev.category] = (userMap[email].categories[ev.category] || 0) + 1;
       }
       // Track high/critical severity events for the red-badge indicator
-      if (ev.severity === "critical" || ev.severity === "high") {
+      if (CRITICAL_SEVERITIES.has(ev.severity)) {
         userMap[email].criticalCount += 1;
         if (
           !userMap[email].lastCriticalEvent ||

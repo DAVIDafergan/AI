@@ -95,6 +95,18 @@ export const BLOCKED_EXTENSIONS = new Set([
 
 // ── File-type parsers ─────────────────────────────────────────────────────────
 
+/** Decode common XML character entities so extracted text is readable. */
+function decodeXmlEntities(str) {
+  return str
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+}
+
 /**
  * Extract plain text from a .pptx file.
  * PowerPoint files are ZIP archives; slides live at ppt/slides/slide*.xml.
@@ -122,10 +134,12 @@ async function parsePptx(filePath) {
 
     for (const key of slideKeys) {
       const xml = await zip.files[key].async("string");
-      // Extract all <a:t>…</a:t> text nodes (DrawingML)
-      const matches = xml.match(/<a:t(?:\s[^>]*)?>([^<]*)<\/a:t>/g) || [];
-      for (const m of matches) {
-        const text = m.replace(/<[^>]+>/g, "").trim();
+      // Extract all <a:t>…</a:t> text nodes (DrawingML) using a capture group
+      // so we never need to strip tags from the matched content.
+      const regex = /<a:t(?:\s[^>]*)?>([^<]*)<\/a:t>/g;
+      let match;
+      while ((match = regex.exec(xml)) !== null) {
+        const text = decodeXmlEntities(match[1]).trim();
         if (text) texts.push(text);
       }
     }

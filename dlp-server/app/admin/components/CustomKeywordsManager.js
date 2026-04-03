@@ -13,7 +13,7 @@ const SEVERITY_COLORS = {
 
 const EMPTY_FORM = { word: "", category: "CUSTOM", replacement: "", severity: "medium" };
 
-export default function CustomKeywordsManager() {
+export default function CustomKeywordsManager({ apiKey }) {
   const [keywords, setKeywords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -22,8 +22,11 @@ export default function CustomKeywordsManager() {
   const [error, setError] = useState("");
 
   const fetchKeywords = useCallback(async () => {
+    const headers = apiKey
+      ? { "Content-Type": "application/json", "x-api-key": apiKey }
+      : { "Content-Type": "application/json" };
     try {
-      const res = await fetch("/api/custom-keywords");
+      const res = await fetch("/api/custom-keywords", { headers });
       if (!res.ok) return;
       const data = await res.json();
       setKeywords(data.keywords || []);
@@ -32,7 +35,7 @@ export default function CustomKeywordsManager() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [apiKey]);
 
   useEffect(() => { fetchKeywords(); }, [fetchKeywords]);
 
@@ -40,10 +43,13 @@ export default function CustomKeywordsManager() {
     if (!form.word.trim()) { setError("יש להזין מילה"); return; }
     setSaving(true);
     setError("");
+    const headers = apiKey
+      ? { "Content-Type": "application/json", "x-api-key": apiKey }
+      : { "Content-Type": "application/json" };
     try {
       const res = await fetch("/api/custom-keywords", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify(form),
       });
       if (!res.ok) { setError("שגיאה בשמירה"); return; }
@@ -58,8 +64,9 @@ export default function CustomKeywordsManager() {
   }
 
   async function handleDelete(id) {
+    const headers = apiKey ? { "x-api-key": apiKey } : {};
     try {
-      await fetch(`/api/custom-keywords?id=${id}`, { method: "DELETE" });
+      await fetch(`/api/custom-keywords?id=${id}`, { method: "DELETE", headers });
       setKeywords((prev) => prev.filter((k) => k.id !== id));
     } catch {
       // שגיאת רשת

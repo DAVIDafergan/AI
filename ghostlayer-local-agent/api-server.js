@@ -200,8 +200,71 @@ function replaceWord(text, word, token) {
 }
 
 /**
+ * Merge consecutive NER entities of the same entity type that are separated
+ * only by whitespace in the original text into a single combined entity.
+ *
+ * When a NER model emits "John" (PER) and "Smith" (PER) as two adjacent
+ * predictions, this function joins them into the single entity "John Smith",
+ * preserving the semantic connection between name parts.
+ *
+ * @param {object[]} entities  Raw NER output (should include start/end offsets).
+ * @param {string}   text      The original text passed to the NER model.
+ * @returns {object[]}
+ */
+function mergeAdjacentNerEntities(entities, text) {
+  if (!entities || entities.length === 0) return entities;
+
+  const merged = [];
+  let   cursor = null;
+
+  for (const entity of entities) {
+    const label = (entity.entity_group || entity.entity || "").toUpperCase();
+
+    if (!cursor) {
+      cursor = { ...entity, _label: label };
+      continue;
+    }
+
+    const sameType   = label === cursor._label;
+    const hasOffsets = entity.start != null && cursor.end != null;
+    // Also require that the next entity starts at or after where the current one
+    // ends, so that overlapping or out-of-order NER output is never merged.
+    const adjacent   = hasOffsets &&
+                       entity.start >= cursor.end &&
+                       /^\s*$/.test(text.slice(cursor.end, entity.start));
+
+    if (sameType && adjacent) {
+      // Extend the current entity to include this adjacent one.
+      // Prefer slicing the original text (which preserves exact spacing) when
+      // character offsets are available; fall back to a single-space join.
+      const mergedWord = hasOffsets
+        ? text.slice(cursor.start, entity.end)
+        : `${cursor.word} ${entity.word.trim()}`;
+      cursor = {
+        ...cursor,
+        word:  mergedWord,
+        end:   entity.end,
+        score: Math.min(cursor.score ?? 1, entity.score ?? 1),
+      };
+    } else {
+      merged.push(cursor);
+      cursor = { ...entity, _label: label };
+    }
+  }
+
+  if (cursor) merged.push(cursor);
+  return merged;
+}
+
+/**
  * Mask sensitive entities in `text` and return the masked string plus a vault
  * mapping tokens back to their original values.
+ *
+ * Each unique original value is assigned exactly one token — subsequent
+ * occurrences of the same value reuse the same token rather than receiving an
+ * incrementing number.  Adjacent NER entities of the same type (e.g. a first
+ * name followed by a last name) are merged into a single entity before masking
+ * so that "John" + "Smith" are treated as one person, not two.
  *
  * Masking order:
  *   1. NER entities (PERSON / ORG) – highest specificity
@@ -214,17 +277,31 @@ function replaceWord(text, word, token) {
  * @returns {{ maskedText: string, vault: Record<string, string> }}
  */
 function maskEntities(text, nerEntities = [], customKws = []) {
-  const vault    = {};
-  const counters = {};
-  let   masked   = text;
+  const vault         = {};
+  const counters      = {};
+  const valueToToken  = {}; // reverse lookup: original value → assigned token
+  let   masked        = text;
 
   function nextToken(prefix) {
     counters[prefix] = (counters[prefix] || 0) + 1;
     return `[${prefix}_${counters[prefix]}]`;
   }
 
+  // Return the existing token for a value, or allocate a new one.
+  function tokenFor(prefix, value) {
+    if (valueToToken[value]) return valueToToken[value];
+    const token = nextToken(prefix);
+    vault[token]        = value;
+    valueToToken[value] = token;
+    return token;
+  }
+
   // ── 1. NER-based masking (PERSON / ORG) ─────────────────────────────────
-  for (const entity of nerEntities) {
+  // Merge adjacent same-type entities first so that "John" + "Smith" (both PER)
+  // are handled as the single entity "John Smith".
+  const mergedEntities = mergeAdjacentNerEntities(nerEntities, text);
+
+  for (const entity of mergedEntities) {
     const label = (entity.entity_group || entity.entity || "").toUpperCase();
     const word  = (entity.word || "").trim();
 
@@ -238,8 +315,7 @@ function maskEntities(text, nerEntities = [], customKws = []) {
 
     if (!masked.includes(word)) continue;
 
-    const token = nextToken(prefix);
-    vault[token] = word;
+    const token = tokenFor(prefix, word);
     masked = replaceWord(masked, word, token);
   }
 
@@ -247,25 +323,21 @@ function maskEntities(text, nerEntities = [], customKws = []) {
   for (const { type, re } of MASK_PATTERNS) {
     // Recreate with only the global flag; avoid adding flags not in the original pattern.
     const globalRe = new RegExp(re.source, "g");
-    masked = masked.replace(globalRe, (match) => {
-      const token = nextToken(type);
-      vault[token] = match;
-      return token;
-    });
+    masked = masked.replace(globalRe, (match) => tokenFor(type, match));
   }
 
   // ── 3. Custom deny-list keyword masking ──────────────────────────────────
   for (const kw of customKws) {
     if (!kw.word || kw.word.trim().length < 2) continue;
-    const token = nextToken(kw.category || "CUSTOM");
-    const re    = new RegExp(escapeRegex(kw.word.trim()), "gi");
-    let   found = false;
+    const re       = new RegExp(escapeRegex(kw.word.trim()), "gi");
+    const category = kw.category || "CUSTOM";
+    // All occurrences of the same keyword share a single token; the token is
+    // created on the first match and reused for subsequent matches.
+    let token = null;
     masked = masked.replace(re, (match) => {
-      found = true;
-      vault[token] = match;
+      if (!token) token = tokenFor(category, match);
       return token;
     });
-    if (!found) delete vault[token]; // clean up unused token
   }
 
   return { maskedText: masked, vault };

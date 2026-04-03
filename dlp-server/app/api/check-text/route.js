@@ -120,6 +120,11 @@ function calcThreatScore(replacements, policies) {
   return Math.min(100, Math.round(score));
 }
 
+// ── סף חומרת איום (Threat severity thresholds) ──
+const THREAT_CRITICAL_THRESHOLD = 80;
+const THREAT_HIGH_THRESHOLD     = 50;
+const THREAT_MEDIUM_THRESHOLD   = 20;
+
 // ── POST: זיהוי והחלפת PII ──
 export async function POST(request) {
   try {
@@ -271,7 +276,7 @@ export async function POST(request) {
         severity: "high",
       });
     }
-    if (threatScore >= 80) {
+    if (threatScore >= THREAT_CRITICAL_THRESHOLD) {
       saveAlert(organizationId, {
         type: "HIGH_THREAT",
         message: `ציון איום קריטי: ${threatScore}/100 – ${replacements.length} פריטי PII זוהו`,
@@ -288,9 +293,9 @@ export async function POST(request) {
         if (tenant) {
           const eventType = replacements.length > 0 ? "block" : "scan";
           const sev =
-            threatScore >= 80 ? "critical" :
-            threatScore >= 50 ? "high" :
-            threatScore >= 20 ? "medium" : "low";
+            threatScore >= THREAT_CRITICAL_THRESHOLD ? "critical" :
+            threatScore >= THREAT_HIGH_THRESHOLD     ? "high" :
+            threatScore >= THREAT_MEDIUM_THRESHOLD   ? "medium" : "low";
           await TenantEvent.create({
             tenantId: tenant._id,
             eventType,
@@ -299,12 +304,13 @@ export async function POST(request) {
             userEmail,
             details: { threatScore, detectionCount: replacements.length, source },
           });
-          const usageInc = replacements.length > 0
-            ? { "usage.totalBlocks": 1, "usage.totalScans": 1, "usage.monthlyScans": 1 }
-            : { "usage.totalScans": 1, "usage.monthlyScans": 1 };
+          const blocksInc = replacements.length > 0 ? { "usage.totalBlocks": 1 } : {};
           await Tenant.updateOne(
             { _id: tenant._id },
-            { $inc: usageInc, $set: { "usage.lastActivity": new Date() } }
+            {
+              $inc: { ...blocksInc, "usage.totalScans": 1, "usage.monthlyScans": 1 },
+              $set: { "usage.lastActivity": new Date() },
+            }
           );
         }
       } catch (mongoErr) {

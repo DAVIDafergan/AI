@@ -76,7 +76,11 @@ function Toast({ message, type = "info", onClose }) {
   };
 
   return (
-    <div className={`fixed bottom-4 left-4 z-50 flex items-center gap-2 px-4 py-2.5 rounded-lg border text-xs font-medium shadow-xl animate-in slide-in-from-bottom ${colors[type]}`}>
+    <div
+      role="alert"
+      aria-live="polite"
+      className={`fixed bottom-4 left-4 z-50 flex items-center gap-2 px-4 py-2.5 rounded-lg border text-xs font-medium shadow-xl animate-in slide-in-from-bottom ${colors[type]}`}
+    >
       {type === "success" && "✓ "}
       {type === "error" && "✗ "}
       {message}
@@ -141,7 +145,7 @@ function Sidebar({ activeTab, onTabChange, onAddClient }) {
 // ── Skeleton loader ───────────────────────────────────────────────
 function SkeletonCard() {
   return (
-    <div className="bg-[#0d0d14] border border-slate-700/40 rounded-xl p-5 animate-pulse">
+    <div role="status" aria-label="Loading..." className="bg-[#0d0d14] border border-slate-700/40 rounded-xl p-5 animate-pulse">
       <div className="h-3 w-24 bg-slate-700/60 rounded mb-3" />
       <div className="h-8 w-16 bg-slate-700/60 rounded" />
     </div>
@@ -348,7 +352,7 @@ export default function DashboardClient({ initialClients = [] }) {
                     {stats.recentCriticalEvents.slice(0, 5).map((e) => (
                       <div key={e._id} className="flex items-center justify-between text-xs py-1.5 px-2 rounded-lg border border-red-900/30 bg-red-900/10">
                         <span className="text-red-400 font-medium">{e.eventType}</span>
-                        <span className="text-slate-400 truncate max-w-[140px] font-mono">{e.userEmail || "—"}</span>
+                        <span className="text-slate-400 truncate max-w-[140px] font-mono" title={e.userEmail || "—"}>{e.userEmail || "—"}</span>
                         <span className="text-slate-600 shrink-0">{e.timestamp ? new Date(e.timestamp).toLocaleTimeString("he-IL") : ""}</span>
                       </div>
                     ))}

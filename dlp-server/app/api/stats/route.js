@@ -61,8 +61,8 @@ export async function GET(request) {
               TenantEvent.findOne({ tenantId, userEmail: email }).sort({ timestamp: -1 }).lean(),
             ]);
             const categoryBreakdown = {};
-            for (const c of catAgg) {
-              if (c._id) categoryBreakdown[c._id] = c.count;
+            for (const category of catAgg) {
+              if (category._id) categoryBreakdown[category._id] = category.count;
             }
             const riskLevel = calculateRiskLevel({ totalBlocks, categoryBreakdown });
             return NextResponse.json({

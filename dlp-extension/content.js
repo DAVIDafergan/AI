@@ -216,6 +216,7 @@ function initUserEmail() {
    Build the overlay DOM (pure vanilla JS)
    ───────────────────────────────────────────── */
 function buildOverlayDOM(replacements, redactedText) {
+  if (!Array.isArray(replacements)) replacements = [];
   const backdrop = document.createElement("div");
   backdrop.className = "dlp-overlay-backdrop";
 
@@ -559,14 +560,19 @@ async function handlePaste(event) {
       });
     });
 
-    if (result.blocked !== true) {
+    // Support both local-agent format (blocked: true) and cloud-server format (safe: false)
+    const isBlocked = result.blocked === true || result.safe === false;
+    if (!isBlocked) {
       insertTextIntoField(target, text);
       showFallbackToast("✅ המידע בטוח – הודבק בהצלחה.", "success");
       return;
     }
 
+    // Support both maskedText (local agent) and redactedText (cloud server)
+    const maskedText = result.maskedText || result.redactedText;
+
     // Hard block (no masked replacement available) – reject the paste
-    if (result.action !== "mask" || !result.maskedText) {
+    if (maskedText == null) {
       showFallbackToast("⚠️ חומת אש AI: תוכן רגיש זוהה. ההדבקה נחסמה.", "warning");
       return;
     }
@@ -586,17 +592,17 @@ async function handlePaste(event) {
     persistVault();
 
     if (replacements.length === 0) {
-      insertTextIntoField(target, result.maskedText);
+      insertTextIntoField(target, maskedText);
       showFallbackToast("🛡️ חומת אש AI: תוכן רגיש חוסם ונשלח מוסווה.", "warning");
       return;
     }
 
-    const overlayParts = buildOverlayDOM(replacements, result.maskedText);
+    const overlayParts = buildOverlayDOM(replacements, maskedText);
     document.body.appendChild(overlayParts.backdrop);
 
     await runMorphAnimation(overlayParts);
 
-    insertTextIntoField(target, result.maskedText);
+    insertTextIntoField(target, maskedText);
     console.log(`${DLP_PREFIX} ✅ הודבק טקסט סינתטי (${replacements.length} החלפות)`);
 
     await sleep(TIMING.closeDelay);

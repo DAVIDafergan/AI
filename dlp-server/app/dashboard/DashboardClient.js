@@ -233,6 +233,10 @@ export default function DashboardClient({ initialClients = [] }) {
   const [sseConnected, setSseConnected]     = useState(false);
   const isInitialLoad                       = useRef(true);
   const sseRef                              = useRef(null);
+  // Keep stable refs so the SSE callbacks always call the latest version
+  // of fetchClients/fetchStats without requiring them as effect dependencies.
+  const fetchClientsRef                     = useRef(null);
+  const fetchStatsRef                       = useRef(null);
 
   const showToast = useCallback((message, type = "info") => {
     setToast({ message, type });
@@ -268,6 +272,10 @@ export default function DashboardClient({ initialClients = [] }) {
     } catch {}
   }, [handleUnauthorized]);
 
+  // Keep refs up-to-date so SSE callbacks never hold stale closures.
+  fetchClientsRef.current = fetchClients;
+  fetchStatsRef.current   = fetchStats;
+
   const refreshAll = useCallback(async (showFeedback = false) => {
     setIsLoading(true);
     await Promise.all([fetchClients(), fetchStats()]);
@@ -295,17 +303,16 @@ export default function DashboardClient({ initialClients = [] }) {
       });
 
       es.addEventListener("events", () => {
-        // New events arrived – refresh full client list too
-        fetchClients();
+        // New events arrived – use ref to avoid stale closure.
+        fetchClientsRef.current?.();
       });
 
       es.addEventListener("error", () => {
         setSseConnected(false);
         es.close();
-        // Reconnect after 5 s (browser EventSource reconnects automatically
-        // but we also trigger a manual data refresh).
+        // Reconnect after 5 s and trigger a manual data refresh.
         retryTimer = setTimeout(() => {
-          fetchStats();
+          fetchStatsRef.current?.();
           connect();
         }, 5000);
       });
@@ -317,7 +324,7 @@ export default function DashboardClient({ initialClients = [] }) {
       es?.close();
       clearTimeout(retryTimer);
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []); // effect runs once; callbacks accessed via stable refs
 
   // ── Fallback polling (runs even when SSE is active to keep data fresh) ──
   useEffect(() => {

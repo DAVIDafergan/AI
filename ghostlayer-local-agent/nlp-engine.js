@@ -309,30 +309,28 @@ export function classifySensitivity(score) {
 export async function indexDocuments(files, options = {}) {
   const { verbose = false } = options;
 
-  const ner        = await initNLP().catch(() => null);
-  const allPersons = new Set();
-  const allOrgs    = new Set();
-  const termFreq   = {};
-  let processed    = 0;
+  const ner = await initNLP().catch(() => null);
 
-  // Mutex for the shared mutable sets / counters (runWithConcurrency calls fn
-  // for different items concurrently, so we need atomic updates).
-  const merge = ({ persons, orgs, terms }) => {
-    persons.forEach((p) => allPersons.add(p));
-    orgs.forEach((o) => allOrgs.add(o));
-    for (const term of terms) termFreq[term] = (termFreq[term] || 0) + 1;
-    processed++;
-    if (verbose) process.stdout.write(`\r[nlp] Indexing… ${processed}/${files.length}`);
-  };
-
-  await runWithConcurrency(files, async ({ content }) => {
+  // Process all files concurrently; each worker returns its extracted entities.
+  const rawResults = await runWithConcurrency(files, async ({ content }, idx) => {
     // Skip expensive NER when the document shows no sensitive signals.
     const nerTarget = ner && hasAnySensitiveSignal(content) ? ner : null;
     const { persons, orgs } = await extractEntities(content, nerTarget, verbose);
-    merge({ persons, orgs, terms: extractFinancialTerms(content) });
+    if (verbose) process.stdout.write(`\r[nlp] Indexing… ${idx + 1}/${files.length}`);
+    return { persons, orgs, terms: extractFinancialTerms(content) };
   });
 
   if (verbose) console.log();
+
+  // Merge results sequentially after all concurrent work is done.
+  const allPersons = new Set();
+  const allOrgs    = new Set();
+  const termFreq   = {};
+  for (const { persons, orgs, terms } of rawResults) {
+    persons.forEach((p) => allPersons.add(p));
+    orgs.forEach((o) => allOrgs.add(o));
+    for (const term of terms) termFreq[term] = (termFreq[term] || 0) + 1;
+  }
 
   return {
     learnedPersons:         [...allPersons],
@@ -384,15 +382,10 @@ export async function buildSensitiveMap(files, brain, options = {}) {
     (brain.learnedOrgs || []).map((o) => o.toLowerCase()),
   );
 
-  // Shared accumulators – updated serially inside the merge callback.
-  const fileProfiles    = new Array(files.length);
-  let totalPersonsFound = 0;
-  let totalOrgsFound    = 0;
-  let totalPII          = 0;
-  let scoreSumForAvg    = 0;
-  let processed         = 0;
+  let processed = 0;
 
-  await runWithConcurrency(files, async ({ path: filePath, content }, idx) => {
+  // Process all files concurrently; each worker returns its per-file result.
+  const rawResults = await runWithConcurrency(files, async ({ path: filePath, content }) => {
     const pii            = extractPII(content);
     const financialTerms = extractFinancialTerms(content);
 
@@ -418,27 +411,41 @@ export async function buildSensitiveMap(files, brain, options = {}) {
     });
     const classification = classifySensitivity(score);
 
-    fileProfiles[idx] = {
-      path:             filePath,
-      sensitivityScore: score,
-      classification,
-      personsFound:     personCount,
-      orgsFound:        orgCount,
-      piiCount,
-    };
+    if (verbose) {
+      processed++;
+      process.stdout.write(`\r[nlp] Scoring… ${processed}/${files.length}  `);
+    }
 
+    return {
+      profile: {
+        path:             filePath,
+        sensitivityScore: score,
+        classification,
+        personsFound:     personCount,
+        orgsFound:        orgCount,
+        piiCount,
+      },
+      personCount,
+      orgCount,
+      piiCount,
+      score,
+    };
+  });
+
+  if (verbose) console.log();
+
+  // Merge results sequentially after all concurrent work is done.
+  let totalPersonsFound = 0;
+  let totalOrgsFound    = 0;
+  let totalPII          = 0;
+  let scoreSumForAvg    = 0;
+  const fileProfiles    = rawResults.map(({ profile, personCount, orgCount, piiCount, score }) => {
     totalPersonsFound += personCount;
     totalOrgsFound    += orgCount;
     totalPII          += piiCount;
     scoreSumForAvg    += score;
-
-    processed++;
-    if (verbose) {
-      process.stdout.write(`\r[nlp] Scoring… ${processed}/${files.length}  `);
-    }
+    return profile;
   });
-
-  if (verbose) console.log();
 
   const highlySensitiveFiles   = fileProfiles.filter(
     (f) => f.classification === "Highly Sensitive",

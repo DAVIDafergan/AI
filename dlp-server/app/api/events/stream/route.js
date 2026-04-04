@@ -36,7 +36,8 @@ async function fetchStats() {
   try {
     await connectMongo();
     const now        = new Date();
-    const todayStart = new Date(now); todayStart.setHours(0, 0, 0, 0);
+    const todayStart = new Date(now);
+    todayStart.setHours(0, 0, 0, 0);
 
     const [totalTenants, activeTenants, totalAgents, allAgents, blocksToday] =
       await Promise.all([

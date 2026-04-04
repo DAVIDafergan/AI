@@ -322,7 +322,7 @@ export async function POST(request) {
       {
         safe: replacements.length === 0,
         redactedText,
-        replacements: replacements.map(({ original: _o, ...rest }) => rest),
+        replacements,
         threatScore,
         detectionCount: replacements.length,
         triageLevel: triageResult.level,

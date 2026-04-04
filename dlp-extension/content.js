@@ -1662,9 +1662,19 @@ async function init() {
   // 1C. Get user email from background
   initUserEmail();
 
-  // 1D. Register paste handler (capture phase) – handles both text and image pastes
-  document.addEventListener("paste", handlePaste, true);
-  document.addEventListener("paste", handleImagePaste, true);
+  // 1D. Register a unified paste handler (capture phase).
+  // A single handler processes both text pastes (DLP scan) and image pastes (OCR scan)
+  // to avoid race conditions when both listeners would fire for the same event.
+  document.addEventListener("paste", async (event) => {
+    // Check for image data first – if present, delegate to image handler and return
+    const items = Array.from(event.clipboardData?.items || []);
+    if (items.some((item) => item.type.startsWith("image/"))) {
+      await handleImagePaste(event);
+      return;
+    }
+    // Otherwise handle as a text paste
+    await handlePaste(event);
+  }, true);
 
   // 1A. Watch ALL input fields on the page (real-time typing DLP)
   watchAllInputs();

@@ -103,7 +103,7 @@ export function clearFragments(userEmail) {
  * @type {Record<string, RegExp>}
  */
 const CONTENT_TYPE_SIGNALS = {
-  CODE:        /(?:\bfunction\b|\bconst\b|\blet\b|\bvar\b|\bimport\b|\bclass\b|=>|!=|===|\/\/|#include|def |import )/,
+  CODE:        /(?:\bfunction\b|\bconst\b|\blet\b|\bvar\b|\bimport\b|\bclass\b|=>|!=|===|\/\/|#include|def )/,
   DATA_TABLE:  /(?:\t.+\t|\|.+\||\bcsv\b|,{3,}|\bexcel\b)/i,
   CREDENTIALS: /(?:password|secret|token|api[_\-]?key|credentials|passwd)/i,
   FINANCIAL:   /(?:\b(?:salary|payroll|revenue|invoice|credit|iban|swift)\b)/i,

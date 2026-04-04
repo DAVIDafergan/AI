@@ -366,8 +366,12 @@ export default function ClientDetailPage() {
   // ── Evasion metrics derived from event details ──────────────────────────────
   const evasionEvents   = events.filter((e) => e.details?.evasionTechniques?.length > 0);
   const evasionCount    = evasionEvents.length;
-  const fragmentEvents  = events.filter((e) => e.details?.detectionTier?.includes("fragment") ||
-    e.details?.anomalyFlags?.includes("FRAGMENTATION_PATTERN"));
+  const fragmentEvents  = events.filter((e) => {
+    const tier = e.details?.detectionTier || "";
+    const flags = e.details?.anomalyFlags || [];
+    return tier === "fragment" || tier.startsWith("evasion+fragment") ||
+      flags.includes("FRAGMENTATION_PATTERN");
+  });
   const roleplayEvents  = events.filter((e) => e.details?.evasionTechniques?.includes("ROLEPLAY_INJECTION"));
 
   // Aggregate evasion technique counts

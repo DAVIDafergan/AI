@@ -95,10 +95,8 @@ const HOMOGLYPH_MAP = {
     ]).flat(),
   ),
   // Mathematical/script letter look-alikes (common in social-media evasion)
-  "\u2174": "l", // ⅴ → misused as l
-  "\u2113": "l", // ℓ
+  "\u2113": "l", // ℓ (script small l)
   "\u0131": "i", // ı (dotless i)
-  "\u0399": "I", // already covered above but repeated for clarity
   "\u00F8": "o", // ø
   "\u00D8": "O", // Ø
   "\u00E6": "ae",// æ
@@ -258,9 +256,11 @@ const LEET_MAP = {
   "+": "t", "|": "i",
 };
 
-// A leet sequence: at least one letter surrounded by leet subs, total ≥ 4 chars
-// e.g. P455w0rd, $3cr3t, p@ssw0rd
-const LEET_WORD_RE = /\b(?=[a-zA-Z0-9@$!|+]*[0-9@$!|+][a-zA-Z0-9@$!|+]*[a-zA-Z][a-zA-Z0-9@$!|+]{2,})[a-zA-Z0-9@$!|+]{4,}\b/g;
+// A leet sequence: at least one letter surrounded by leet substitutions, total ≥ 4 chars.
+// e.g. P455w0rd, $3cr3t, p@ssw0rd.
+// The lookahead checks that the word contains at least one leet character AND at least
+// one real letter, then requires a minimum length of 4.
+const LEET_WORD_RE = /\b(?=[a-zA-Z0-9@$!+]*[0-9@$!+][a-zA-Z0-9@$!+]*[a-zA-Z][a-zA-Z0-9@$!+]{2,})[a-zA-Z0-9@$!+]{4,}\b/g;
 
 function normalizeLeetspeak(text) {
   return text.replace(LEET_WORD_RE, (word) =>

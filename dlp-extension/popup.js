@@ -42,9 +42,12 @@ chrome.runtime.sendMessage({ type: "GET_STATS" }, (data) => {
   serverUrlInput.value          = data.serverUrl || DEFAULT_SERVER;
   enabledToggle.checked         = data.enabled !== false;
 
-  // Show the active server URL in the header bar
-  const activeServer = data.serverUrl || DEFAULT_SERVER;
-  if (serverDisplayEl) serverDisplayEl.textContent = activeServer;
+  // Read localAgentUrl directly from storage (not included in GET_STATS response)
+  chrome.storage.local.get(["localAgentUrl"], (localData) => {
+    const activeServer = localData.localAgentUrl || data.serverUrl || DEFAULT_SERVER;
+    if (serverDisplayEl) serverDisplayEl.textContent = activeServer;
+    checkConnection(activeServer);
+  });
 
   // Resolve the best available email:
   // Priority: employeeEmail (manually configured in Options page by the user)
@@ -64,8 +67,6 @@ chrome.runtime.sendMessage({ type: "GET_STATS" }, (data) => {
       loadPersonalStats(resolvedEmail, data);
     });
   }
-
-  checkConnection(data.serverUrl || DEFAULT_SERVER);
 });
 
 function loadPersonalStats(email, storageData) {
@@ -156,7 +157,7 @@ async function checkConnection(serverUrl) {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 4000);
-    const res = await fetch(`${serverUrl}/api/stats`, { signal: controller.signal });
+    const res = await fetch(`${serverUrl}/api/health`, { signal: controller.signal });
     clearTimeout(timeout);
     if (res.ok) {
       statusDot.className = "status-dot connected";

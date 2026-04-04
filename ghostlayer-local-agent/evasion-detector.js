@@ -130,7 +130,7 @@ const COMBINING_MARKS_RE = /[\u0300-\u036F\u1DC0-\u1DFF\u20D0-\u20FF\uFE20-\uFE2
 // Matches a run of single characters separated by the same punctuation
 // e.g. P.a.s.s.w.o.r.d  or  S-e-c-r-e-t  or  P a s s
 // The separator must be consistent across at least 4 repetitions.
-const PUNCT_INJECTION_RE = /(?:\b|(?<=\s))(\w)([\s.\-_,/\\|]{1,2})\1{0}(?:\w\2){3,}\w\b/g;
+const PUNCT_INJECTION_RE = /(?:\b|(?<=\s))(\w)([\s.\-_,/\\|]{1,2})(?:\w\2){3,}\w\b/g;
 
 /**
  * Collapse punctuation-injected words.
@@ -493,17 +493,3 @@ export function hasEvasionSignals(text) {
     NON_STANDARD_DELIM_RE.test(text)
   );
 }
-
-// Reset stateful regex lastIndex flags after use
-function resetRegexes() {
-  ZERO_WIDTH_RE.lastIndex   = 0;
-  COMBINING_MARKS_RE.lastIndex = 0;
-  HOMOGLYPH_RE.lastIndex    = 0;
-  BASE64_RE.lastIndex       = 0;
-  HEX_ESCAPE_RE.lastIndex   = 0;
-  NON_STANDARD_DELIM_RE.lastIndex = 0;
-}
-
-// Call reset after hasEvasionSignals to avoid lastIndex drift on global regexes
-const _origHasEvasionSignals = hasEvasionSignals;
-export { _origHasEvasionSignals };

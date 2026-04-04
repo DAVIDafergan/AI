@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Bell, Clock, Plus, Shield, Building2, Settings, LogOut, RefreshCw, Activity, Users, AlertTriangle } from "lucide-react";
+import { Bell, Clock, Plus, Shield, Building2, Settings, LogOut, RefreshCw, Activity, Users, AlertTriangle, Wifi, WifiOff } from "lucide-react";
 import { logoutAction } from "../actions/auth";
 import TenantsTable from "../super-admin/components/TenantsTable";
 import AddTenantModal from "../super-admin/components/AddTenantModal";
@@ -12,7 +12,7 @@ import LiveEventsStream from "../super-admin/components/LiveEventsStream";
 import AgentsGrid from "../super-admin/components/AgentsGrid";
 import AgentDetailPanel from "../super-admin/components/AgentDetailPanel";
 
-const REFRESH_INTERVAL_MS = 15000;
+const REFRESH_INTERVAL_MS = 10000;
 
 // ── System clock ────────────────────────────────────────────────
 function SystemClock() {
@@ -27,6 +27,35 @@ function SystemClock() {
     <span className="flex items-center gap-1.5 font-mono text-xs text-cyan-400/80 tabular-nums">
       <Clock size={12} />
       {time}
+    </span>
+  );
+}
+
+// ── Connection status indicator ──────────────────────────────────
+function ConnectionStatus({ connected, streaming }) {
+  if (streaming) {
+    return (
+      <span className="flex items-center gap-1.5 text-xs text-emerald-400">
+        <span className="relative flex h-2 w-2">
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+          <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400" />
+        </span>
+        חי
+      </span>
+    );
+  }
+  if (connected) {
+    return (
+      <span className="flex items-center gap-1.5 text-xs text-cyan-400/80">
+        <Wifi size={12} />
+        מחובר
+      </span>
+    );
+  }
+  return (
+    <span className="flex items-center gap-1.5 text-xs text-red-400/80">
+      <WifiOff size={12} />
+      מתחבר מחדש…
     </span>
   );
 }
@@ -201,15 +230,23 @@ export default function DashboardClient({ initialClients = [] }) {
   const [selectedAgent, setSelectedAgent]   = useState(null);
   const [notifCount, setNotifCount]         = useState(0);
   const [toast, setToast]                   = useState(null);
+  const [sseConnected, setSseConnected]     = useState(false);
   const isInitialLoad                       = useRef(true);
+  const sseRef                              = useRef(null);
 
   const showToast = useCallback((message, type = "info") => {
     setToast({ message, type });
   }, []);
 
+  // Redirect to login on 401 (session expired / not authenticated).
+  const handleUnauthorized = useCallback(() => {
+    window.location.replace("/");
+  }, []);
+
   const fetchClients = useCallback(async () => {
     try {
       const res = await fetch("/api/tenants", { cache: "no-store" });
+      if (res.status === 401) { handleUnauthorized(); return; }
       if (res.ok) {
         const data = await res.json();
         if (data.tenants) setClients(data.tenants);
@@ -217,18 +254,19 @@ export default function DashboardClient({ initialClients = [] }) {
     } catch {
       // keep current clients on error
     }
-  }, []);
+  }, [handleUnauthorized]);
 
   const fetchStats = useCallback(async () => {
     try {
       const res = await fetch("/api/super-admin-stats", { cache: "no-store" });
+      if (res.status === 401) { handleUnauthorized(); return; }
       if (res.ok) {
         const data = await res.json();
         setStats(data);
         setNotifCount(data.recentCriticalEvents?.length || 0);
       }
     } catch {}
-  }, []);
+  }, [handleUnauthorized]);
 
   const refreshAll = useCallback(async (showFeedback = false) => {
     setIsLoading(true);
@@ -237,6 +275,51 @@ export default function DashboardClient({ initialClients = [] }) {
     if (showFeedback) showToast("נתונים עודכנו בהצלחה", "success");
   }, [fetchClients, fetchStats, showToast]);
 
+  // ── SSE connection for real-time push ──────────────────────────
+  useEffect(() => {
+    let es;
+    let retryTimer;
+
+    function connect() {
+      es = new EventSource("/api/events/stream");
+      sseRef.current = es;
+
+      es.addEventListener("open", () => setSseConnected(true));
+
+      es.addEventListener("stats", (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          // Merge SSE stats with existing full stats (SSE sends a subset)
+          setStats((prev) => prev ? { ...prev, ...data } : data);
+        } catch {}
+      });
+
+      es.addEventListener("events", () => {
+        // New events arrived – refresh full client list too
+        fetchClients();
+      });
+
+      es.addEventListener("error", () => {
+        setSseConnected(false);
+        es.close();
+        // Reconnect after 5 s (browser EventSource reconnects automatically
+        // but we also trigger a manual data refresh).
+        retryTimer = setTimeout(() => {
+          fetchStats();
+          connect();
+        }, 5000);
+      });
+    }
+
+    connect();
+
+    return () => {
+      es?.close();
+      clearTimeout(retryTimer);
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Fallback polling (runs even when SSE is active to keep data fresh) ──
   useEffect(() => {
     if (isInitialLoad.current) {
       isInitialLoad.current = false;
@@ -391,6 +474,7 @@ export default function DashboardClient({ initialClients = [] }) {
             <span className="text-sm font-bold text-cyan-300 tracking-widest">GhostLayer – פורטל ניהול מנהל-על</span>
           </div>
           <div className="flex items-center gap-4">
+            <ConnectionStatus connected={true} streaming={sseConnected} />
             <SystemClock />
             <RefreshCountdown onRefresh={() => refreshAll(true)} isLoading={isLoading} />
             <div className="relative">
@@ -442,3 +526,4 @@ export default function DashboardClient({ initialClients = [] }) {
     </div>
   );
 }
+

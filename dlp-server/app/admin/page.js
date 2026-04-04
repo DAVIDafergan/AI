@@ -14,7 +14,7 @@ import {
   Activity, Users, Zap, Lock, Eye, ChevronRight,
   Terminal, AlertCircle, Wifi, RefreshCw, UserCheck, Replace,
   TrendingUp, Clock, Filter, Search, ChevronDown, ChevronUp,
-  AlertTriangle, X,
+  AlertTriangle, X, LogOut,
 } from "lucide-react";
 import ActiveUsersPanel from "./components/ActiveUsersPanel";
 import CustomKeywordsManager from "./components/CustomKeywordsManager";
@@ -838,19 +838,42 @@ export default function CommandCenterDashboard() {
     return () => clearInterval(id);
   }, []);
 
+  // Restore API key from sessionStorage on mount to survive page refreshes.
+  useEffect(() => {
+    try {
+      const saved = sessionStorage.getItem("ghostlayer_admin_key");
+      if (saved) setApiKey(saved);
+    } catch {}
+  }, []);
+
   const loadData = useCallback(async (key) => {
     try {
       const res = await fetch("/api/tenant-dashboard", { headers: { "x-api-key": key } });
-      if (res.ok) setData(await res.json());
-      else console.error("[GhostLayer] Refresh failed:", res.status);
+      if (res.ok) {
+        setData(await res.json());
+      } else if (res.status === 401 || res.status === 403) {
+        // Key no longer valid – clear persisted key and show login gate.
+        try { sessionStorage.removeItem("ghostlayer_admin_key"); } catch {}
+        setApiKey(null);
+        setData(null);
+      } else {
+        console.error("[GhostLayer] Refresh failed:", res.status);
+      }
     } catch (err) {
       console.error("[GhostLayer] Refresh error:", err);
     }
   }, []);
 
   const handleAuth = useCallback((key, initialData) => {
-    setApiKey(key); setData(initialData);
+    try { sessionStorage.setItem("ghostlayer_admin_key", key); } catch {}
+    setApiKey(key);
+    setData(initialData);
   }, []);
+
+  // Initial data load when apiKey is restored from sessionStorage.
+  useEffect(() => {
+    if (apiKey && !data) loadData(apiKey);
+  }, [apiKey, data, loadData]);
 
   useEffect(() => {
     if (!apiKey) return;
@@ -882,6 +905,17 @@ export default function CommandCenterDashboard() {
           <button onClick={() => loadData(apiKey)}
             className="p-1.5 rounded-lg hover:bg-slate-800 transition-colors text-slate-400 hover:text-slate-200" title="רענן נתונים">
             <RefreshCw size={14} />
+          </button>
+          <button
+            onClick={() => {
+              try { sessionStorage.removeItem("ghostlayer_admin_key"); } catch {}
+              setApiKey(null);
+              setData(null);
+            }}
+            className="p-1.5 rounded-lg hover:bg-red-900/30 transition-colors text-slate-500 hover:text-red-400"
+            title="יציאה"
+          >
+            <LogOut size={14} />
           </button>
         </div>
       </header>

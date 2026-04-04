@@ -571,10 +571,26 @@ async function handlePaste(event) {
       return;
     }
 
-    const vault        = result.vault || {};
-    Object.assign(_vault, vault);
+    // Support both { vault: {token: original} } and { replacements: [{original, placeholder}] }
+    let replacements;
+    if (Array.isArray(result.replacements) && result.replacements.length > 0) {
+      replacements = result.replacements.map((r) => ({ original: r.original, synthetic: r.placeholder || r.synthetic }));
+      for (const r of replacements) {
+        if (r.synthetic && r.original) _vault[r.synthetic] = r.original;
+      }
+    } else {
+      const vault = result.vault && typeof result.vault === "object" ? result.vault : {};
+      Object.assign(_vault, vault);
+      replacements = Object.entries(vault).map(([synthetic, original]) => ({ original, synthetic }));
+    }
     persistVault();
-    const replacements = Object.entries(vault).map(([synthetic, original]) => ({ original, synthetic }));
+
+    if (replacements.length === 0) {
+      insertTextIntoField(target, result.maskedText);
+      showFallbackToast("🛡️ חומת אש AI: תוכן רגיש חוסם ונשלח מוסווה.", "warning");
+      return;
+    }
+
     const overlayParts = buildOverlayDOM(replacements, result.maskedText);
     document.body.appendChild(overlayParts.backdrop);
 

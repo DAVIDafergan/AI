@@ -51,10 +51,10 @@ export default function ActiveUsersPanel({ apiKey }) {
     }
   }, [apiKey]);
 
-  // Fetch on mount and every 60 seconds
+  // Fetch on mount and every 15 seconds
   useEffect(() => {
     fetchUsers();
-    const interval = setInterval(fetchUsers, 60_000);
+    const interval = setInterval(fetchUsers, 15_000);
     return () => clearInterval(interval);
   }, [fetchUsers]);
 

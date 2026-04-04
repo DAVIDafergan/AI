@@ -47,6 +47,46 @@ const PATTERNS = {
   israeliId:  /\b\d{9}\b/g,
 };
 
+// Non-global copies used for quick boolean tests (avoids lastIndex drift).
+const PATTERNS_TEST = {
+  email:      /\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b/,
+  phone:      /(?:\+?\d{1,3}[\s\-.]?)?\(?\d{2,4}\)?[\s\-.]?\d{3,4}[\s\-.]?\d{4}\b/,
+  creditCard: /\b(?:\d[ \-]?){13,16}\b/,
+  israeliId:  /\b\d{9}\b/,
+};
+
+// Maximum number of files processed in parallel during indexing/scoring.
+const MAX_CONCURRENCY = 4;
+
+/**
+ * Run an async function over an array with bounded concurrency.
+ * Returns results in the same order as the input array.
+ *
+ * @template T, R
+ * @param {T[]} items
+ * @param {(item: T, index: number) => Promise<R>} fn
+ * @param {number} [concurrency]
+ * @returns {Promise<R[]>}
+ */
+async function runWithConcurrency(items, fn, concurrency = MAX_CONCURRENCY) {
+  const results = new Array(items.length);
+  let nextIdx = 0;
+
+  async function worker() {
+    while (nextIdx < items.length) {
+      const i = nextIdx++;
+      results[i] = await fn(items[i], i);
+    }
+  }
+
+  const workers = Array.from(
+    { length: Math.min(concurrency, items.length) },
+    worker,
+  );
+  await Promise.all(workers);
+  return results;
+}
+
 // ── Financial / sensitive vocabulary ─────────────────────────────────────────
 
 const FINANCIAL_TERMS = new Set([
@@ -165,6 +205,28 @@ function extractFinancialTerms(text) {
   return [...FINANCIAL_TERMS].filter((term) => lower.includes(term));
 }
 
+// ── Sensitive-signal pre-screen ───────────────────────────────────────────────
+
+/**
+ * Quick pre-screen: check the first 20 KB of a document for any sensitive
+ * signal using cheap regex and keyword tests.  Returns true when at least one
+ * signal is found, meaning the heavy NER pass is warranted.
+ * Files that pass no signal are scored with regex+keywords only, skipping NER.
+ *
+ * @param {string} text
+ * @returns {boolean}
+ */
+function hasAnySensitiveSignal(text) {
+  const sample = text.length > 20480 ? text.slice(0, 20480) : text;
+  return (
+    PATTERNS_TEST.email.test(sample) ||
+    PATTERNS_TEST.phone.test(sample) ||
+    PATTERNS_TEST.creditCard.test(sample) ||
+    PATTERNS_TEST.israeliId.test(sample) ||
+    extractFinancialTerms(sample).length > 0
+  );
+}
+
 // ── Sensitivity scoring ───────────────────────────────────────────────────────
 
 // Scoring weights – each multiplier reflects the relative risk of the signal.
@@ -247,27 +309,28 @@ export function classifySensitivity(score) {
 export async function indexDocuments(files, options = {}) {
   const { verbose = false } = options;
 
-  const ner        = await initNLP().catch(() => null);
+  const ner = await initNLP().catch(() => null);
+
+  // Process all files concurrently; each worker returns its extracted entities.
+  const rawResults = await runWithConcurrency(files, async ({ content }, idx) => {
+    // Skip expensive NER when the document shows no sensitive signals.
+    const nerTarget = ner && hasAnySensitiveSignal(content) ? ner : null;
+    const { persons, orgs } = await extractEntities(content, nerTarget, verbose);
+    if (verbose) process.stdout.write(`\r[nlp] Indexing… ${idx + 1}/${files.length}`);
+    return { persons, orgs, terms: extractFinancialTerms(content) };
+  });
+
+  if (verbose) console.log();
+
+  // Merge results sequentially after all concurrent work is done.
   const allPersons = new Set();
   const allOrgs    = new Set();
   const termFreq   = {};
-
-  let processed = 0;
-  for (const { content } of files) {
-    const { persons, orgs } = await extractEntities(content, ner, verbose);
+  for (const { persons, orgs, terms } of rawResults) {
     persons.forEach((p) => allPersons.add(p));
     orgs.forEach((o) => allOrgs.add(o));
-
-    for (const term of extractFinancialTerms(content)) {
-      termFreq[term] = (termFreq[term] || 0) + 1;
-    }
-
-    processed++;
-    if (verbose) {
-      process.stdout.write(`\r[nlp] Indexing… ${processed}/${files.length}`);
-    }
+    for (const term of terms) termFreq[term] = (termFreq[term] || 0) + 1;
   }
-  if (verbose) console.log();
 
   return {
     learnedPersons:         [...allPersons],
@@ -319,17 +382,16 @@ export async function buildSensitiveMap(files, brain, options = {}) {
     (brain.learnedOrgs || []).map((o) => o.toLowerCase()),
   );
 
-  const fileProfiles   = [];
-  let totalPersonsFound = 0;
-  let totalOrgsFound    = 0;
-  let totalPII          = 0;
-  let scoreSumForAvg    = 0;
-
   let processed = 0;
-  for (const { path: filePath, content } of files) {
+
+  // Process all files concurrently; each worker returns its per-file result.
+  const rawResults = await runWithConcurrency(files, async ({ path: filePath, content }) => {
     const pii            = extractPII(content);
     const financialTerms = extractFinancialTerms(content);
-    const { persons, orgs } = await extractEntities(content, ner, verbose);
+
+    // Skip expensive NER when the document shows no sensitive signals.
+    const nerTarget = ner && hasAnySensitiveSignal(content) ? ner : null;
+    const { persons, orgs } = await extractEntities(content, nerTarget, verbose);
 
     const piiCount    = pii.email.length + pii.phone.length +
                         pii.creditCard.length + pii.israeliId.length;
@@ -349,26 +411,41 @@ export async function buildSensitiveMap(files, brain, options = {}) {
     });
     const classification = classifySensitivity(score);
 
-    fileProfiles.push({
-      path:             filePath,
-      sensitivityScore: score,
-      classification,
-      personsFound:     personCount,
-      orgsFound:        orgCount,
-      piiCount,
-    });
+    if (verbose) {
+      processed++;
+      process.stdout.write(`\r[nlp] Scoring… ${processed}/${files.length}  `);
+    }
 
+    return {
+      profile: {
+        path:             filePath,
+        sensitivityScore: score,
+        classification,
+        personsFound:     personCount,
+        orgsFound:        orgCount,
+        piiCount,
+      },
+      personCount,
+      orgCount,
+      piiCount,
+      score,
+    };
+  });
+
+  if (verbose) console.log();
+
+  // Merge results sequentially after all concurrent work is done.
+  let totalPersonsFound = 0;
+  let totalOrgsFound    = 0;
+  let totalPII          = 0;
+  let scoreSumForAvg    = 0;
+  const fileProfiles    = rawResults.map(({ profile, personCount, orgCount, piiCount, score }) => {
     totalPersonsFound += personCount;
     totalOrgsFound    += orgCount;
     totalPII          += piiCount;
     scoreSumForAvg    += score;
-
-    processed++;
-    if (verbose) {
-      process.stdout.write(`\r[nlp] Scoring… ${processed}/${files.length}  `);
-    }
-  }
-  if (verbose) console.log();
+    return profile;
+  });
 
   const highlySensitiveFiles   = fileProfiles.filter(
     (f) => f.classification === "Highly Sensitive",

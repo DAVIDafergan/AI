@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import { authenticateRequest } from "../../../lib/middleware.js";
 import { generateSynthetic } from "../../../lib/synthetic.js";
+import { normalizeText } from "../../../lib/evasion.js";
 import {
   saveMappings,
   getMappingByTag,
@@ -138,6 +139,36 @@ export async function POST(request) {
       return NextResponse.json({ error: "text is required" }, { status: 400 });
     }
 
+    // ── Tier 0: Evasion normalisation ─────────────────────────────────────
+    const {
+      normalized: normalizedText,
+      evasionTechniques,
+      hasRoleplayInjection,
+      extraFragments,
+    } = normalizeText(text);
+
+    // If roleplay injection detected, block immediately
+    if (hasRoleplayInjection) {
+      await saveAlert(organizationId, {
+        type:       "ROLEPLAY_INJECTION",
+        userEmail,
+        techniques: evasionTechniques,
+        timestamp:  new Date().toISOString(),
+      }).catch(() => {});
+      return NextResponse.json({
+        safe:           false,
+        blocked:        true,
+        reason:         "Prompt injection / roleplay evasion attempt detected.",
+        evasionTechniques,
+        replacements:   [],
+        redactedText:   text,
+        threatScore:    100,
+      });
+    }
+
+    // Scan both the normalised text and any extracted fragments
+    const scanTargets = [normalizedText, ...extraFragments];
+
     // טעינת מדיניות הארגון
     let orgPolicies = getPolicies(organizationId);
     if (!orgPolicies) {
@@ -148,7 +179,8 @@ export async function POST(request) {
     const customKws = getCustomKeywords(organizationId);
 
     // ── Triage מהיר לפני סריקה מלאה ──
-    const triageResult = runTriageWithStats(text);
+    // Run triage on the normalised text so obfuscation doesn't bypass early exit
+    const triageResult = runTriageWithStats(normalizedText);
 
     // מטמון עקביות: אותו ערך מקורי → אותו סינתטי
     const consistencyCache = new Map();
@@ -157,71 +189,79 @@ export async function POST(request) {
     const replacements = [];
     const mappingEntries = [];
 
-    // ── 1. זיהוי Regex ──
-    for (const { id, regex, label, policyId } of ALL_PATTERNS) {
-      if (!isPolicyEnabled(orgPolicies, policyId)) continue;
+    // ── 1. זיהוי Regex (run on all scan targets) ──
+    for (const scanText of scanTargets) {
+      for (const { id, regex, label, policyId } of ALL_PATTERNS) {
+        if (!isPolicyEnabled(orgPolicies, policyId)) continue;
 
-      // יצירת מופע regex חדש בכל פעם למניעת בעיות state עם lastIndex
-      const freshRegex = new RegExp(regex.source, regex.flags);
-      const matches = [...text.matchAll(freshRegex)];
+        // יצירת מופע regex חדש בכל פעם למניעת בעיות state עם lastIndex
+        const freshRegex = new RegExp(regex.source, regex.flags);
+        const matches = [...scanText.matchAll(freshRegex)];
 
-      for (const match of matches) {
-        const original = match[0];
-        // מניעת כפילויות
-        if (replacements.some((r) => r.original === original)) continue;
+        for (const match of matches) {
+          const original = match[0];
+          // מניעת כפילויות
+          if (replacements.some((r) => r.original === original)) continue;
 
-        const synthetic = generateSynthetic(id, original, consistencyCache);
-        replacements.push({ original, synthetic, label, category: id, policyId });
-        mappingEntries.push({ tag: synthetic, originalText: original, category: id, label, source });
+          const synthetic = generateSynthetic(id, original, consistencyCache);
+          replacements.push({ original, synthetic, label, category: id, policyId });
+          mappingEntries.push({ tag: synthetic, originalText: original, category: id, label, source });
+        }
       }
     }
 
     // ── 2. זיהוי קונטקסטואלי ──
-    for (const { triggers, category, label, policyId, capture } of CONTEXT_PATTERNS) {
-      if (!isPolicyEnabled(orgPolicies, policyId)) continue;
+    for (const scanText of scanTargets) {
+      for (const { triggers, category, label, policyId, capture } of CONTEXT_PATTERNS) {
+        if (!isPolicyEnabled(orgPolicies, policyId)) continue;
 
-      for (const trigger of triggers) {
-        const combined = new RegExp(trigger.source + capture.source, "gi");
-        let m;
-        while ((m = combined.exec(text)) !== null) {
-          const original = m[1]?.trim();
-          if (!original || original.length < 2) continue;
-          if (replacements.some((r) => r.original === original)) continue;
+        for (const trigger of triggers) {
+          const combined = new RegExp(trigger.source + capture.source, "gi");
+          let m;
+          while ((m = combined.exec(scanText)) !== null) {
+            const original = m[1]?.trim();
+            if (!original || original.length < 2) continue;
+            if (replacements.some((r) => r.original === original)) continue;
 
-          const synthetic = generateSynthetic(category, original, consistencyCache);
-          replacements.push({ original, synthetic, label, category, policyId });
-          mappingEntries.push({ tag: synthetic, originalText: original, category, label, source });
+            const synthetic = generateSynthetic(category, original, consistencyCache);
+            replacements.push({ original, synthetic, label, category, policyId });
+            mappingEntries.push({ tag: synthetic, originalText: original, category, label, source });
+          }
         }
       }
     }
 
     // ── 3. מילות מפתח ברירת מחדל ──
     if (isPolicyEnabled(orgPolicies, "keywords")) {
-      for (const { keyword, category, label, policyId } of DEFAULT_KEYWORDS) {
-        const kwRegex = new RegExp(keyword, "gi");
-        const matches = [...text.matchAll(kwRegex)];
-        for (const match of matches) {
-          const original = match[0];
-          if (replacements.some((r) => r.original === original)) continue;
-          const synthetic = generateSynthetic(category, original, consistencyCache);
-          replacements.push({ original, synthetic, label, category, policyId });
-          mappingEntries.push({ tag: synthetic, originalText: original, category, label, source });
+      for (const scanText of scanTargets) {
+        for (const { keyword, category, label, policyId } of DEFAULT_KEYWORDS) {
+          const kwRegex = new RegExp(keyword, "gi");
+          const matches = [...scanText.matchAll(kwRegex)];
+          for (const match of matches) {
+            const original = match[0];
+            if (replacements.some((r) => r.original === original)) continue;
+            const synthetic = generateSynthetic(category, original, consistencyCache);
+            replacements.push({ original, synthetic, label, category, policyId });
+            mappingEntries.push({ tag: synthetic, originalText: original, category, label, source });
+          }
         }
       }
     }
 
     // ── 4. מילות מפתח מותאמות לארגון ──
-    for (const kw of customKws) {
-      const kwRegex = new RegExp(kw.word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
-      const matches = [...text.matchAll(kwRegex)];
-      for (const match of matches) {
-        const original = match[0];
-        if (replacements.some((r) => r.original === original)) continue;
-        const synthetic = kw.replacement
-          ? kw.replacement
-          : generateSynthetic("CUSTOM", original, consistencyCache);
-        replacements.push({ original, synthetic, label: kw.category, category: kw.category, policyId: "keywords" });
-        mappingEntries.push({ tag: synthetic, originalText: original, category: kw.category, label: kw.category, source });
+    for (const scanText of scanTargets) {
+      for (const kw of customKws) {
+        const kwRegex = new RegExp(kw.word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+        const matches = [...scanText.matchAll(kwRegex)];
+        for (const match of matches) {
+          const original = match[0];
+          if (replacements.some((r) => r.original === original)) continue;
+          const synthetic = kw.replacement
+            ? kw.replacement
+            : generateSynthetic("CUSTOM", original, consistencyCache);
+          replacements.push({ original, synthetic, label: kw.category, category: kw.category, policyId: "keywords" });
+          mappingEntries.push({ tag: synthetic, originalText: original, category: kw.category, label: kw.category, source });
+        }
       }
     }
 
@@ -327,6 +367,7 @@ export async function POST(request) {
         detectionCount: replacements.length,
         triageLevel: triageResult.level,
         triageTiming: triageResult.timing,
+        evasionTechniques,
         timestamp: new Date().toISOString(),
         organizationId,
         userEmail,

@@ -78,6 +78,36 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
     return true; // async
   }
+  // ── Proxy image OCR check ──────────────────────────────────────────────────
+  if (message.type === "CHECK_IMAGE") {
+    const { imageData, userEmail, apiKey, agentUrl } = message;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000); // OCR may take up to 30s
+    fetch(`${agentUrl}/api/check-image`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(apiKey ? { "x-api-key": apiKey } : {}),
+      },
+      body: JSON.stringify({ imageData, userEmail }),
+      signal: controller.signal,
+    })
+      .then((res) => {
+        clearTimeout(timeout);
+        if (!res.ok) {
+          sendResponse({ error: true, message: `HTTP ${res.status}` });
+          return;
+        }
+        res.json().then(sendResponse).catch((err) => {
+          sendResponse({ error: true, message: err.message || "JSON parse failed" });
+        });
+      })
+      .catch((err) => {
+        clearTimeout(timeout);
+        sendResponse({ error: true, message: err.message || "image check failed" });
+      });
+    return true; // async
+  }
   // ── Proxy lookup for synthetic vault tokens ──
   if (message.type === "LOOKUP_SYNTHETIC") {
     const { syntheticValue, apiUrl } = message;

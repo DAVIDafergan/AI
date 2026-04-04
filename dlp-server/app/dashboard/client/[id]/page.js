@@ -363,6 +363,24 @@ export default function ClientDetailPage() {
   const blocksCount     = events.filter((e) => e.eventType === "block").length;
   const uniqueEmployees = new Set(events.map((e) => e.userEmail).filter((e) => e && e !== "unknown" && e !== "system")).size;
 
+  // ── Evasion metrics derived from event details ──────────────────────────────
+  const evasionEvents   = events.filter((e) => e.details?.evasionTechniques?.length > 0);
+  const evasionCount    = evasionEvents.length;
+  const fragmentEvents  = events.filter((e) => e.details?.detectionTier?.includes("fragment") ||
+    e.details?.anomalyFlags?.includes("FRAGMENTATION_PATTERN"));
+  const roleplayEvents  = events.filter((e) => e.details?.evasionTechniques?.includes("ROLEPLAY_INJECTION"));
+
+  // Aggregate evasion technique counts
+  const techniqueCounts = {};
+  for (const ev of evasionEvents) {
+    for (const tech of (ev.details?.evasionTechniques || [])) {
+      techniqueCounts[tech] = (techniqueCounts[tech] || 0) + 1;
+    }
+  }
+  const topTechniques = Object.entries(techniqueCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5);
+
   return (
     <div dir="rtl" className="min-h-screen bg-[#0a0a0f] text-white">
       {/* Connection Guide Modal */}
@@ -458,6 +476,52 @@ export default function ClientDetailPage() {
           />
         </div>
 
+        {/* ── Evasion Detection Panel ──────────────────────────────────────── */}
+        {(evasionCount > 0 || fragmentEvents.length > 0 || roleplayEvents.length > 0) && (
+          <div className="bg-[#0d0d14] border border-orange-700/30 rounded-xl overflow-hidden">
+            <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-800 bg-gradient-to-r from-orange-900/10 to-transparent">
+              <AlertTriangle size={14} className="text-orange-400" />
+              <h3 className="text-sm text-slate-200 font-semibold">ניסיונות הטעיה – Evasion Shield</h3>
+              <span className="relative flex h-2 w-2 ml-1">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-orange-500" />
+              </span>
+            </div>
+            <div className="p-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* Technique counter cards */}
+              <div className="bg-slate-900/40 border border-slate-700/40 rounded-lg p-3 space-y-1">
+                <p className="text-[10px] text-slate-500 uppercase tracking-wider">ניסיונות הטעיה</p>
+                <p className="text-2xl font-bold text-orange-400 tabular-nums">{evasionCount}</p>
+                <p className="text-[10px] text-slate-600">אירועים עם טכניקת עקיפה</p>
+              </div>
+              <div className="bg-slate-900/40 border border-slate-700/40 rounded-lg p-3 space-y-1">
+                <p className="text-[10px] text-slate-500 uppercase tracking-wider">התקפות פיצול</p>
+                <p className="text-2xl font-bold text-yellow-400 tabular-nums">{fragmentEvents.length}</p>
+                <p className="text-[10px] text-slate-600">זיהוי מידע מפוצל (Fragment Memory)</p>
+              </div>
+              <div className="bg-slate-900/40 border border-slate-700/40 rounded-lg p-3 space-y-1">
+                <p className="text-[10px] text-slate-500 uppercase tracking-wider">Roleplay / Jailbreak</p>
+                <p className="text-2xl font-bold text-red-400 tabular-nums">{roleplayEvents.length}</p>
+                <p className="text-[10px] text-slate-600">ניסיונות הנדסה חברתית</p>
+              </div>
+            </div>
+            {/* Top techniques breakdown */}
+            {topTechniques.length > 0 && (
+              <div className="px-4 pb-4">
+                <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">טכניקות נפוצות</p>
+                <div className="flex flex-wrap gap-2">
+                  {topTechniques.map(([tech, count]) => (
+                    <span key={tech} className="inline-flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full bg-orange-500/10 text-orange-300 border border-orange-700/30 font-mono">
+                      {tech}
+                      <span className="bg-orange-600/30 px-1 rounded text-[9px] tabular-nums">{count}</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Control Room: Live Threat Feed + Active Employees */}
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
 
@@ -482,6 +546,7 @@ export default function ClientDetailPage() {
                     <th className="px-4 py-2.5 text-right text-[10px] text-slate-500 uppercase tracking-wider">פעולה</th>
                     <th className="px-4 py-2.5 text-right text-[10px] text-slate-500 uppercase tracking-wider">עובד</th>
                     <th className="px-4 py-2.5 text-right text-[10px] text-slate-500 uppercase tracking-wider">ישויות שזוהו</th>
+                    <th className="px-4 py-2.5 text-right text-[10px] text-slate-500 uppercase tracking-wider">הטעיה</th>
                     <th className="px-4 py-2.5 text-right text-[10px] text-slate-500 uppercase tracking-wider">חומרה</th>
                     <th className="px-4 py-2.5 text-right text-[10px] text-slate-500 uppercase tracking-wider">זמן</th>
                   </tr>
@@ -489,7 +554,7 @@ export default function ClientDetailPage() {
                 <tbody className="divide-y divide-slate-800/60">
                   {events.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="px-4 py-10 text-center">
+                      <td colSpan={6} className="px-4 py-10 text-center">
                         <Shield size={28} className="text-slate-700 mx-auto mb-2" />
                         <p className="text-xs text-slate-600">אין אירועים עדיין</p>
                         <p className="text-[10px] text-slate-700 mt-1">יופיעו כאן בזמן אמת לאחר חיבור הסוכן</p>
@@ -499,8 +564,9 @@ export default function ClientDetailPage() {
                     events.map((ev) => {
                       const actionKey = ev.eventType || "default";
                       const matchedEntities = ev.details?.matchedEntities;
+                      const evTechniques = ev.details?.evasionTechniques || [];
                       return (
-                        <tr key={ev._id} className="hover:bg-slate-800/20 transition-colors">
+                        <tr key={ev._id} className={`hover:bg-slate-800/20 transition-colors ${evTechniques.length > 0 ? "bg-orange-900/5" : ""}`}>
                           <td className="px-4 py-3">
                             <span className={`inline-block text-[10px] font-bold px-2 py-1 rounded ${ACTION_BADGE[actionKey] || ACTION_BADGE.default}`}>
                               {ACTION_LABELS[actionKey] || actionKey.toUpperCase()}
@@ -523,6 +589,22 @@ export default function ClientDetailPage() {
                               </div>
                             ) : (
                               <span className="text-[10px] text-slate-600">—</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3">
+                            {evTechniques.length > 0 ? (
+                              <div className="flex flex-wrap gap-1">
+                                {evTechniques.slice(0, 2).map((tech) => (
+                                  <span key={tech} className="text-[9px] px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-300 border border-orange-700/40 font-mono">
+                                    {tech.replace(/_/g, " ")}
+                                  </span>
+                                ))}
+                                {evTechniques.length > 2 && (
+                                  <span className="text-[9px] text-orange-600">+{evTechniques.length - 2}</span>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-[10px] text-slate-700">—</span>
                             )}
                           </td>
                           <td className="px-4 py-3">

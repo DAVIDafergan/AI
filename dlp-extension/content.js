@@ -618,6 +618,14 @@ async function handlePaste(event) {
 }
 
 /* ─────────────────────────────────────────────
+   Build the typing-interception toast message
+   ───────────────────────────────────────────── */
+function typingInterceptedToast(count) {
+  const pl = count !== 1;
+  return `🛡️ ${count} פריט${pl ? "ים" : ""} רגיש${pl ? "ים" : ""} הוחלפ${pl ? "ו" : ""} בזמן הקלדה`;
+}
+
+/* ─────────────────────────────────────────────
    1A. Input Interception – process typed text
    ───────────────────────────────────────────── */
 async function interceptInput(element) {
@@ -640,6 +648,15 @@ async function interceptInput(element) {
   // update safe state and skip the API scan (deletion always makes content safer).
   const prevSafeState = safeStateMap.get(element) ?? "";
   if (text.length < prevSafeState.length) {
+    safeStateMap.set(element, text);
+    return;
+  }
+
+  // ── Fast pre-flight in the Web Worker (no network round-trip) ──────────────
+  // If no regex patterns match we skip the full API call entirely, keeping
+  // the UI responsive for the vast majority of "clean" typing events.
+  const preflight = await workerPreflight(text);
+  if (!preflight?.error && !preflight?.hasSensitive) {
     safeStateMap.set(element, text);
     return;
   }
@@ -709,40 +726,60 @@ async function interceptInput(element) {
         try { element.setSelectionRange(newPos, newPos); } catch { /* ignore */ }
       }
 
+      const maskCount = Object.keys(vault).length;
+      showFallbackToast(typingInterceptedToast(maskCount), "warning");
+
       // Notify background
       try {
         chrome.runtime.sendMessage({
           type: "INTERCEPTION_REPORT",
-          count: Object.keys(vault).length,
+          count: maskCount,
           userEmail: email,
         });
       } catch { /* ignore */ }
       return;
     }
 
-    // ── Soft redaction: replacements returned ──
+    // ── Soft redaction: replacements returned (cloud-server format) ──
     if (result.replacements && result.replacements.length > 0) {
-      console.log(`${DLP_PREFIX} יירוט הקלדה: ${result.replacements.length} פריטים הוחלפו`);
+      const repCount = result.replacements.length;
+      console.log(`${DLP_PREFIX} יירוט הקלדה: ${repCount} פריטים הוחלפו`);
+
+      // Update vault so AI responses can de-anonymise these tokens later
+      for (const r of result.replacements) {
+        const synthetic = r.synthetic || r.placeholder;
+        if (synthetic && r.original) _vault[synthetic] = r.original;
+      }
+      persistVault();
+
+      const redacted = result.redactedText || result.maskedText;
+      if (!redacted) {
+        // No replacement text available – treat as clean to avoid clearing the field
+        safeStateMap.set(element, text);
+        return;
+      }
 
       // Guard: prevent the programmatic field update from re-triggering the scanner.
       // setReactInputValue dispatches a synthetic "input" event; without this guard,
       // that event would restart debouncedInterceptInput and cause an endless loop.
       _inputMaskingActive = true;
       try {
-        setReactInputValue(element, result.redactedText);
+        setReactInputValue(element, redacted);
         flashGreen(element);
-        safeStateMap.set(element, result.redactedText);
+        safeStateMap.set(element, redacted);
         // Cancel any pending debounced scan that may have been queued before the API returned
         debouncedInterceptInput.cancel();
       } finally {
         _inputMaskingActive = false;
       }
 
+      showFallbackToast(typingInterceptedToast(repCount), "warning");
+
       // Notify background
       try {
         chrome.runtime.sendMessage({
           type: "INTERCEPTION_REPORT",
-          count: result.replacements.length,
+          count: repCount,
           userEmail: email,
         });
       } catch { /* ignore */ }

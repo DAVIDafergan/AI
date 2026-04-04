@@ -49,6 +49,11 @@ export async function POST(request) {
       action,
       sensitivityLevel,
       matchedEntities,
+      detectionTier,
+      evasionTechniques,
+      behaviorRiskScore,
+      anomalyFlags,
+      context: eventContext,
       // Super-admin / legacy fields
       tenantId: bodyTenantId,
       agentId,
@@ -75,9 +80,17 @@ export async function POST(request) {
       resolvedTenantId  = tenant._id;
 
       // Map agent action → TenantEvent schema
-      resolvedEventType = action === "BLOCKED" ? "block" : "scan";
+      resolvedEventType = action === "BLOCKED" || action === "BEHAVIOR_BLOCK" ? "block" : "scan";
       resolvedSeverity  = sensitivityLevel || "medium";
-      resolvedDetails   = { matchedEntities: matchedEntities || [], source: "local-agent" };
+      resolvedDetails   = {
+        matchedEntities:  matchedEntities  || [],
+        detectionTier:    detectionTier    || "unknown",
+        evasionTechniques: evasionTechniques || [],
+        behaviorRiskScore: behaviorRiskScore || 0,
+        anomalyFlags:     anomalyFlags      || [],
+        context:          eventContext      || {},
+        source:           "local-agent",
+      };
     } else {
       // ── Auth path: require super-admin ───────────────────────────────────
       await requireSuperAdmin(request);

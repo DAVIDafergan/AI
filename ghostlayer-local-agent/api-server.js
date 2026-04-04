@@ -1,25 +1,27 @@
 /**
  * api-server.js – Local Express API for GhostLayer Browser Extensions
  *
- * Exposes a single endpoint used by employee browser extensions to check
- * whether a text snippet matches sensitive company data in the local vector
- * index.  All processing is local – nothing is forwarded to the cloud.
+ * Exposes endpoints used by employee browser extensions to check whether a
+ * text snippet or image contains sensitive company data.
+ * All processing is local – nothing is forwarded to the cloud.
  *
- * Detection runs in three ordered tiers:
- *   Tier 1 – Regex Layer      : fast pattern matching (credit cards, IDs, emails…)
- *   Tier 2 – Custom Deny-List : admin-defined keywords fetched from the SaaS server
- *   Tier 3 – Vector Semantic  : embedding-based similarity against the local brain
- *
- * Context Awareness: detects sensitive data hidden inside tables (CSV/TSV rows)
- *   or code snippets (indented blocks, code-fence markers).
+ * Detection runs in four ordered tiers:
+ *   Tier 0 – Evasion Normalisation : strip obfuscation before any check
+ *   Tier 1 – Regex Layer           : fast pattern matching
+ *   Tier 2 – Custom Deny-List      : admin-defined keywords
+ *   Tier 3 – Vector Semantic       : embedding-based similarity
+ *   Tier 4 – Fragment Memory       : detect split-data attacks across pastes
+ *   Tier 5 – Behavior Analytics    : anomaly / user-risk scoring
  *
  * POST /api/check
- *   Body:  { "text": "<snippet from browser>", "userEmail": "<employee email>" }
- *   Reply (clean):     { "action": "allow",  "blocked": false, "reason": string }
- *   Reply (sensitive): { "action": "mask",   "blocked": true,
- *                        "maskedText": string, "vault": Record<string,string>,
- *                        "detectionTier": "regex"|"keyword"|"vector" }
- *   Reply (error):     { "action": "block",  "blocked": true,  "reason": string }
+ *   Body:  { "text": string, "userEmail": string }
+ *
+ * POST /api/check-image
+ *   Body:  { "imageData": "<base64 data-URI>", "userEmail": string }
+ *   Extracts text with Tesseract OCR and runs the normal detection pipeline.
+ *
+ * GET /api/behavior-profiles
+ *   Returns all user behavioral profiles (admin endpoint, requires x-api-key).
  */
 
 import express from "express";
@@ -27,10 +29,19 @@ import cors    from "cors";
 import { querySimilarity, loadIndex } from "./vector-store.js";
 import { initNLP } from "./nlp-engine.js";
 import { sendTenantEvent } from "./cloud-sync.js";
+import { normalizeForDetection, hasEvasionSignals } from "./evasion-detector.js";
+import {
+  recordFragment,
+  peekFragmentWindow,
+  getFragmentCount,
+  clearFragments,
+  updateUserProfile,
+  getAllProfiles,
+} from "./fragment-cache.js";
 
 // ── Thresholds ────────────────────────────────────────────────────────────────
 const BLOCK_THRESHOLD = 0.82;
-const AGENT_VERSION   = "3.1.0";
+const AGENT_VERSION   = "3.2.0";
 
 // Pre-loaded index shared across all requests (refreshed on startup)
 let _cachedIndex = null;
@@ -352,6 +363,206 @@ export async function warmCache() {
   _cachedIndex = await loadIndex();
 }
 
+// ── Shared detection pipeline ─────────────────────────────────────────────────
+// Extracted so it can be called from both POST /api/check and POST /api/check-image.
+
+/**
+ * Run all detection tiers on `text` for `userEmail`.
+ *
+ * @param {{
+ *   text: string,
+ *   userEmail: string,
+ *   source?: string,
+ *   verbose?: boolean,
+ *   failClosed?: boolean,
+ *   skipFragment?: boolean,
+ * }} opts
+ * @returns {Promise<object>}  The JSON response object.
+ */
+async function runDetectionPipeline({ text, userEmail, source = "paste", verbose = false, failClosed = true, skipFragment = false }) {
+  // Refresh the custom deny-list in the background (non-blocking)
+  refreshCustomKeywords().catch(() => {});
+
+  // ── Tier 0: Evasion Normalisation ────────────────────────────────────────
+  // Normalise obfuscated text (homoglyphs, zero-width chars, base64, etc.)
+  // before running any detection so evasion attempts are caught.
+  const {
+    normalized,
+    evasionTechniques,
+    hasRoleplayInjection,
+    extractedFragments,
+  } = normalizeForDetection(text);
+
+  // Build a list of texts to scan: normalised original + any extracted fragments
+  const scanTargets = [normalized, ...extractedFragments];
+
+  // ── Behavior Analytics (Tier 5 – early, non-blocking) ────────────────────
+  const behaviorResult = updateUserProfile(userEmail, text, evasionTechniques);
+
+  // ── Tier 4: Fragment Memory ───────────────────────────────────────────────
+  // Record this paste in the user's 5-minute window and get the combined text.
+  let fragmentWindowText = "";
+  let fragmentCount = 0;
+  if (!skipFragment) {
+    fragmentWindowText = recordFragment(userEmail, normalized, source);
+    fragmentCount      = getFragmentCount(userEmail);
+    // Also add the combined window to scan targets (for split-data detection)
+    if (fragmentCount > 1) {
+      scanTargets.push(fragmentWindowText);
+    }
+  }
+
+  // ── Context detection (table / code) ──────────────────────────────────────
+  const { isTable, isCode } = detectContext(normalized);
+
+  // ── Run pattern matching across all scan targets ──────────────────────────
+  let tier1Match = false;
+  let tier2Match = false;
+  let matchedKeyword = null;
+  let vectorMatches  = [];
+  let detectedFromFragment = false;
+
+  for (const scanText of scanTargets) {
+    // Tier 1: Regex
+    if (!tier1Match) {
+      for (const { re } of TIER1_PATTERNS) {
+        if (new RegExp(re.source, "i").test(scanText)) {
+          tier1Match = true;
+          if (scanText === fragmentWindowText && fragmentCount > 1) detectedFromFragment = true;
+          break;
+        }
+      }
+    }
+
+    // Tier 2: Custom deny-list
+    if (!tier2Match) {
+      for (const kw of _customKeywords) {
+        if (!kw.word) continue;
+        if (new RegExp(escapeRegex(kw.word.trim()), "i").test(scanText)) {
+          tier2Match = true;
+          matchedKeyword = kw;
+          if (scanText === fragmentWindowText && fragmentCount > 1) detectedFromFragment = true;
+          break;
+        }
+      }
+    }
+  }
+
+  // Tier 3: Vector Semantic Layer (only on normalised original – vectors are expensive)
+  if (!tier1Match && !tier2Match) {
+    vectorMatches = await querySimilarity(normalized, {
+      topK:      3,
+      threshold: BLOCK_THRESHOLD,
+      index:     _cachedIndex,
+    });
+  }
+
+  // Roleplay injection always triggers a block
+  const isSensitive = tier1Match || tier2Match || vectorMatches.length > 0 || hasRoleplayInjection;
+
+  // Behavioral anomaly blocks (high-risk users need MFA before continuing)
+  const behaviorBlock = behaviorResult.requiresMFA && !isSensitive;
+
+  if (isSensitive || behaviorBlock) {
+    const detectionTier = hasRoleplayInjection  ? "roleplay"
+      : evasionTechniques.length > 0            ? `evasion+${tier1Match ? "regex" : tier2Match ? "keyword" : "vector"}`
+      : tier1Match                              ? "regex"
+      : tier2Match                              ? "keyword"
+      : behaviorBlock                           ? "behavior"
+      : "vector";
+
+    // NER masking (lazy init)
+    if (!_nerPipelinePromise) {
+      _nerPipelinePromise = initNLP().catch(() => null);
+    }
+    const ner = await _nerPipelinePromise;
+
+    let nerEntities = [];
+    if (ner && !behaviorBlock) {
+      try {
+        nerEntities = await ner(normalized, { aggregation_strategy: "simple" });
+      } catch {
+        // NER failure is non-fatal
+      }
+    }
+
+    const { maskedText, vault } = maskEntities(normalized, nerEntities, _customKeywords);
+
+    let reason = "Sensitive content detected";
+    if (hasRoleplayInjection)        reason = "Prompt injection / roleplay evasion attempt detected.";
+    else if (evasionTechniques.length > 0) {
+      reason = `Evasion technique(s) detected: ${evasionTechniques.join(", ")}. `;
+      if (tier1Match)       reason += "Sensitive pattern found in normalised text.";
+      else if (tier2Match)  reason += `Custom deny-list match: "${matchedKeyword?.word}".`;
+      else if (vectorMatches.length > 0) {
+        const topScore = (vectorMatches[0].similarity * 100).toFixed(1);
+        reason += `Semantic match (${topScore}%).`;
+      }
+    } else if (detectedFromFragment) {
+      reason = `Fragmentation attack detected: combined data triggered a match across ${fragmentCount} paste(s).`;
+    } else if (tier1Match)      reason = "Hard-pattern match (Regex Layer).";
+    else if (tier2Match)        reason = `Custom deny-list match: "${matchedKeyword?.word}".`;
+    else if (behaviorBlock)     reason = `Behavioral anomaly: ${behaviorResult.anomalyFlags.join(", ")}. Additional verification required.`;
+    else if (vectorMatches.length > 0) {
+      const topScore  = (vectorMatches[0].similarity * 100).toFixed(1);
+      const topSource = vectorMatches[0].path.split(/[\\/]/).pop();
+      reason = `Sensitive company data detected (${topScore}% similarity to "${topSource}").`;
+    }
+
+    if (isTable) reason += " [Data detected in table context]";
+    if (isCode)  reason += " [Data detected inside code block]";
+
+    if (verbose) {
+      console.log(`[api-server] [${detectionTier}] Masking ${Object.keys(vault).length} entity(ies): ${reason}`);
+      if (evasionTechniques.length > 0) {
+        console.log(`[api-server] Evasion techniques: ${evasionTechniques.join(", ")}`);
+      }
+    }
+
+    // Clear fragment cache after a block to prevent re-assembly
+    if (detectedFromFragment) clearFragments(userEmail);
+
+    // Fire-and-forget cloud event (metadata only, no sensitive text)
+    if (_tenantApiKey) {
+      const topSim = vectorMatches[0]?.similarity ?? (tier1Match ? 1 : 0.9);
+      sendTenantEvent({
+        tenantApiKey:      _tenantApiKey,
+        serverUrl:         _serverUrl,
+        userEmail,
+        action:            behaviorBlock ? "BEHAVIOR_BLOCK" : "MASKED",
+        sensitivityLevel:  scoreToLevel(topSim),
+        matchedEntities:   detectEntityTypes(normalized),
+        detectionTier,
+        evasionTechniques,
+        behaviorRiskScore: behaviorResult.riskScore,
+        anomalyFlags:      behaviorResult.anomalyFlags,
+        context:           { isTable, isCode, source },
+      }).catch(() => {});
+    }
+
+    return {
+      action:            behaviorBlock ? "block" : "mask",
+      blocked:           true,
+      reason,
+      maskedText:        behaviorBlock ? undefined : maskedText,
+      vault:             behaviorBlock ? undefined : vault,
+      detectionTier,
+      evasionTechniques,
+      behaviorRisk:      behaviorResult,
+      requiresMFA:       behaviorResult.requiresMFA,
+      context:           { isTable, isCode, source },
+    };
+  }
+
+  return {
+    action:            "allow",
+    blocked:           false,
+    reason:            "No sensitive content detected.",
+    evasionTechniques,
+    behaviorRisk:      behaviorResult,
+  };
+}
+
 /**
  * Start the local HTTP server that browser extensions call.
  *
@@ -389,131 +600,109 @@ export async function startApiServer(options = {}) {
   // ── Health check ─────────────────────────────────────────────────────────
   app.get("/api/health", (_req, res) => {
     res.json({
-      status:        "ok",
-      indexedDocs:   _cachedIndex.length,
+      status:         "ok",
+      indexedDocs:    _cachedIndex.length,
       customKeywords: _customKeywords.length,
-      agentVersion:  AGENT_VERSION,
+      agentVersion:   AGENT_VERSION,
     });
   });
 
-  // ── Sensitivity check endpoint (3-tier) ──────────────────────────────────
+  // ── Admin: behavioral profiles ────────────────────────────────────────────
+  app.get("/api/behavior-profiles", (req, res) => {
+    // Require the tenant API key so only the local admin can access this
+    const key = req.headers["x-api-key"] || "";
+    if (_tenantApiKey && key !== _tenantApiKey) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    return res.json({ profiles: getAllProfiles() });
+  });
+
+  // ── Image OCR check endpoint ──────────────────────────────────────────────
+  // Accepts a base64 data-URI image, runs OCR, and checks the extracted text.
+  app.post("/api/check-image", async (req, res) => {
+    const imageData = (req.body?.imageData ?? "").trim();
+    const userEmail = (req.body?.userEmail ?? "").trim() || "unknown";
+
+    if (!imageData) {
+      return res.status(400).json({ action: "allow", blocked: false, reason: "No image data provided." });
+    }
+
+    try {
+      // Lazy-load Tesseract.js only when needed to keep startup fast
+      let tesseract;
+      try {
+        tesseract = await import("tesseract.js");
+      } catch {
+        return res.status(503).json({
+          action: "allow",
+          blocked: false,
+          reason: "OCR engine not available. Install tesseract.js to enable image scanning.",
+        });
+      }
+
+      // Strip data-URI prefix: "data:image/png;base64,<data>"
+      const base64 = imageData.replace(/^data:image\/[a-z]+;base64,/i, "");
+      const buffer = Buffer.from(base64, "base64");
+
+      let ocrText = "";
+      try {
+        const { data } = await tesseract.recognize(buffer, "eng+heb", {
+          logger: () => {},  // suppress verbose progress logs
+        });
+        ocrText = data?.text ?? "";
+      } catch (ocrErr) {
+        if (verbose) console.warn(`[api-server] OCR failed: ${ocrErr.message}`);
+        return res.json({ action: "allow", blocked: false, reason: "OCR extraction failed – image allowed." });
+      }
+
+      if (!ocrText.trim()) {
+        return res.json({ action: "allow", blocked: false, reason: "No text found in image." });
+      }
+
+      if (verbose) {
+        console.log(`[api-server] OCR extracted ${ocrText.length} chars from image for ${userEmail}`);
+      }
+
+      // Re-use the same check logic by forwarding internally
+      req.body = { text: ocrText, userEmail, source: "image" };
+      // Fall through to the same detection pipeline by calling a shared helper
+      const checkResult = await runDetectionPipeline({
+        text: ocrText, userEmail, verbose, failClosed,
+        skipFragment: true,  // images don't contribute to fragment cache
+      });
+
+      if (checkResult.blocked) {
+        checkResult.reason = `[OCR] ${checkResult.reason}`;
+        checkResult.detectionTier = `ocr+${checkResult.detectionTier}`;
+      }
+
+      onCheck?.(checkResult);
+      return res.json(checkResult);
+
+    } catch (err) {
+      console.error(`[api-server] /api/check-image error: ${err.message}`);
+      return res.status(500).json({
+        action:  "block",
+        blocked: failClosed,
+        reason:  "Image check engine error – blocked for safety.",
+      });
+    }
+  });
+
+  // ── Sensitivity check endpoint (multi-tier with evasion detection) ─────────
   app.post(["/api/check", "/api/check-text"], async (req, res) => {
     const text      = (req.body?.text      ?? "").trim();
     const userEmail = (req.body?.userEmail ?? "").trim() || "unknown";
+    const source    = (req.body?.source    ?? "paste");
 
     if (!text) {
       return res.status(400).json({ action: "allow", blocked: false, reason: "No text provided." });
     }
 
     try {
-      // Refresh the custom deny-list in the background (non-blocking)
-      refreshCustomKeywords().catch(() => {});
-
-      // ── Context detection (table / code) ─────────────────────────────
-      const { isTable, isCode } = detectContext(text);
-
-      // ── Tier 1: Regex Layer ──────────────────────────────────────────
-      // Fast synchronous check – if any hard pattern matches, block immediately.
-      let tier1Match = false;
-      for (const { re } of TIER1_PATTERNS) {
-        if (new RegExp(re.source, "i").test(text)) { tier1Match = true; break; }
-      }
-
-      // ── Tier 2: Custom Deny-List ─────────────────────────────────────
-      let tier2Match = false;
-      let matchedKeyword = null;
-      for (const kw of _customKeywords) {
-        if (!kw.word) continue;
-        if (new RegExp(escapeRegex(kw.word.trim()), "i").test(text)) {
-          tier2Match = true;
-          matchedKeyword = kw;
-          break;
-        }
-      }
-
-      // ── Tier 3: Vector Semantic Layer ────────────────────────────────
-      let vectorMatches = [];
-      if (!tier1Match && !tier2Match) {
-        vectorMatches = await querySimilarity(text, {
-          topK:      3,
-          threshold: BLOCK_THRESHOLD,
-          index:     _cachedIndex,
-        });
-      }
-
-      const isSensitive = tier1Match || tier2Match || vectorMatches.length > 0;
-
-      if (isSensitive) {
-        // Determine detection tier for telemetry / logging
-        const detectionTier = tier1Match ? "regex"
-          : tier2Match ? "keyword"
-          : "vector";
-
-        // NER masking (lazy init)
-        if (!_nerPipelinePromise) {
-          _nerPipelinePromise = initNLP().catch(() => null);
-        }
-        const ner = await _nerPipelinePromise;
-
-        let nerEntities = [];
-        if (ner) {
-          try {
-            nerEntities = await ner(text, { aggregation_strategy: "simple" });
-          } catch {
-            // NER failure is non-fatal – fall back to regex-only masking
-          }
-        }
-
-        const { maskedText, vault } = maskEntities(text, nerEntities, _customKeywords);
-
-        let reason = "Sensitive content detected";
-        if (tier1Match)             reason = "Hard-pattern match (Regex Layer).";
-        else if (tier2Match)        reason = `Custom deny-list match: "${matchedKeyword?.word}".`;
-        else if (vectorMatches.length > 0) {
-          const topScore  = (vectorMatches[0].similarity * 100).toFixed(1);
-          const topSource = vectorMatches[0].path.split(/[\\/]/).pop();
-          reason = `Sensitive company data detected (${topScore}% similarity to "${topSource}").`;
-        }
-
-        if (isTable) reason += " [Data detected in table context]";
-        if (isCode)  reason += " [Data detected inside code block]";
-
-        if (verbose) {
-          console.log(`[api-server] [${detectionTier}] Masking ${Object.keys(vault).length} entity(ies): ${reason}`);
-        }
-
-        // Fire-and-forget cloud event (metadata only, no sensitive text)
-        if (_tenantApiKey) {
-          const topSim = vectorMatches[0]?.similarity ?? (tier1Match ? 1 : 0.9);
-          sendTenantEvent({
-            tenantApiKey:     _tenantApiKey,
-            serverUrl:        _serverUrl,
-            userEmail,
-            action:           "MASKED",
-            sensitivityLevel: scoreToLevel(topSim),
-            matchedEntities:  detectEntityTypes(text),
-            detectionTier,
-            context:          { isTable, isCode },
-          }).catch(() => {});
-        }
-
-        const result = {
-          action: "mask",
-          blocked: true,
-          reason,
-          maskedText,
-          vault,
-          detectionTier,
-          context: { isTable, isCode },
-        };
-        onCheck?.(result);
-        return res.json(result);
-      }
-
-      const clean = { action: "allow", blocked: false, reason: "No sensitive content detected." };
-      onCheck?.(clean);
-      return res.json(clean);
-
+      const result = await runDetectionPipeline({ text, userEmail, source, verbose, failClosed });
+      onCheck?.(result);
+      return res.json(result);
     } catch (err) {
       console.error(`[api-server] /api/check error: ${err.message}`);
       return res.status(500).json({

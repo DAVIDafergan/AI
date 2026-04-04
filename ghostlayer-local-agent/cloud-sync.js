@@ -73,26 +73,33 @@ export async function sendHeartbeat({
  * Send a single DLP action event to the cloud `/api/tenant-events` endpoint.
  * Only metadata is transmitted – no raw sensitive text is ever included.
  *
- * This function is fire-and-forget: it silently absorbs network errors so that
- * a cloud connectivity issue never interrupts the local DLP operation.
- *
  * @param {{
  *   tenantApiKey: string,
  *   serverUrl?: string,
  *   userEmail?: string,
- *   action: "BLOCKED" | "MASKED",
+ *   action: "BLOCKED" | "MASKED" | "BEHAVIOR_BLOCK",
  *   sensitivityLevel?: string,
  *   matchedEntities?: string[],
+ *   detectionTier?: string,
+ *   evasionTechniques?: string[],
+ *   behaviorRiskScore?: number,
+ *   anomalyFlags?: string[],
+ *   context?: object,
  * }} options
  * @returns {Promise<void>}
  */
 export async function sendTenantEvent({
   tenantApiKey,
   serverUrl,
-  userEmail       = "unknown",
+  userEmail         = "unknown",
   action,
-  sensitivityLevel = "medium",
-  matchedEntities  = [],
+  sensitivityLevel  = "medium",
+  matchedEntities   = [],
+  detectionTier     = "unknown",
+  evasionTechniques = [],
+  behaviorRiskScore = 0,
+  anomalyFlags      = [],
+  context           = {},
 }) {
   const baseUrl = (serverUrl || DEFAULT_SERVER_URL).replace(/\/$/, "");
   const url = `${baseUrl}/api/tenant-events`;
@@ -103,6 +110,11 @@ export async function sendTenantEvent({
     action,
     sensitivityLevel,
     matchedEntities,
+    detectionTier,
+    evasionTechniques,
+    behaviorRiskScore,
+    anomalyFlags,
+    context,
     timestamp: new Date().toISOString(),
   };
 

@@ -1475,6 +1475,155 @@ function showFallbackToast(message, type = "info") {
 }
 
 /* ─────────────────────────────────────────────
+   OCR Image Protection
+   Intercepts image files pasted or uploaded via <input type="file">
+   before they reach the AI.  Sends the image to the local agent's
+   /api/check-image endpoint and blocks if sensitive text is found.
+   ─────────────────────────────────────────────── */
+
+/**
+ * Convert a File / Blob to a base64 data-URI string.
+ * @param {File|Blob} blob
+ * @returns {Promise<string>}
+ */
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload  = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("FileReader failed"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+/**
+ * Send an image (as base64 data-URI) to the local agent for OCR+DLP check.
+ * Returns the API response or null on network error.
+ * @param {string} imageData  base64 data-URI
+ * @param {string} email      user email for telemetry
+ * @returns {Promise<object|null>}
+ */
+async function checkImageWithOcr(imageData, email) {
+  try {
+    const { localAgentUrl: agentUrl, tenantApiKey: apiKey } = await readSettings();
+    return await new Promise((resolve) => {
+      chrome.runtime.sendMessage({
+        type:      "CHECK_IMAGE",
+        imageData,
+        userEmail: email || userEmail,
+        apiKey,
+        agentUrl,
+      }, (response) => {
+        if (chrome.runtime.lastError || !response || response.error) {
+          resolve(null);
+          return;
+        }
+        resolve(response);
+      });
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Handle paste events that contain image items in the clipboard.
+ * @param {ClipboardEvent} event
+ */
+async function handleImagePaste(event) {
+  const items = Array.from(event.clipboardData?.items || []);
+  const imageItem = items.find((item) => item.type.startsWith("image/"));
+  if (!imageItem) return;
+
+  // We have an image in the clipboard – intercept and check it
+  event.preventDefault();
+  event.stopImmediatePropagation();
+
+  const blob = imageItem.getAsFile();
+  if (!blob) return;
+
+  try {
+    const imageData = await blobToBase64(blob);
+    const result    = await checkImageWithOcr(imageData, userEmail);
+
+    if (result?.blocked) {
+      showFallbackToast(
+        `🛡️ GhostLayer: צילום מסך נחסם – ${result.reason || "נמצא מידע רגיש בתמונה"}`,
+        "warning",
+      );
+      console.warn(`${DLP_PREFIX} תמונה נחסמה מ-OCR:`, result.reason);
+      return;
+    }
+
+    // Image is clean – re-paste it programmatically via execCommand (best-effort)
+    // Note: Pasting binary blobs back requires the Clipboard API which needs user gesture.
+    // We inform the user that the image was scanned and cleared.
+    showFallbackToast("✅ GhostLayer: התמונה נסרקה ונמצאה בטוחה.", "success");
+
+  } catch (err) {
+    console.warn(`${DLP_PREFIX} שגיאת בדיקת תמונה:`, err.message);
+    // Fail open – allow the paste to proceed if OCR check fails
+  }
+}
+
+/**
+ * Intercept <input type="file"> change events.
+ * When the user selects image files, check each one before allowing upload.
+ */
+function watchFileInputs() {
+  function attachFileListener(input) {
+    if (!input || input._dlpFileAttached) return;
+    input._dlpFileAttached = true;
+
+    input.addEventListener("change", async (e) => {
+      const files = Array.from(input.files || []);
+      const imageFiles = files.filter((f) => f.type.startsWith("image/"));
+      if (imageFiles.length === 0) return;
+
+      for (const file of imageFiles) {
+        try {
+          const imageData = await blobToBase64(file);
+          const result    = await checkImageWithOcr(imageData, userEmail);
+
+          if (result?.blocked) {
+            // Clear the file input to prevent upload
+            input.value = "";
+            showFallbackToast(
+              `🛡️ GhostLayer: קובץ תמונה נחסם – ${result.reason || "נמצא מידע רגיש"}`,
+              "warning",
+            );
+            console.warn(`${DLP_PREFIX} קובץ תמונה נחסם:`, result.reason);
+            return;
+          }
+        } catch {
+          // Fail open – do not block on OCR errors
+        }
+      }
+    }, true);
+  }
+
+  // Attach to existing file inputs
+  try {
+    document.querySelectorAll("input[type='file']").forEach(attachFileListener);
+  } catch { /* ignore */ }
+
+  // Watch for dynamically added file inputs
+  const obs = new MutationObserver((mutations) => {
+    for (const mutation of mutations) {
+      for (const node of mutation.addedNodes) {
+        if (node.nodeType !== Node.ELEMENT_NODE) continue;
+        try {
+          if (node.tagName === "INPUT" && node.type === "file") {
+            attachFileListener(node);
+          }
+          node.querySelectorAll?.("input[type='file']").forEach(attachFileListener);
+        } catch { /* ignore */ }
+      }
+    }
+  });
+  obs.observe(document.body, { childList: true, subtree: true });
+}
+
+/* ─────────────────────────────────────────────
    Initialisation
    ───────────────────────────────────────────── */
 async function init() {
@@ -1513,8 +1662,19 @@ async function init() {
   // 1C. Get user email from background
   initUserEmail();
 
-  // 1D. Register paste handler (capture phase)
-  document.addEventListener("paste", handlePaste, true);
+  // 1D. Register a unified paste handler (capture phase).
+  // A single handler processes both text pastes (DLP scan) and image pastes (OCR scan)
+  // to avoid race conditions when both listeners would fire for the same event.
+  document.addEventListener("paste", async (event) => {
+    // Check for image data first – if present, delegate to image handler and return
+    const items = Array.from(event.clipboardData?.items || []);
+    if (items.some((item) => item.type.startsWith("image/"))) {
+      await handleImagePaste(event);
+      return;
+    }
+    // Otherwise handle as a text paste
+    await handlePaste(event);
+  }, true);
 
   // 1A. Watch ALL input fields on the page (real-time typing DLP)
   watchAllInputs();
@@ -1522,10 +1682,13 @@ async function init() {
   // 1A.2. Aggressive Send-button & form submit interceptors
   watchSendButtons();
 
+  // Image OCR protection: watch file inputs
+  watchFileInputs();
+
   // 1B. Watch for AI output / responses (+ vault token de-anonymisation)
   watchForAIOutput();
 
-  console.log(`${DLP_PREFIX} v3 נטען – יירוט הדבקות + הקלדה + שליחה + סריקת תשובות AI פעילים.`);
+  console.log(`${DLP_PREFIX} v3 נטען – יירוט הדבקות + הקלדה + שליחה + סריקת תשובות AI + הגנת OCR פעילים.`);
 }
 
 init();

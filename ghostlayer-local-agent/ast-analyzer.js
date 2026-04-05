@@ -220,12 +220,9 @@ export function analyzeCodeAst(text) {
     // ── Business-logic: function / method declarations ────────────────────
     if (
       node.type === "FunctionDeclaration" ||
-      node.type === "FunctionExpression"  ||
-      node.type === "ArrowFunctionExpression"
+      node.type === "FunctionExpression"
     ) {
-      const name =
-        node.id?.name ||
-        (node.type !== "ArrowFunctionExpression" ? undefined : undefined);
+      const name = node.id?.name;
       if (name && BUSINESS_LOGIC_PATTERNS.some((p) => p.test(name))) {
         businessLogicFunctions.add(name);
       }
@@ -252,21 +249,11 @@ export function analyzeCodeAst(text) {
       }
     }
 
-    // ── Credential access ─────────────────────────────────────────────────
+    // ── Credential access (MemberExpression chains, e.g. process.env.SECRET) ─
     if (node.type === "MemberExpression") {
       const expr = memberExprToString(node);
       if (expr && CREDENTIAL_PATTERNS.some((p) => p.test(expr))) {
         credentialAccess.add(expr);
-      }
-    }
-
-    // Also catch template literals that look like env var access
-    if (node.type === "Identifier" || node.type === "MemberExpression") {
-      const raw = node.type === "Identifier"
-        ? node.name || ""
-        : memberExprToString(node);
-      if (raw && CREDENTIAL_PATTERNS.some((p) => p.test(raw))) {
-        credentialAccess.add(raw);
       }
     }
   });

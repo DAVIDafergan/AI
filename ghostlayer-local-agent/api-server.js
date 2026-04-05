@@ -5,13 +5,15 @@
  * text snippet or image contains sensitive company data.
  * All processing is local – nothing is forwarded to the cloud.
  *
- * Detection runs in four ordered tiers:
+ * Detection runs in six ordered tiers:
  *   Tier 0 – Evasion Normalisation : strip obfuscation before any check
  *   Tier 1 – Regex Layer           : fast pattern matching
+ *   Tier 1.5 – AST Code Analysis   : detect business logic in pasted code (Acorn)
+ *   Tier 1.6 – Intent Classification: zero-shot NLI model detects leakage intent
  *   Tier 2 – Custom Deny-List      : admin-defined keywords
  *   Tier 3 – Vector Semantic       : embedding-based similarity
  *   Tier 4 – Fragment Memory       : detect split-data attacks across pastes
- *   Tier 5 – Behavior Analytics    : anomaly / user-risk scoring
+ *   Tier 5 – Behavior Analytics    : anomaly / user-risk scoring (dynamic threshold)
  *
  * POST /api/check
  *   Body:  { "text": string, "userEmail": string }
@@ -38,6 +40,8 @@ import {
   updateUserProfile,
   getAllProfiles,
 } from "./fragment-cache.js";
+import { classifyIntent, HIGH_RISK_INTENTS, initIntentClassifier } from "./intent-classifier.js";
+import { analyzeCodeAst, summarizeAstFindings } from "./ast-analyzer.js";
 
 // ── Thresholds ────────────────────────────────────────────────────────────────
 const BLOCK_THRESHOLD = 0.82;
@@ -356,11 +360,14 @@ function maskEntities(text, nerEntities = [], customKws = []) {
 
 /**
  * Warm the in-memory index cache so the first request is not slow.
+ * Also pre-loads the intent classifier model in the background.
  *
  * @returns {Promise<void>}
  */
 export async function warmCache() {
   _cachedIndex = await loadIndex();
+  // Pre-warm the intent classifier in the background (non-blocking)
+  initIntentClassifier().catch(() => {});
 }
 
 // ── Shared detection pipeline ─────────────────────────────────────────────────
@@ -399,6 +406,14 @@ async function runDetectionPipeline({ text, userEmail, source = "paste", verbose
   // ── Behavior Analytics (Tier 5 – early, non-blocking) ────────────────────
   const behaviorResult = updateUserProfile(userEmail, text, evasionTechniques);
 
+  // ── Dynamic threshold: lower block threshold for high-risk users ──────────
+  // When the UEBA engine has flagged this user with anomalous behaviour,
+  // we tighten the semantic-similarity threshold so even borderline content
+  // is blocked (raises effective sensitivity to near 99%).
+  const effectiveThreshold = behaviorResult.requiresMFA
+    ? Math.min(BLOCK_THRESHOLD, 0.60)
+    : BLOCK_THRESHOLD;
+
   // ── Tier 4: Fragment Memory ───────────────────────────────────────────────
   // Record this paste in the user's 5-minute window and get the combined text.
   let fragmentWindowText = "";
@@ -414,6 +429,18 @@ async function runDetectionPipeline({ text, userEmail, source = "paste", verbose
 
   // ── Context detection (table / code) ──────────────────────────────────────
   const { isTable, isCode } = detectContext(normalized);
+
+  // ── Tier 1.5: AST Code Analysis ─────────────────────────────────────────
+  // Parse pasted code to detect business logic / DB calls even when no explicit
+  // sensitive keyword is present.  Runs synchronously (Acorn is pure CPU).
+  const astResult  = analyzeCodeAst(normalized);
+  const astBlocked = !astResult.parseError &&
+    (astResult.hasBusinessLogic || astResult.hasDbCalls || astResult.hasCredentialAccess);
+
+  // ── Tier 1.6: Intent Classification ──────────────────────────────────────
+  // Run zero-shot classification in parallel with other tiers; block if the
+  // model detects a high-risk leakage intent with sufficient confidence.
+  const intentResultPromise = classifyIntent(normalized);
 
   // ── Run pattern matching across all scan targets ──────────────────────────
   let tier1Match = false;
@@ -452,23 +479,29 @@ async function runDetectionPipeline({ text, userEmail, source = "paste", verbose
   if (!tier1Match && !tier2Match) {
     vectorMatches = await querySimilarity(normalized, {
       topK:      3,
-      threshold: BLOCK_THRESHOLD,
+      threshold: effectiveThreshold,
       index:     _cachedIndex,
     });
   }
 
+  // Await intent classification result (started above in parallel)
+  const intentResult = await intentResultPromise;
+
   // Roleplay injection always triggers a block
-  const isSensitive = tier1Match || tier2Match || vectorMatches.length > 0 || hasRoleplayInjection;
+  const isSensitive = tier1Match || tier2Match || vectorMatches.length > 0 ||
+    hasRoleplayInjection || astBlocked || intentResult.isHighRisk;
 
   // Behavioral anomaly blocks (high-risk users need MFA before continuing)
   const behaviorBlock = behaviorResult.requiresMFA && !isSensitive;
 
   if (isSensitive || behaviorBlock) {
-    const detectionTier = hasRoleplayInjection  ? "roleplay"
-      : evasionTechniques.length > 0            ? `evasion+${tier1Match ? "regex" : tier2Match ? "keyword" : "vector"}`
-      : tier1Match                              ? "regex"
-      : tier2Match                              ? "keyword"
-      : behaviorBlock                           ? "behavior"
+    const detectionTier = hasRoleplayInjection            ? "roleplay"
+      : evasionTechniques.length > 0                      ? `evasion+${tier1Match ? "regex" : tier2Match ? "keyword" : "vector"}`
+      : tier1Match                                        ? "regex"
+      : tier2Match                                        ? "keyword"
+      : behaviorBlock                                     ? "behavior"
+      : astBlocked                                        ? "ast"
+      : intentResult.isHighRisk                           ? "intent"
       : "vector";
 
     // NER masking (lazy init)
@@ -503,7 +536,12 @@ async function runDetectionPipeline({ text, userEmail, source = "paste", verbose
     } else if (tier1Match)      reason = "Hard-pattern match (Regex Layer).";
     else if (tier2Match)        reason = `Custom deny-list match: "${matchedKeyword?.word}".`;
     else if (behaviorBlock)     reason = `Behavioral anomaly: ${behaviorResult.anomalyFlags.join(", ")}. Additional verification required.`;
-    else if (vectorMatches.length > 0) {
+    else if (astBlocked) {
+      const summary = summarizeAstFindings(astResult);
+      reason = `Proprietary code / business logic detected (AST analysis). ${summary}`;
+    } else if (intentResult.isHighRisk) {
+      reason = `Intent classified as "${intentResult.topIntent}" (confidence: ${(intentResult.score * 100).toFixed(0)}%). Potential data-leakage attempt.`;
+    } else if (vectorMatches.length > 0) {
       const topScore  = (vectorMatches[0].similarity * 100).toFixed(1);
       const topSource = vectorMatches[0].path.split(/[\\/]/).pop();
       reason = `Sensitive company data detected (${topScore}% similarity to "${topSource}").`;
@@ -517,6 +555,12 @@ async function runDetectionPipeline({ text, userEmail, source = "paste", verbose
       if (evasionTechniques.length > 0) {
         console.log(`[api-server] Evasion techniques: ${evasionTechniques.join(", ")}`);
       }
+      if (intentResult.topIntent !== "GENERAL") {
+        console.log(`[api-server] Intent: ${intentResult.topIntent} (${(intentResult.score * 100).toFixed(0)}%)`);
+      }
+      if (astBlocked) {
+        console.log(`[api-server] AST findings: ${summarizeAstFindings(astResult)}`);
+      }
     }
 
     // Clear fragment cache after a block to prevent re-assembly
@@ -524,7 +568,7 @@ async function runDetectionPipeline({ text, userEmail, source = "paste", verbose
 
     // Fire-and-forget cloud event (metadata only, no sensitive text)
     if (_tenantApiKey) {
-      const topSim = vectorMatches[0]?.similarity ?? (tier1Match ? 1 : 0.9);
+      const topSim = vectorMatches[0]?.similarity ?? (tier1Match ? 1 : astBlocked ? 0.95 : intentResult.isHighRisk ? intentResult.score : 0.9);
       sendTenantEvent({
         tenantApiKey:      _tenantApiKey,
         serverUrl:         _serverUrl,
@@ -537,6 +581,12 @@ async function runDetectionPipeline({ text, userEmail, source = "paste", verbose
         behaviorRiskScore: behaviorResult.riskScore,
         anomalyFlags:      behaviorResult.anomalyFlags,
         context:           { isTable, isCode, source },
+        intent:            intentResult.topIntent !== "GENERAL" ? intentResult.topIntent : undefined,
+        astFindings:       astBlocked ? {
+          hasBusinessLogic:    astResult.hasBusinessLogic,
+          hasDbCalls:          astResult.hasDbCalls,
+          hasCredentialAccess: astResult.hasCredentialAccess,
+        } : undefined,
       }).catch(() => {});
     }
 
@@ -551,6 +601,13 @@ async function runDetectionPipeline({ text, userEmail, source = "paste", verbose
       behaviorRisk:      behaviorResult,
       requiresMFA:       behaviorResult.requiresMFA,
       context:           { isTable, isCode, source },
+      intent:            intentResult,
+      astAnalysis:       astBlocked ? {
+        hasBusinessLogic:       astResult.hasBusinessLogic,
+        hasDbCalls:             astResult.hasDbCalls,
+        hasCredentialAccess:    astResult.hasCredentialAccess,
+        businessLogicFunctions: astResult.businessLogicFunctions,
+      } : undefined,
     };
   }
 
@@ -560,6 +617,7 @@ async function runDetectionPipeline({ text, userEmail, source = "paste", verbose
     reason:            "No sensitive content detected.",
     evasionTechniques,
     behaviorRisk:      behaviorResult,
+    intent:            intentResult,
   };
 }
 

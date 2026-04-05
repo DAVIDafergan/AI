@@ -62,6 +62,7 @@ async function run() {
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
   console.log(`📂 Corporate drive     : ${targetDir}`);
   console.log(`🌐 Local API port      : ${localPort}`);
+  console.log("🛡  Detection pipeline : Regex → AST → Intent → Deny-list → Vector → Fragments → UEBA");
   if (dryRun) console.log("⚠️  Dry-run mode: cloud sync and API server will be skipped.");
   console.log();
 

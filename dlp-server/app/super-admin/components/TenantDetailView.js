@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import {
   Building2, ArrowLeft, Cpu, Activity, Terminal, Copy, CheckCheck,
-  Server, Users, Plus, Loader2, Link, Shield, Trash2, Save,
+  Server, Users, Plus, Loader2, Link, Shield, Trash2, Save, Wifi,
 } from "lucide-react";
 
 function formatNum(n) { return (n ?? 0).toLocaleString("he-IL"); }
@@ -283,9 +283,10 @@ function ConnectionInstructions({ tenant, superAdminKey, onAgentProvisioned }) {
 }
 
 export default function TenantDetailView({ tenant, superAdminKey, onBack }) {
-  const [agents, setAgents]   = useState([]);
-  const [events, setEvents]   = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [agents, setAgents]           = useState([]);
+  const [events, setEvents]           = useState([]);
+  const [loading, setLoading]         = useState(true);
+  const [activeUsers, setActiveUsers] = useState([]);
   const [serverUrlEdit, setServerUrlEdit] = useState(tenant?.serverUrl || "");
   const [savingUrl, setSavingUrl]         = useState(false);
   const [urlSaveMsg, setUrlSaveMsg]       = useState("");
@@ -294,16 +295,20 @@ export default function TenantDetailView({ tenant, superAdminKey, onBack }) {
     if (!tenant) return;
     setLoading(true);
     try {
-      const [agentsRes, eventsRes] = await Promise.all([
+      const [agentsRes, eventsRes, usersRes] = await Promise.all([
         fetch(`/api/agents?tenantId=${tenant._id}`, {
           headers: { "x-super-admin-key": superAdminKey },
         }),
         fetch(`/api/tenant-events?tenantId=${tenant._id}&limit=25`, {
           headers: { "x-super-admin-key": superAdminKey },
         }),
+        fetch(`/api/tenant-users?tenantId=${tenant._id}`, {
+          headers: { "x-super-admin-key": superAdminKey },
+        }),
       ]);
       if (agentsRes.ok) setAgents((await agentsRes.json()).agents || []);
       if (eventsRes.ok) setEvents((await eventsRes.json()).events || []);
+      if (usersRes.ok)  setActiveUsers((await usersRes.json()).users  || []);
     } finally {
       setLoading(false);
     }
@@ -387,6 +392,43 @@ export default function TenantDetailView({ tenant, superAdminKey, onBack }) {
             <div className={`text-2xl font-bold font-mono ${color}`}>{formatNum(value)}</div>
           </div>
         ))}
+      </div>
+      {/* משתמשי תוסף פעילים */}
+      <div className="bg-[#0d0d14] border border-slate-700/40 rounded-xl p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <Wifi size={14} className="text-emerald-400" />
+            <span className="text-sm text-slate-300 font-medium">משתמשי תוסף פעילים</span>
+            <span className="text-xs text-slate-600">(15 דק׳ האחרונות)</span>
+          </div>
+          <span className="text-xs text-emerald-400 font-mono">{activeUsers.length} מחוברים</span>
+        </div>
+        {loading ? (
+          <p className="text-xs text-slate-600">טוען...</p>
+        ) : activeUsers.length === 0 ? (
+          <p className="text-xs text-slate-600">אין משתמשים פעילים כרגע — התוסף נשלח פינג כל 5 דקות</p>
+        ) : (
+          <div className="space-y-1">
+            {activeUsers.map((u) => (
+              <div key={u.userEmail} className="flex items-center justify-between text-xs py-1.5 border-b border-slate-800/40">
+                <div className="flex items-center gap-2">
+                  <span className="relative flex h-1.5 w-1.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-400" />
+                  </span>
+                  <span className="text-slate-300 font-mono truncate max-w-[180px]">{u.userEmail}</span>
+                </div>
+                <div className="flex items-center gap-3 text-slate-500 shrink-0">
+                  <span title="חסימות">🛡 {u.interceptedCount ?? 0}</span>
+                  {u.extensionVersion && <span className="hidden sm:inline">v{u.extensionVersion}</span>}
+                  <span title="פינג אחרון" className="hidden md:inline">
+                    {u.lastSeenAt ? new Date(u.lastSeenAt).toLocaleTimeString("he-IL") : "—"}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* הוראות חיבור */}

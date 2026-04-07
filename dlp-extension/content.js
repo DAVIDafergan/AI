@@ -1147,7 +1147,7 @@ const SYNTHETIC_PATTERNS = [
   /\b3\d{8}\b/g,                              // ID (starts with 3, 9 digits)
   /user_\d{3}@[a-z]+\.[a-z]{2,}/g,           // Synthetic email
   /4\d{3}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}/g,  // Credit card (Visa synthetic)
-  /\[[A-Z][A-Z0-9_]*_\d+\]/g,                   // Smart masking vault tokens: [PERSON_1], [ACCOUNT_1], …
+  /\[[A-Z][A-Z0-9_]*_\d+\]/gi,                  // Smart masking vault tokens: [PERSON_1], [ACCOUNT_1], … (case-insensitive)
 ];
 
 // AI response selectors
@@ -1163,8 +1163,20 @@ const AI_RESPONSE_SELECTORS = [
 
 async function lookupSynthetic(syntheticValue) {
   // ── 1. Check local vault first (tokens from Smart Masking) ──
-  if (Object.prototype.hasOwnProperty.call(_vault, syntheticValue)) {
-    return _vault[syntheticValue];
+  // Build candidate keys: the value as-is, uppercased, with/without brackets.
+  const stripped = syntheticValue.replace(/^\[|\]$/g, "");
+  const candidates = new Set([
+    syntheticValue,
+    syntheticValue.toUpperCase(),
+    stripped,
+    stripped.toUpperCase(),
+    `[${stripped}]`,
+    `[${stripped.toUpperCase()}]`,
+  ]);
+  for (const key of candidates) {
+    if (Object.prototype.hasOwnProperty.call(_vault, key)) {
+      return _vault[key];
+    }
   }
 
   if (restorationCache.has(syntheticValue)) {
@@ -1339,9 +1351,21 @@ async function scanAndRestore(root) {
 /* ─────────────────────────────────────────────
    1B. MutationObserver for AI output
    ───────────────────────────────────────────── */
-const debouncedScanElement = debounce((el) => {
-  try { scanAndRestore(el); } catch { /* ignore */ }
-}, 500);
+// Accumulate ALL elements queued during the debounce window so that streaming
+// mutations don't cause intermediate nodes to be silently dropped.
+const _pendingScanElements = new Set();
+let   _scanDebounceTimer   = null;
+function debouncedScanElement(el) {
+  _pendingScanElements.add(el);
+  clearTimeout(_scanDebounceTimer);
+  _scanDebounceTimer = setTimeout(() => {
+    const batch = Array.from(_pendingScanElements);
+    _pendingScanElements.clear();
+    for (const element of batch) {
+      try { scanAndRestore(element); } catch { /* ignore */ }
+    }
+  }, 500);
+}
 
 function isAIResponseElement(el) {
   if (!el || el.nodeType !== Node.ELEMENT_NODE) return false;

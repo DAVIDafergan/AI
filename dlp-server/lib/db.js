@@ -5,24 +5,46 @@ import { randomUUID } from "crypto";
 import mongoose from "mongoose";
 
 // ── MongoDB connection (used by new multi-tenant models) ──
-let mongooseConnection = null;
+// Cache the promise on a module-level global so that Next.js hot-reloads and
+// concurrent requests share a single connection pool rather than spawning a new
+// one on every invocation.
+const _global = globalThis;
 
 // Disable buffering globally – operations will throw immediately if there is no
 // active connection instead of silently queuing and timing out after 10 s.
 mongoose.set("bufferCommands", false);
 
 export async function connectMongo() {
-  if (mongooseConnection && mongoose.connection.readyState === 1) {
-    return mongooseConnection;
+  if (!process.env.MONGODB_URI) {
+    throw new Error(
+      "[connectMongo] MONGODB_URI environment variable is not set. " +
+        "Please configure it before starting the server."
+    );
   }
-  const uri = process.env.MONGODB_URI || "mongodb://mongo:CJIYYeWjRwoQChiJPyxBjQGbqbsfgQeu@ballast.proxy.rlwy.net:56402";
-  try {
-    mongooseConnection = await mongoose.connect(uri);
-    return mongooseConnection;
-  } catch (err) {
-    console.error("[connectMongo] Failed to connect:", err.message);
-    throw err;
+
+  // Reuse an in-flight or resolved connection promise when one already exists.
+  if (_global._mongooseConnectionPromise) {
+    return _global._mongooseConnectionPromise;
   }
+
+  // If mongoose already has an active connection (e.g. after module reload)
+  // wrap it in a resolved promise and cache it.
+  if (mongoose.connection.readyState === 1) {
+    _global._mongooseConnectionPromise = Promise.resolve(mongoose.connection);
+    return _global._mongooseConnectionPromise;
+  }
+
+  _global._mongooseConnectionPromise = mongoose
+    .connect(process.env.MONGODB_URI)
+    .catch((err) => {
+      // Clear the cache so the next call retries instead of getting a rejected
+      // promise forever.
+      _global._mongooseConnectionPromise = null;
+      console.error("[connectMongo] Failed to connect:", err.message);
+      throw err;
+    });
+
+  return _global._mongooseConnectionPromise;
 }
 
 // ── Tenant Schema ──
@@ -137,11 +159,6 @@ function seed() {
     status: "active",
     settings: { language: "he", timezone: "Asia/Jerusalem" },
   });
-  // הוסף מפתחות פיתוח רק בסביבת dev/test
-  if (process.env.NODE_ENV !== "production") {
-    apiKeys.set("dev-api-key-12345", defaultOrgId);
-    apiKeys.set("test-api-key-99999", defaultOrgId);
-  }
   // מפתח קבוע מ-env (עובד גם ב-production, שרד הפעלות מחדש)
   if (process.env.DEFAULT_API_KEY) {
     apiKeys.set(process.env.DEFAULT_API_KEY, defaultOrgId);

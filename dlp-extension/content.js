@@ -1485,8 +1485,10 @@ function applyVaultReplacements(textNode) {
   const text = textNode.nodeValue;
   if (!text) return 0;
 
-  // Quick rejection: no vault keys at all
-  if (Object.keys(_vault).length === 0) return 0;
+   // Quick rejection: no vault keys at all (for-in avoids Object.keys array allocation)
+  let _vaultEmpty = true;
+  for (const k in _vault) { if (Object.prototype.hasOwnProperty.call(_vault, k)) { _vaultEmpty = false; break; } }
+  if (_vaultEmpty) return 0;
 
   // Collect vault tokens present in this text, sorted by their first occurrence
   VAULT_TOKEN_PATTERN.lastIndex = 0;
@@ -1548,15 +1550,22 @@ function watchForAIOutput() {
   function processTextNode(textNode) {
     if (!textNode.parentNode) return;
     const text = textNode.nodeValue;
-    // Avoid `trim()` allocation: reject whitespace-only nodes with a quick regex test
     if (!text || !/\S/.test(text)) return;
-    if (textNode.parentElement?.closest("[data-restored='true']")) return;
+    // Fast O(1) check on immediate parent before the costlier closest() DOM walk
+    const parentEl = textNode.parentElement;
+    if (parentEl?.getAttribute("data-restored") === "true") return;
+    if (parentEl?.closest("[data-restored='true']")) return;
 
-    const container = findAIContainer(textNode.parentElement);
+    const container = findAIContainer(parentEl);
     if (!container) return;
 
     // Fast path: vault tokens resolved from in-memory map — no async needed
-    if (Object.keys(_vault).length > 0) {
+    // Use for-in to avoid the Object.keys() array allocation on every mutation
+    let hasVaultEntries = false;
+    for (const k in _vault) {
+      if (Object.prototype.hasOwnProperty.call(_vault, k)) { hasVaultEntries = true; break; }
+    }
+    if (hasVaultEntries) {
       queueVaultRestore(textNode);
     }
 
@@ -1580,10 +1589,9 @@ function watchForAIOutput() {
               node,
               NodeFilter.SHOW_TEXT,
               {
+                // Minimal filter: defer content-based rejection to processTextNode
                 acceptNode(n) {
-                  // Lightweight check only: defer the expensive closest() guard to processTextNode
-                  if (!n.nodeValue || !/\S/.test(n.nodeValue)) return NodeFilter.FILTER_REJECT;
-                  return NodeFilter.FILTER_ACCEPT;
+                  return n.nodeValue ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
                 },
               },
             );

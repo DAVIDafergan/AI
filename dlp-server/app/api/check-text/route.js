@@ -309,9 +309,12 @@ export async function POST(request) {
       (a, b) => b.original.length - a.original.length
     );
     for (const { original, synthetic } of sortedReplacements) {
-      // החלפת כל המופעים של original
+      // בניית regex שמכבד גבולות מילה (\b) כאשר הישות מתחילה/מסתיימת בתו מילה,
+      // כדי למנוע החלפה חלקית שעלולה לפגוע בטקסט, רווחים, ניקוד או עיצוב Markdown/HTML.
       const escaped = original.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      redactedText = redactedText.replace(new RegExp(escaped, "g"), synthetic);
+      const prefix = /^\w/.test(original) ? "\\b" : "";
+      const suffix = /\w$/.test(original) ? "\\b" : "";
+      redactedText = redactedText.replace(new RegExp(`${prefix}${escaped}${suffix}`, "g"), synthetic);
     }
 
     // ── 6. חישוב ציון איום ──

@@ -1,6 +1,7 @@
 // ── מנוע זיהוי PII מתקדם עם נתונים סינתטיים וזיהוי קונטקסטואלי ──
 import { NextResponse } from "next/server";
 import { authenticateRequest } from "../../../lib/middleware.js";
+import { checkRateLimit, RATE_LIMIT_MAX } from "../../../lib/rate-limiter.js";
 import { generateSynthetic } from "../../../lib/synthetic.js";
 import { normalizeText } from "../../../lib/evasion.js";
 import {
@@ -125,17 +126,54 @@ const THREAT_CRITICAL_THRESHOLD = 80;
 const THREAT_HIGH_THRESHOLD     = 50;
 const THREAT_MEDIUM_THRESHOLD   = 20;
 
+// ── Payload size limit ──
+const MAX_TEXT_LENGTH = 10_000;
+
 // ── POST: זיהוי והחלפת PII ──
 export async function POST(request) {
   try {
     const auth = await authenticateRequest(request);
     const { organizationId } = auth;
 
+    // ── Rate limiting ──
+    const rawApiKey = request.headers.get("x-api-key");
+    // Prefer the API key as the rate-limit key because it is already authenticated.
+    // Fall back to the leftmost IP in x-forwarded-for (set by a trusted reverse
+    // proxy).  Note: if the application is exposed directly without a proxy this
+    // header can be spoofed; deploy behind a proxy (nginx, Cloudflare, etc.) that
+    // strips/overwrites x-forwarded-for to mitigate spoofing.
+    const forwarded = request.headers.get("x-forwarded-for");
+    const ip = forwarded ? forwarded.split(",")[0].trim() : "unknown";
+    const rateLimitKey = rawApiKey || ip;
+
+    const { allowed, remaining, retryAfter } = await checkRateLimit(rateLimitKey);
+    if (!allowed) {
+      return NextResponse.json(
+        { error: "Too Many Requests" },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(retryAfter),
+            "X-RateLimit-Limit": String(RATE_LIMIT_MAX),
+            "X-RateLimit-Remaining": "0",
+          },
+        }
+      );
+    }
+
     const body = await request.json();
     const { text, source = "api", mode = "paste", userEmail = "anonymous@unknown.com" } = body;
 
     if (!text || typeof text !== "string") {
       return NextResponse.json({ error: "text is required" }, { status: 400 });
+    }
+
+    // ── Payload size limit (prevents ReDoS and memory exhaustion) ──
+    if (text.length > MAX_TEXT_LENGTH) {
+      return NextResponse.json(
+        { error: `Payload Too Large: text must not exceed ${MAX_TEXT_LENGTH} characters` },
+        { status: 413 }
+      );
     }
 
     // ── Tier 0: Evasion normalisation ─────────────────────────────────────
@@ -270,9 +308,12 @@ export async function POST(request) {
       (a, b) => b.original.length - a.original.length
     );
     for (const { original, synthetic } of sortedReplacements) {
-      // החלפת כל המופעים של original
+      // בניית regex שמכבד גבולות מילה (\b) כאשר הישות מתחילה/מסתיימת בתו מילה,
+      // כדי למנוע החלפה חלקית שעלולה לפגוע בטקסט, רווחים, ניקוד או עיצוב Markdown/HTML.
       const escaped = original.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      redactedText = redactedText.replace(new RegExp(escaped, "g"), synthetic);
+      const prefix = /^\w/.test(original) ? "\\b" : "";
+      const suffix = /\w$/.test(original) ? "\\b" : "";
+      redactedText = redactedText.replace(new RegExp(`${prefix}${escaped}${suffix}`, "g"), synthetic);
     }
 
     // ── 6. חישוב ציון איום ──
@@ -328,7 +369,6 @@ export async function POST(request) {
     }
 
     // ── 9. עדכון שימוש ב-Tenant ──
-    const rawApiKey = request.headers.get("x-api-key");
     if (rawApiKey) {
       try {
         await connectMongo();

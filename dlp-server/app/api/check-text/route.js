@@ -1,4 +1,5 @@
 // ── מנוע זיהוי PII מתקדם עם נתונים סינתטיים וזיהוי קונטקסטואלי ──
+export const dynamic = 'force-dynamic';
 import { NextResponse } from "next/server";
 import { authenticateRequest } from "../../../lib/middleware.js";
 import { checkRateLimit, RATE_LIMIT_MAX } from "../../../lib/rate-limiter.js";

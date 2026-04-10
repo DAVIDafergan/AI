@@ -20,9 +20,9 @@ export async function GET() {
   const startTime = Date.now();
 
   try {
-    // Check DB (in-memory store)
+    // Check DB
     const dbStart = Date.now();
-    const dbStats = getStats("default-org");
+    const dbStats = await getStats(null);
     const dbLatency = Date.now() - dbStart;
 
     // Triage engine stats

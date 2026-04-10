@@ -46,7 +46,7 @@ export async function authenticateRequest(request) {
     throw err;
   }
 
-  const result = validateApiKey(apiKey);
+  const result = await validateApiKey(apiKey);
   if (!result) {
     const err = new Error("Unauthorized: Invalid API key");
     err.status = 401;

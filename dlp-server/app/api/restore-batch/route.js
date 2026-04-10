@@ -19,7 +19,7 @@ export async function POST(request) {
 
     const results = {};
     for (const tag of tags) {
-      const entry = getMappingBySynthetic(tag);
+      const entry = await getMappingBySynthetic(tag);
       if (entry) {
         results[tag] = {
           found: true,

@@ -291,8 +291,10 @@ async function syncLivePolicy() {
         await chrome.storage.local.set({ dlp_live_policy: body.policies });
       }
     }
-  } catch {
-    // Non-critical – silently ignore connectivity or auth errors
+  } catch (err) {
+    // Non-critical – policy sync failures do not block extension operation.
+    // The extension continues to use the previously cached policy (or server-side enforcement).
+    console.debug("[syncLivePolicy] Failed to sync policy:", err?.message || err);
   }
 }
 

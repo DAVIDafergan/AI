@@ -561,6 +561,7 @@ export async function savePolicies(organizationId, policiesArray) {
         { new: true }
       ).lean();
     } catch {
+      // organizationId is not a valid ObjectId (e.g. it is a slug string) – fall back to slug lookup
       updated = await Tenant.findOneAndUpdate(
         { slug: organizationId },
         { $set: { "settings.policies": policiesArray } },
@@ -583,6 +584,7 @@ export async function getPolicies(organizationId) {
     try {
       tenant = await Tenant.findById(organizationId, { "settings.policies": 1 }).lean();
     } catch {
+      // organizationId is not a valid ObjectId – fall back to slug lookup
       tenant = await Tenant.findOne({ slug: organizationId }, { "settings.policies": 1 }).lean();
     }
     if (tenant?.settings?.policies?.length > 0) {
@@ -617,6 +619,7 @@ export async function saveCustomKeyword(organizationId, entry) {
         { new: true }
       ).lean();
     } catch {
+      // organizationId is not a valid ObjectId – fall back to slug lookup
       updated = await Tenant.findOneAndUpdate(
         { slug: organizationId },
         { $push: { "settings.customKeywords": doc } },
@@ -637,6 +640,7 @@ export async function getCustomKeywords(organizationId) {
     try {
       tenant = await Tenant.findById(organizationId, { "settings.customKeywords": 1 }).lean();
     } catch {
+      // organizationId is not a valid ObjectId – fall back to slug lookup
       tenant = await Tenant.findOne({ slug: organizationId }, { "settings.customKeywords": 1 }).lean();
     }
     return tenant?.settings?.customKeywords || [];
@@ -657,6 +661,7 @@ export async function deleteCustomKeyword(organizationId, keywordId) {
         { new: true }
       ).lean();
     } catch {
+      // organizationId is not a valid ObjectId – fall back to slug lookup
       updated = await Tenant.findOneAndUpdate(
         { slug: organizationId },
         { $pull: { "settings.customKeywords": { id: keywordId } } },

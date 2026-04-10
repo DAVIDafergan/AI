@@ -31,7 +31,14 @@ import { runTriageWithStats } from "../../../lib/triage.js";
 function buildCorsHeaders(request) {
   const envCors = getCorsHeaders(request);
   if (envCors) return envCors;
-  // Fallback: only reached when ALLOWED_ORIGINS is not configured
+  // Fallback: only reached when ALLOWED_ORIGINS is not configured.
+  // Log a warning in non-test environments to alert operators of the open CORS policy.
+  if (process.env.NODE_ENV !== "test") {
+    console.warn(
+      "[check-text] ALLOWED_ORIGINS is not set – falling back to wildcard CORS. " +
+      "Set ALLOWED_ORIGINS in your environment to restrict access."
+    );
+  }
   return {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",

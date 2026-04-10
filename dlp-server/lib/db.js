@@ -67,6 +67,8 @@ const TenantSchema = new mongoose.Schema(
       allowedCategories:  [String],
       webhookUrl:         { type: String },
       slackChannel:       { type: String },
+      policies:           { type: [mongoose.Schema.Types.Mixed], default: undefined },
+      customKeywords:     { type: [mongoose.Schema.Types.Mixed], default: undefined },
     },
     usage: {
       totalScans:    { type: Number, default: 0 },
@@ -161,8 +163,6 @@ export const VaultMapping = mongoose.models.VaultMapping || mongoose.model("Vaul
 export const ApiKey = mongoose.models.ApiKey || mongoose.model("ApiKey", ApiKeySchema);
 
 // ── In-memory stores for non-migrated data ──
-const policies = new Map();      // organizationId → [ policy, ... ]
-const customKeywords = new Map();// organizationId → [ keyword, ... ]
 const alerts = new Map();        // alertId → alertData
 const users = new Map();         // email → userStatsObject
 
@@ -549,20 +549,58 @@ export async function getStats(organizationId) {
   };
 }
 
-// ── ניהול מדיניות ──
-export function savePolicies(organizationId, policiesArray) {
-  policies.set(organizationId, policiesArray);
+// ── ניהול מדיניות (MongoDB-backed) ──
+export async function savePolicies(organizationId, policiesArray) {
+  await connectMongo();
+  try {
+    let updated = null;
+    try {
+      updated = await Tenant.findByIdAndUpdate(
+        organizationId,
+        { $set: { "settings.policies": policiesArray } },
+        { new: true }
+      ).lean();
+    } catch {
+      // organizationId is not a valid ObjectId (e.g. it is a slug string) – fall back to slug lookup
+      updated = await Tenant.findOneAndUpdate(
+        { slug: organizationId },
+        { $set: { "settings.policies": policiesArray } },
+        { new: true }
+      ).lean();
+    }
+    if (!updated) {
+      console.warn("[savePolicies] Tenant not found:", organizationId);
+    }
+  } catch (err) {
+    console.error("[savePolicies] Failed to persist policies:", err.message);
+  }
   return policiesArray;
 }
 
-export function getPolicies(organizationId) {
-  return policies.get(organizationId) || null;
+export async function getPolicies(organizationId) {
+  await connectMongo();
+  try {
+    let tenant = null;
+    try {
+      tenant = await Tenant.findById(organizationId, { "settings.policies": 1 }).lean();
+    } catch {
+      // organizationId is not a valid ObjectId – fall back to slug lookup
+      tenant = await Tenant.findOne({ slug: organizationId }, { "settings.policies": 1 }).lean();
+    }
+    if (tenant?.settings?.policies?.length > 0) {
+      return tenant.settings.policies;
+    }
+  } catch (err) {
+    console.error("[getPolicies] DB error:", err.message);
+  }
+  return null;
 }
 
 // ── מילות מפתח מותאמות ──
-export function saveCustomKeyword(organizationId, entry) {
+// ── מילות מפתח מותאמות (MongoDB-backed) ──
+export async function saveCustomKeyword(organizationId, entry) {
+  await connectMongo();
   const id = randomUUID();
-  const keywords = customKeywords.get(organizationId) || [];
   const doc = {
     id,
     organizationId,
@@ -572,20 +610,69 @@ export function saveCustomKeyword(organizationId, entry) {
     severity: entry.severity || "medium",
     createdAt: new Date().toISOString(),
   };
-  keywords.push(doc);
-  customKeywords.set(organizationId, keywords);
+  try {
+    let updated = null;
+    try {
+      updated = await Tenant.findByIdAndUpdate(
+        organizationId,
+        { $push: { "settings.customKeywords": doc } },
+        { new: true }
+      ).lean();
+    } catch {
+      // organizationId is not a valid ObjectId – fall back to slug lookup
+      updated = await Tenant.findOneAndUpdate(
+        { slug: organizationId },
+        { $push: { "settings.customKeywords": doc } },
+        { new: true }
+      ).lean();
+    }
+    if (!updated) console.warn("[saveCustomKeyword] Tenant not found:", organizationId);
+  } catch (err) {
+    console.error("[saveCustomKeyword] Failed:", err.message);
+  }
   return doc;
 }
 
-export function getCustomKeywords(organizationId) {
-  return customKeywords.get(organizationId) || [];
+export async function getCustomKeywords(organizationId) {
+  await connectMongo();
+  try {
+    let tenant = null;
+    try {
+      tenant = await Tenant.findById(organizationId, { "settings.customKeywords": 1 }).lean();
+    } catch {
+      // organizationId is not a valid ObjectId – fall back to slug lookup
+      tenant = await Tenant.findOne({ slug: organizationId }, { "settings.customKeywords": 1 }).lean();
+    }
+    return tenant?.settings?.customKeywords || [];
+  } catch (err) {
+    console.error("[getCustomKeywords] DB error:", err.message);
+    return [];
+  }
 }
 
-export function deleteCustomKeyword(organizationId, keywordId) {
-  const keywords = customKeywords.get(organizationId) || [];
-  const filtered = keywords.filter((k) => k.id !== keywordId);
-  customKeywords.set(organizationId, filtered);
-  return filtered;
+export async function deleteCustomKeyword(organizationId, keywordId) {
+  await connectMongo();
+  try {
+    let updated = null;
+    try {
+      updated = await Tenant.findByIdAndUpdate(
+        organizationId,
+        { $pull: { "settings.customKeywords": { id: keywordId } } },
+        { new: true }
+      ).lean();
+    } catch {
+      // organizationId is not a valid ObjectId – fall back to slug lookup
+      updated = await Tenant.findOneAndUpdate(
+        { slug: organizationId },
+        { $pull: { "settings.customKeywords": { id: keywordId } } },
+        { new: true }
+      ).lean();
+    }
+    return updated?.settings?.customKeywords || [];
+  } catch (err) {
+    console.error("[deleteCustomKeyword] Failed:", err.message);
+    return [];
+  }
 }
 
 // ── ניהול התראות ──
@@ -655,8 +742,8 @@ export async function generateReport(organizationId) {
     getOrganization(organizationId),
     getStats(organizationId),
     getLogs(organizationId, 1000),
-    Promise.resolve(getPolicies(organizationId) || []),
-    Promise.resolve(getCustomKeywords(organizationId)),
+    getPolicies(organizationId).then((p) => p || []),
+    getCustomKeywords(organizationId),
     getTrendData(organizationId),
   ]);
 

@@ -18,8 +18,11 @@ let localAgentUrl = DEFAULT_LOCAL_AGENT_URL;
 let tenantApiKey  = "";
 
 // ── Loop-prevention & caching ──
-const processedNodes   = new WeakSet();
-const restorationCache = new Map(); // synthetic → original
+// WeakMap instead of WeakSet: maps each text node to the last string value that was
+// fully scanned.  This lets us re-scan nodes whose content has grown since the last
+// pass (the streaming case) while still skipping nodes whose content is unchanged.
+const processedContent = new WeakMap(); // textNode → last-processed nodeValue
+const restorationCache = new Map();     // synthetic → original
 
 // ── Per-element safe-state buffer (for real-time typing DLP) ──
 const safeStateMap = new WeakMap(); // element → last known safe value
@@ -1204,10 +1207,19 @@ function createRestoredSpan(originalText, syntheticValue) {
   return span;
 }
 
+// ── Concurrent-scan guard: prevents overlapping async scans of the same root ──
+const _activeScanRoots = new WeakSet();
+
 async function scanAndRestore(root) {
   if (!root || root.nodeType !== Node.ELEMENT_NODE) return;
   if (root.closest("[data-restored='true']")) return; // already restored parent
 
+  // Prevent a second concurrent scan of the same root while async lookups are in
+  // flight.  The debounce will re-queue a scan if more mutations arrive later.
+  if (_activeScanRoots.has(root)) return;
+  _activeScanRoots.add(root);
+
+  try {
   // Walk all text nodes
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
@@ -1220,14 +1232,18 @@ async function scanAndRestore(root) {
   const nodesToProcess = [];
   let node;
   while ((node = walker.nextNode())) {
-    if (!processedNodes.has(node)) {
+    // Re-scan the node whenever its text content has changed since the last pass.
+    // This is the key fix for streaming: a node seen as "clean" earlier may now
+    // contain a complete synthetic token after more text has been appended to it.
+    if (processedContent.get(node) !== node.nodeValue) {
       nodesToProcess.push(node);
     }
   }
 
   for (const textNode of nodesToProcess) {
-    processedNodes.add(textNode);
     const text = textNode.nodeValue;
+    // Record current content immediately so a concurrent scan skips this snapshot.
+    processedContent.set(textNode, text);
     if (!text) continue;
 
     // Collect all matches from all patterns
@@ -1334,6 +1350,9 @@ async function scanAndRestore(root) {
       // DOM operation failed – ignore
     }
   }
+  } finally {
+    _activeScanRoots.delete(root);
+  }
 }
 
 /* ─────────────────────────────────────────────
@@ -1356,9 +1375,21 @@ function watchForAIOutput() {
     if (_dlpScanMutating) return;
 
     for (const mutation of mutations) {
-      // Check added nodes
+      // Check added nodes (element AND text nodes)
       for (const addedNode of mutation.addedNodes) {
-        if (addedNode.nodeType === Node.ELEMENT_NODE) {
+        if (addedNode.nodeType === Node.TEXT_NODE) {
+          // A raw text node was streamed directly into the DOM.  Find the nearest
+          // AI response ancestor and queue a scan of that container.
+          const parent = addedNode.parentElement;
+          if (parent) {
+            let closest = null;
+            for (const sel of AI_RESPONSE_SELECTORS) {
+              try { closest = parent.closest(sel); } catch { /* ignore */ }
+              if (closest) break;
+            }
+            if (closest) debouncedScanElement(closest);
+          }
+        } else if (addedNode.nodeType === Node.ELEMENT_NODE) {
           if (isAIResponseElement(addedNode)) {
             debouncedScanElement(addedNode);
           } else {
@@ -1370,7 +1401,9 @@ function watchForAIOutput() {
           }
         }
       }
-      // Check characterData changes within AI response containers
+      // Check characterData changes within AI response containers.
+      // This fires when streaming appends text to an existing text node – the most
+      // common pattern used by ChatGPT, Claude, Gemini, etc.
       if (mutation.type === "characterData" && mutation.target) {
         const parent = mutation.target.parentElement;
         if (parent) {

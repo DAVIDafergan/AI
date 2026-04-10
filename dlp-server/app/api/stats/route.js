@@ -87,9 +87,9 @@ export async function GET(request) {
     }
 
     // ── Default: org stats ──
-    const stats = getStats(organizationId);
+    const stats = await getStats(organizationId);
 
-    const recentLogsRaw = getLogs(organizationId, 20);
+    const recentLogsRaw = await getLogs(organizationId, 20);
     const recentLogs = recentLogsRaw.map((log, idx) => ({
       id: idx + 1,
       timestamp: log.timestamp,

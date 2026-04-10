@@ -16,7 +16,6 @@ import {
   recordUserActivity,
   connectMongo,
   Tenant,
-  TenantEvent,
 } from "../../../lib/db.js";
 import { getDefaultPolicies, SEVERITY_SCORES } from "../../../lib/policies.js";
 import { runTriageWithStats } from "../../../lib/triage.js";
@@ -322,7 +321,11 @@ export async function POST(request) {
 
     // ── 7. שמירת מיפויים ולוג ──
     if (mappingEntries.length > 0) {
-      saveMappings(organizationId, mappingEntries);
+      try {
+        await saveMappings(organizationId, mappingEntries);
+      } catch (dbErr) {
+        console.warn("[check-text] saveMappings failed:", dbErr.message);
+      }
     }
 
     // ── 7b. רישום פעילות משתמש ──
@@ -336,17 +339,21 @@ export async function POST(request) {
         ? replacements[0].label
         : "ניקי";
 
-    saveLog(organizationId, {
-      type: primaryType,
-      synthetic: replacements[0]?.synthetic || "",
-      originalText: replacements[0]?.original || "",
-      source,
-      userEmail,
-      status: replacements.length > 0 ? "blocked" : "clean",
-      threatScore,
-      detectionCount: replacements.length,
-      replacements,
-    });
+    try {
+      await saveLog(organizationId, {
+        type: primaryType,
+        synthetic: replacements[0]?.synthetic || "",
+        originalText: replacements[0]?.original || "",
+        source,
+        userEmail,
+        status: replacements.length > 0 ? "blocked" : "clean",
+        threatScore,
+        detectionCount: replacements.length,
+        replacements,
+      });
+    } catch (dbErr) {
+      console.warn("[check-text] saveLog failed:", dbErr.message);
+    }
 
     // ── 8. זיהוי אנומליה ──
     const reqPerMinute = trackRequest(organizationId);
@@ -365,25 +372,12 @@ export async function POST(request) {
       });
     }
 
-    // ── 9. שמירה ל-MongoDB לחיבור עם הדשבורד ──
+    // ── 9. עדכון שימוש ב-Tenant ──
     if (rawApiKey) {
       try {
         await connectMongo();
         const tenant = await Tenant.findOne({ apiKey: rawApiKey }).lean();
         if (tenant) {
-          const eventType = replacements.length > 0 ? "block" : "scan";
-          const sev =
-            threatScore >= THREAT_CRITICAL_THRESHOLD ? "critical" :
-            threatScore >= THREAT_HIGH_THRESHOLD     ? "high" :
-            threatScore >= THREAT_MEDIUM_THRESHOLD   ? "medium" : "low";
-          await TenantEvent.create({
-            tenantId: tenant._id,
-            eventType,
-            severity: sev,
-            category: replacements[0]?.category,
-            userEmail,
-            details: { threatScore, detectionCount: replacements.length, source },
-          });
           const blocksInc = replacements.length > 0 ? { "usage.totalBlocks": 1 } : {};
           await Tenant.updateOne(
             { _id: tenant._id },
@@ -394,7 +388,7 @@ export async function POST(request) {
           );
         }
       } catch (mongoErr) {
-        console.warn("[check-text] MongoDB event save failed:", mongoErr.message);
+        console.warn("[check-text] Tenant usage update failed:", mongoErr.message);
       }
     }
 
@@ -446,7 +440,7 @@ export async function GET(request) {
       );
     }
 
-    const mapping = getMappingByTag(tag);
+    const mapping = await getMappingByTag(tag);
     if (!mapping) {
       return NextResponse.json(
         { found: false, originalText: tag },

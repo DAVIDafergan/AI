@@ -10,7 +10,7 @@ import {
 // GET – רשימת כל הלקוחות עם סטטיסטיקות
 export async function GET() {
   try {
-    const clients = getAllOrganizationsWithStats();
+    const clients = await getAllOrganizationsWithStats();
     return NextResponse.json({ clients });
   } catch {
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
@@ -27,7 +27,7 @@ export async function POST(request) {
       return NextResponse.json({ error: "name is required" }, { status: 400 });
     }
 
-    const org = createOrganization({
+    const org = await createOrganization({
       name: name.trim(),
       contactEmail: contactEmail || "",
       plan: plan || "basic",
@@ -68,7 +68,7 @@ export async function DELETE(request) {
       return NextResponse.json({ error: "לא ניתן למחוק את ארגון ברירת המחדל" }, { status: 403 });
     }
 
-    const deleted = deleteOrganization(orgId);
+    const deleted = await deleteOrganization(orgId);
     if (!deleted) {
       return NextResponse.json({ error: "Organization not found" }, { status: 404 });
     }

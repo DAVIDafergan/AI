@@ -9,7 +9,7 @@ export async function GET(request) {
     const { searchParams } = new URL(request.url);
     const format = searchParams.get("format") || "json";
 
-    const report = generateReport(organizationId);
+    const report = await generateReport(organizationId);
 
     if (format === "csv") {
       // המרה לפורמט CSV

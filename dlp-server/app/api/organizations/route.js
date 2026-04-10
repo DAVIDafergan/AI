@@ -7,7 +7,7 @@ import { getOrganization, createOrganization, updateOrganization, getAllOrganiza
 export async function GET(request) {
   try {
     const { organizationId } = await authenticateRequest(request);
-    const org = getOrganization(organizationId);
+    const org = await getOrganization(organizationId);
     if (!org) return NextResponse.json({ error: "Organization not found" }, { status: 404 });
     return NextResponse.json({ organization: org });
   } catch (err) {
@@ -23,7 +23,7 @@ export async function POST(request) {
     const body = await request.json();
     const { name, id } = body;
     if (!name) return NextResponse.json({ error: "name is required" }, { status: 400 });
-    const org = createOrganization({ name, id });
+    const org = await createOrganization({ name, id });
     return NextResponse.json({ success: true, organization: org }, { status: 201 });
   } catch (err) {
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
@@ -35,7 +35,7 @@ export async function PUT(request) {
   try {
     const { organizationId } = await authenticateRequest(request);
     const updates = await request.json();
-    const updated = updateOrganization(organizationId, updates);
+    const updated = await updateOrganization(organizationId, updates);
     if (!updated) return NextResponse.json({ error: "Organization not found" }, { status: 404 });
     return NextResponse.json({ success: true, organization: updated });
   } catch (err) {

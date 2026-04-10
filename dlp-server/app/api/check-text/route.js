@@ -1,6 +1,7 @@
 // ── מנוע זיהוי PII מתקדם עם נתונים סינתטיים וזיהוי קונטקסטואלי ──
 import { NextResponse } from "next/server";
 import { authenticateRequest } from "../../../lib/middleware.js";
+import { checkRateLimit } from "../../../lib/rate-limiter.js";
 import { generateSynthetic } from "../../../lib/synthetic.js";
 import { normalizeText } from "../../../lib/evasion.js";
 import {
@@ -126,17 +127,49 @@ const THREAT_CRITICAL_THRESHOLD = 80;
 const THREAT_HIGH_THRESHOLD     = 50;
 const THREAT_MEDIUM_THRESHOLD   = 20;
 
+// ── Payload size limit ──
+const MAX_TEXT_LENGTH = 10_000;
+
 // ── POST: זיהוי והחלפת PII ──
 export async function POST(request) {
   try {
     const auth = await authenticateRequest(request);
     const { organizationId } = auth;
 
+    // ── Rate limiting ──
+    const rawApiKey = request.headers.get("x-api-key");
+    const forwarded = request.headers.get("x-forwarded-for");
+    const ip = forwarded ? forwarded.split(",")[0].trim() : "unknown";
+    const rateLimitKey = rawApiKey || ip;
+
+    const { allowed, remaining, retryAfter } = await checkRateLimit(rateLimitKey);
+    if (!allowed) {
+      return NextResponse.json(
+        { error: "Too Many Requests" },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(retryAfter),
+            "X-RateLimit-Limit": String(60),
+            "X-RateLimit-Remaining": "0",
+          },
+        }
+      );
+    }
+
     const body = await request.json();
     const { text, source = "api", mode = "paste", userEmail = "anonymous@unknown.com" } = body;
 
     if (!text || typeof text !== "string") {
       return NextResponse.json({ error: "text is required" }, { status: 400 });
+    }
+
+    // ── Payload size limit (prevents ReDoS and memory exhaustion) ──
+    if (text.length > MAX_TEXT_LENGTH) {
+      return NextResponse.json(
+        { error: `Payload Too Large: text must not exceed ${MAX_TEXT_LENGTH} characters` },
+        { status: 413 }
+      );
     }
 
     // ── Tier 0: Evasion normalisation ─────────────────────────────────────
@@ -325,7 +358,6 @@ export async function POST(request) {
     }
 
     // ── 9. שמירה ל-MongoDB לחיבור עם הדשבורד ──
-    const rawApiKey = request.headers.get("x-api-key");
     if (rawApiKey) {
       try {
         await connectMongo();

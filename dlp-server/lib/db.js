@@ -378,8 +378,11 @@ export async function saveMappings(organizationId, entries) {
   }));
   // ordered:false so a duplicate-tag error on one entry won't abort the rest
   const saved = await VaultMapping.insertMany(docs, { ordered: false }).catch((err) => {
-    // Ignore duplicate-key errors (E11000); surface anything else
-    if (err.code !== 11000 && err?.writeErrors?.every?.((e) => e.code === 11000)) throw err;
+    // Swallow only if every write error is a duplicate-key (E11000); re-throw otherwise
+    const allDuplicates =
+      err?.writeErrors?.length > 0 &&
+      err.writeErrors.every((e) => e.code === 11000);
+    if (!allDuplicates && err.code !== 11000) throw err;
     return err.insertedDocs || [];
   });
   return saved;

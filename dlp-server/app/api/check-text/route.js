@@ -321,7 +321,11 @@ export async function POST(request) {
 
     // ── 7. שמירת מיפויים ולוג ──
     if (mappingEntries.length > 0) {
-      await saveMappings(organizationId, mappingEntries);
+      try {
+        await saveMappings(organizationId, mappingEntries);
+      } catch (dbErr) {
+        console.warn("[check-text] saveMappings failed:", dbErr.message);
+      }
     }
 
     // ── 7b. רישום פעילות משתמש ──

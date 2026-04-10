@@ -2,7 +2,7 @@
 // Allows the Admin Dashboard to display "Active Users" in real time.
 // Only metadata is stored – no sensitive text is ever received here.
 import { NextResponse } from "next/server";
-import { connectMongo } from "../../../lib/mongodb.js";
+import { connectMongo } from "../../../lib/db.js";
 import mongoose from "mongoose";
 
 // Active user window: a user is "active" if their last heartbeat is within

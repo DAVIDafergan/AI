@@ -16,8 +16,12 @@
 
 import Redis from "ioredis";
 
-const RATE_LIMIT_MAX    = parseInt(process.env.RATE_LIMIT_MAX        || "60",    10);
-const RATE_LIMIT_WINDOW = parseInt(process.env.RATE_LIMIT_WINDOW_MS  || "60000", 10);
+export const RATE_LIMIT_MAX = parseInt(process.env.RATE_LIMIT_MAX       || "60",    10);
+const RATE_LIMIT_WINDOW     = parseInt(process.env.RATE_LIMIT_WINDOW_MS || "60000", 10);
+
+// Monotonically-increasing counter to ensure unique sorted-set members even
+// when multiple requests arrive in the same millisecond.
+let _seq = 0;
 
 // Lazily create a single shared Redis client (cached on globalThis to survive
 // Next.js hot-reloads in development).
@@ -73,8 +77,9 @@ export async function checkRateLimit(key) {
     pipeline.zremrangebyscore(redisKey, "-inf", windowStart);
     // Count requests still in the window
     pipeline.zcard(redisKey);
-    // Add the current timestamp (use ms as both score and member for uniqueness)
-    pipeline.zadd(redisKey, now, `${now}-${Math.random()}`);
+    // Add the current timestamp; use a per-process sequence number to guarantee
+    // uniqueness even when multiple requests arrive in the same millisecond.
+    pipeline.zadd(redisKey, now, `${now}-${++_seq}`);
     // Expire the key slightly after the window so it self-cleans
     pipeline.pexpire(redisKey, RATE_LIMIT_WINDOW + 1000);
 

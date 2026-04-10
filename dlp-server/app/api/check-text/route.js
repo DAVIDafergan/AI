@@ -1,7 +1,7 @@
 // ── מנוע זיהוי PII מתקדם עם נתונים סינתטיים וזיהוי קונטקסטואלי ──
 import { NextResponse } from "next/server";
 import { authenticateRequest } from "../../../lib/middleware.js";
-import { checkRateLimit } from "../../../lib/rate-limiter.js";
+import { checkRateLimit, RATE_LIMIT_MAX } from "../../../lib/rate-limiter.js";
 import { generateSynthetic } from "../../../lib/synthetic.js";
 import { normalizeText } from "../../../lib/evasion.js";
 import {
@@ -138,6 +138,11 @@ export async function POST(request) {
 
     // ── Rate limiting ──
     const rawApiKey = request.headers.get("x-api-key");
+    // Prefer the API key as the rate-limit key because it is already authenticated.
+    // Fall back to the leftmost IP in x-forwarded-for (set by a trusted reverse
+    // proxy).  Note: if the application is exposed directly without a proxy this
+    // header can be spoofed; deploy behind a proxy (nginx, Cloudflare, etc.) that
+    // strips/overwrites x-forwarded-for to mitigate spoofing.
     const forwarded = request.headers.get("x-forwarded-for");
     const ip = forwarded ? forwarded.split(",")[0].trim() : "unknown";
     const rateLimitKey = rawApiKey || ip;
@@ -150,7 +155,7 @@ export async function POST(request) {
           status: 429,
           headers: {
             "Retry-After": String(retryAfter),
-            "X-RateLimit-Limit": String(60),
+            "X-RateLimit-Limit": String(RATE_LIMIT_MAX),
             "X-RateLimit-Remaining": "0",
           },
         }

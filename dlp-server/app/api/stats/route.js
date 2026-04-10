@@ -101,10 +101,10 @@ export async function GET(request) {
       userEmail: log.userEmail || "anonymous@unknown.com",
     }));
 
-    let orgPolicies = getPolicies(organizationId);
+    let orgPolicies = await getPolicies(organizationId);
     if (!orgPolicies) {
       orgPolicies = getDefaultPolicies(organizationId);
-      savePolicies(organizationId, orgPolicies);
+      await savePolicies(organizationId, orgPolicies);
     }
 
     return NextResponse.json(

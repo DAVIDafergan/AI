@@ -65,16 +65,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .then((res) => {
         clearTimeout(timeout);
         if (!res.ok) {
-          sendResponse({ error: true, message: `HTTP ${res.status}` });
+          // Surface specific HTTP error codes so the content script can react appropriately
+          const errorMap = {
+            401: { error: true, errorCode: 401, message: "Unauthorized: API key missing or invalid" },
+            413: { error: true, errorCode: 413, message: "Payload Too Large: text exceeds the size limit" },
+            429: { error: true, errorCode: 429, message: "Rate limit exceeded: please slow down" },
+          };
+          sendResponse(errorMap[res.status] || { error: true, errorCode: res.status, message: `HTTP ${res.status}` });
           return;
         }
         res.json().then(sendResponse).catch((err) => {
-          sendResponse({ error: true, message: err.message || "JSON parse failed" });
+          sendResponse({ error: true, errorCode: 0, message: err.message || "JSON parse failed" });
         });
       })
       .catch((err) => {
         clearTimeout(timeout);
-        sendResponse({ error: true, message: err.message || "fetch failed" });
+        sendResponse({ error: true, errorCode: 0, message: err.message || "fetch failed" });
       });
     return true; // async
   }
@@ -215,6 +221,10 @@ chrome.runtime.onInstalled.addListener(() => {
   chrome.alarms.create("healthCheck", { periodInMinutes: 5 });
   // Schedule user heartbeat every 5 minutes so Admin can track active users in real time
   chrome.alarms.create("userHeartbeat", { periodInMinutes: 5 });
+
+  // Fetch the live DLP policy immediately on install so the extension starts with the
+  // correct server-side policy rather than relying on stale defaults.
+  syncLivePolicy();
 });
 
 // ── Restore alarms on startup (service worker may be restarted) ───────────────
@@ -232,17 +242,59 @@ chrome.runtime.onStartup.addListener(() => {
       contexts: ["action"],
     });
   });
+
+  // Re-sync the live DLP policy each time the service worker restarts so the
+  // extension always enforces the current server-side configuration.
+  syncLivePolicy();
 });
 
 // ── Alarm handler: periodic health check + user heartbeat ────────────────────
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === "healthCheck") {
     performHealthCheck();
+    syncLivePolicy(); // refresh policy on every health-check cycle
   }
   if (alarm.name === "userHeartbeat") {
     sendUserHeartbeat();
   }
 });
+
+/**
+ * Fetch the live DLP policy from the server and cache it in chrome.storage.local.
+ * The cached policy is keyed as `dlp_live_policy` (array of policy objects).
+ * Called at install, startup, and on every health-check alarm cycle.
+ * Failures are silently ignored so the extension keeps working without connectivity.
+ */
+async function syncLivePolicy() {
+  try {
+    const data = await new Promise((resolve) => {
+      chrome.storage.local.get(["serverUrl", "tenantApiKey", "enabled"], resolve);
+    });
+    if (!data.enabled) return;
+
+    const serverUrl = data.serverUrl || "https://ai-production-ffa9.up.railway.app";
+    const apiKey    = data.tenantApiKey || "";
+    if (!apiKey) return; // cannot fetch without an API key
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+
+    const res = await fetch(`${serverUrl}/api/organizations/policy`, {
+      headers: { "x-api-key": apiKey },
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    if (res.ok) {
+      const body = await res.json();
+      if (Array.isArray(body.policies)) {
+        await chrome.storage.local.set({ dlp_live_policy: body.policies });
+      }
+    }
+  } catch {
+    // Non-critical – silently ignore connectivity or auth errors
+  }
+}
 
 async function performHealthCheck() {
   try {

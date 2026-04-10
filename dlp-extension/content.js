@@ -127,6 +127,43 @@ const TIMING = {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /* ─────────────────────────────────────────────
+   Utility: sendCheckText
+   Wraps chrome.runtime.sendMessage for CHECK_TEXT.
+   Resolves with the API response on success.
+   For 401/413/429 error codes resolves with a
+   { passThroughWithWarning, errorCode, message } sentinel so the caller
+   can let the text through while still notifying the user – these errors
+   must NOT cause the paste to be silently blocked.
+   Rejects on network/runtime errors.
+   ───────────────────────────────────────────── */
+function sendCheckText({ text, userEmail: email, source, mode, apiKey, agentUrl }) {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(
+      { type: "CHECK_TEXT", text, userEmail: email, source, mode, apiKey, agentUrl },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        if (response?.error) {
+          const code = response.errorCode;
+          // 401 = invalid/missing API key, 413 = text too large, 429 = rate limited.
+          // In all three cases let the original text through with a user-visible warning
+          // rather than silently blocking the paste.
+          if (code === 401 || code === 413 || code === 429) {
+            resolve({ passThroughWithWarning: true, errorCode: code, message: response.message });
+          } else {
+            reject(new Error(response.message || "Background fetch failed"));
+          }
+          return;
+        }
+        resolve(response);
+      }
+    );
+  });
+}
+
+/* ─────────────────────────────────────────────
    Utility: debounce (returns function with .cancel())
    ───────────────────────────────────────────── */
 function debounce(fn, delay) {
@@ -579,26 +616,18 @@ async function handlePaste(event) {
 
     const { localAgentUrl: agentUrl, tenantApiKey: apiKey, userEmail: email } = await readSettings();
 
-    const result = await new Promise((resolve, reject) => {
-      chrome.runtime.sendMessage({
-        type: "CHECK_TEXT",
-        text,
-        userEmail: email,
-        source: "paste",
-        apiKey,
-        agentUrl,
-      }, (response) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-          return;
-        }
-        if (response?.error) {
-          reject(new Error(response.message || "Background fetch failed"));
-          return;
-        }
-        resolve(response);
-      });
-    });
+    const result = await sendCheckText({ text, userEmail: email, source: "paste", apiKey, agentUrl });
+
+    // Handle server-side soft errors (API key invalid, payload too large, rate limited)
+    if (result.passThroughWithWarning) {
+      const msg =
+        result.errorCode === 401 ? "⚠️ DLP: מפתח API אינו תקין – ההדבקה הועברת ללא סינון." :
+        result.errorCode === 413 ? "⚠️ DLP: הטקסט ארוך מדי לסינון – הועבר ללא שינוי." :
+        "⚠️ DLP: מגבלת קצב בקשות הגיעה – הועבר ללא סינון.";
+      insertTextIntoField(target, text);
+      showFallbackToast(msg, "warning");
+      return;
+    }
 
     // Support both local-agent format (blocked: true) and cloud-server format (safe: false)
     const isBlocked = result.blocked === true || result.safe === false;
@@ -705,27 +734,13 @@ async function interceptInput(element) {
   try {
     const { localAgentUrl: agentUrl, tenantApiKey: apiKey, userEmail: email } = await readSettings();
 
-    const result = await new Promise((resolve, reject) => {
-      chrome.runtime.sendMessage({
-        type: "CHECK_TEXT",
-        text,
-        userEmail: email,
-        source: "typing",
-        mode: "input",
-        apiKey,
-        agentUrl,
-      }, (response) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-          return;
-        }
-        if (response?.error) {
-          reject(new Error(response.message || "Background fetch failed"));
-          return;
-        }
-        resolve(response);
-      });
-    });
+    const result = await sendCheckText({ text, userEmail: email, source: "typing", mode: "input", apiKey, agentUrl });
+
+    // Handle server-side soft errors – update safe state and let typing continue
+    if (result.passThroughWithWarning) {
+      safeStateMap.set(element, text);
+      return;
+    }
 
     // ── Hard block: revert to safe state ──
     if (result.blocked === true) {
@@ -862,26 +877,13 @@ async function interceptSend(element, retriggerFn) {
   try {
     const { localAgentUrl: agentUrl, tenantApiKey: apiKey, userEmail: email } = await readSettings();
 
-    const result = await new Promise((resolve, reject) => {
-      chrome.runtime.sendMessage({
-        type: "CHECK_TEXT",
-        text,
-        userEmail: email,
-        source: "send",
-        apiKey,
-        agentUrl,
-      }, (response) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-          return;
-        }
-        if (response?.error) {
-          reject(new Error(response.message || "Background fetch failed"));
-          return;
-        }
-        resolve(response);
-      });
-    });
+    const result = await sendCheckText({ text, userEmail: email, source: "send", apiKey, agentUrl });
+
+    // Handle server-side soft errors – fail open (let the send through)
+    if (result.passThroughWithWarning) {
+      retriggerFn?.();
+      return;
+    }
 
     // ── Smart Masking ────────────────────────────────────────────────────
     if (result.action === "mask" && result.maskedText && result.vault) {

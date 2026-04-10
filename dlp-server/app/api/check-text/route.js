@@ -1,6 +1,6 @@
 // ── מנוע זיהוי PII מתקדם עם נתונים סינתטיים וזיהוי קונטקסטואלי ──
 import { NextResponse } from "next/server";
-import { authenticateRequest } from "../../../lib/middleware.js";
+import { authenticateRequest, getCorsHeaders } from "../../../lib/middleware.js";
 import { checkRateLimit, RATE_LIMIT_MAX } from "../../../lib/rate-limiter.js";
 import { generateSynthetic } from "../../../lib/synthetic.js";
 import { normalizeText } from "../../../lib/evasion.js";
@@ -19,6 +19,25 @@ import {
 } from "../../../lib/db.js";
 import { getDefaultPolicies, SEVERITY_SCORES } from "../../../lib/policies.js";
 import { runTriageWithStats } from "../../../lib/triage.js";
+
+/**
+ * Build CORS headers for the check-text endpoint.
+ * Uses getCorsHeaders() when ALLOWED_ORIGINS is configured; falls back to
+ * wildcard "*" for backward-compatibility with deployments that have not yet
+ * set the environment variable.
+ * @param {Request} request
+ * @returns {Record<string,string>}
+ */
+function buildCorsHeaders(request) {
+  const envCors = getCorsHeaders(request);
+  if (envCors) return envCors;
+  // Fallback: only reached when ALLOWED_ORIGINS is not configured
+  return {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, x-api-key",
+  };
+}
 
 // ── תבניות Regex לזיהוי PII ──
 const ALL_PATTERNS = [
@@ -153,6 +172,7 @@ export async function POST(request) {
         {
           status: 429,
           headers: {
+            ...buildCorsHeaders(request),
             "Retry-After": String(retryAfter),
             "X-RateLimit-Limit": String(RATE_LIMIT_MAX),
             "X-RateLimit-Remaining": "0",
@@ -165,14 +185,14 @@ export async function POST(request) {
     const { text, source = "api", mode = "paste", userEmail = "anonymous@unknown.com" } = body;
 
     if (!text || typeof text !== "string") {
-      return NextResponse.json({ error: "text is required" }, { status: 400 });
+      return NextResponse.json({ error: "text is required" }, { status: 400, headers: buildCorsHeaders(request) });
     }
 
     // ── Payload size limit (prevents ReDoS and memory exhaustion) ──
     if (text.length > MAX_TEXT_LENGTH) {
       return NextResponse.json(
         { error: `Payload Too Large: text must not exceed ${MAX_TEXT_LENGTH} characters` },
-        { status: 413 }
+        { status: 413, headers: buildCorsHeaders(request) }
       );
     }
 
@@ -207,13 +227,13 @@ export async function POST(request) {
     const scanTargets = [normalizedText, ...extraFragments];
 
     // טעינת מדיניות הארגון
-    let orgPolicies = getPolicies(organizationId);
+    let orgPolicies = await getPolicies(organizationId);
     if (!orgPolicies) {
       orgPolicies = getDefaultPolicies(organizationId);
     }
 
     // מילות מפתח מותאמות
-    const customKws = getCustomKeywords(organizationId);
+    const customKws = await getCustomKeywords(organizationId);
 
     // ── Triage מהיר לפני סריקה מלאה ──
     // Run triage on the normalised text so obfuscation doesn't bypass early exit
@@ -407,27 +427,21 @@ export async function POST(request) {
         userEmail,
       },
       {
-        headers: {
-          "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Headers": "Content-Type, x-api-key",
-        },
+        headers: buildCorsHeaders(request),
       }
     );
   } catch (err) {
     if (err.status === 401) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: buildCorsHeaders(request) });
     }
     console.error("[check-text] Error:", err);
-    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+    return NextResponse.json({ error: "Internal Server Error" }, { status: 500, headers: buildCorsHeaders(request) });
   }
 }
 
 // ── GET: שחזור ערך מקורי לפי ערך סינתטי (tag) ──
 export async function GET(request) {
-  const corsHeaders = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "Content-Type, x-api-key",
-  };
+  const corsHeaders = buildCorsHeaders(request);
   try {
     const { searchParams } = new URL(request.url);
     // Support both "tag" (primary) and legacy "synthetic" param
@@ -467,13 +481,9 @@ export async function GET(request) {
   }
 }
 
-export async function OPTIONS() {
+export async function OPTIONS(request) {
   return new NextResponse(null, {
     status: 204,
-    headers: {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, x-api-key",
-    },
+    headers: buildCorsHeaders(request),
   });
 }

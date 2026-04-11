@@ -9,6 +9,10 @@
  *   3. If JWT_SECRET is not already present, appends it to the file.
  *   4. Prints a clear status message so you know exactly what happened.
  *
+ * JWT_SECRET is used by authentication middleware that signs and verifies
+ * session tokens.  Run this script once before starting the server for the
+ * first time so a strong, unique secret is always present in .env.
+ *
  * Usage:
  *   node setup-env.js
  */

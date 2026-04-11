@@ -3,7 +3,9 @@ import { requireSuperAdmin } from "../../../lib/superAdminAuth.js";
 import { connectMongo, Tenant, Agent } from "../../../lib/db.js";
 import { randomUUID } from "crypto";
 
+export const dynamic = "force-dynamic";
 // POST /api/provision – create agent + return deployment config
+
 export async function POST(request) {
   try {
     await requireSuperAdmin(request);

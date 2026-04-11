@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import mongoose from "mongoose";
 import { connectToDB } from "../../../lib/mongodb.js";
 
+export const dynamic = "force-dynamic";
 // ── ClientHeartbeat Schema ──
 const ClientHeartbeatSchema = new mongoose.Schema(
   {
@@ -18,6 +19,7 @@ const ClientHeartbeat =
   mongoose.model("ClientHeartbeat", ClientHeartbeatSchema);
 
 // POST /api/heartbeat – local client servers call this every hour
+
 export async function POST(request) {
   try {
     const body = await request.json();

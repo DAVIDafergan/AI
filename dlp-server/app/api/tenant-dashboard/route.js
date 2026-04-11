@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { connectMongo, Tenant, Agent, TenantEvent } from "../../../lib/db.js";
 
+export const dynamic = "force-dynamic";
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, OPTIONS",
@@ -165,6 +166,7 @@ export async function GET(request) {
 
 function sanitizeForShell(value) {
   // Strip any characters that could break shell command context
+
   return String(value).replace(/[^a-zA-Z0-9_\-:.\/]/g, "");
 }
 

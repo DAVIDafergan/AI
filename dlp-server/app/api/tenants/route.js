@@ -3,6 +3,7 @@ import { requireSuperAdmin } from "../../../lib/superAdminAuth.js";
 import { connectMongo, Tenant, Agent } from "../../../lib/db.js";
 import { randomUUID } from "crypto";
 
+export const dynamic = "force-dynamic";
 const AGENT_ONLINE_THRESHOLD_MS = 60000;
 
 function slugify(name) {
@@ -75,6 +76,7 @@ export async function POST(request) {
     });
 
     // Return full credentials ONCE – client should store them securely
+
     return NextResponse.json({
       tenant,
       credentials: { apiKey, apiSecret },

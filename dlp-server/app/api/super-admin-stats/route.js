@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireSuperAdmin } from "../../../lib/superAdminAuth.js";
 import { connectMongo, Tenant, Agent, TenantEvent } from "../../../lib/db.js";
 
+export const dynamic = "force-dynamic";
 // GET /api/super-admin-stats – aggregated platform statistics
 export async function GET(request) {
   try {
@@ -81,6 +82,7 @@ export async function GET(request) {
     }).length;
 
     // System health: based on online ratio
+
     const healthPct = totalAgents > 0 ? Math.round((onlineAgents / totalAgents) * 100) : 100;
     const systemHealth = healthPct >= 80 ? "healthy" : healthPct >= 50 ? "degraded" : "critical";
 

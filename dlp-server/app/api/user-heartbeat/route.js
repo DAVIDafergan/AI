@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 import { connectMongo } from "../../../lib/db.js";
 import mongoose from "mongoose";
 
+export const dynamic = "force-dynamic";
 // Active user window: a user is "active" if their last heartbeat is within
 // this window. Set to 1.5× the 10-minute ping interval for a little slack.
 const ACTIVE_USER_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
@@ -97,6 +98,7 @@ export async function POST(request) {
 
 // ── GET handler – return active users for the org ────────────────────────────
 // "Active" = lastSeenAt within the last 15 minutes (1.5× the 10-min ping interval)
+
 export async function GET(request) {
   try {
     const organizationId = await resolveOrgId(request);

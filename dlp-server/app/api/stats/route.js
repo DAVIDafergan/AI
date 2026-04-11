@@ -15,6 +15,7 @@ import {
 } from "../../../lib/db.js";
 import { getDefaultPolicies } from "../../../lib/policies.js";
 
+export const dynamic = "force-dynamic";
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -87,6 +88,7 @@ export async function GET(request) {
     }
 
     // ── Default: org stats ──
+
     const stats = await getStats(organizationId);
 
     const recentLogsRaw = await getLogs(organizationId, 20);

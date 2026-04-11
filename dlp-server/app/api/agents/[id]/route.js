@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireSuperAdmin } from "../../../../lib/superAdminAuth.js";
 import { connectMongo, Agent } from "../../../../lib/db.js";
 
+export const dynamic = "force-dynamic";
 // GET /api/agents/[id]
 export async function GET(request, { params }) {
   try {
@@ -30,6 +31,7 @@ export async function PUT(request, { params }) {
 }
 
 // DELETE /api/agents/[id]
+
 export async function DELETE(request, { params }) {
   try {
     await requireSuperAdmin(request);

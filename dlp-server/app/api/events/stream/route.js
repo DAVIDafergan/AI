@@ -19,6 +19,7 @@ import { NextResponse } from "next/server";
 import { requireSuperAdmin } from "../../../../lib/superAdminAuth.js";
 import { connectMongo, Tenant, Agent, TenantEvent } from "../../../../lib/db.js";
 
+export const dynamic = "force-dynamic";
 // How often (ms) to push a full stats snapshot to connected clients.
 const STATS_INTERVAL_MS = 10_000;
 // How often (ms) to emit a keepalive ping so proxies/load-balancers don't
@@ -157,6 +158,7 @@ export async function GET(request) {
       "Cache-Control": "no-cache, no-transform",
       Connection:      "keep-alive",
       // Allow browser EventSource to reconnect automatically.
+
       "X-Accel-Buffering": "no",
     },
   });

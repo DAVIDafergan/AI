@@ -1412,69 +1412,33 @@ async function scanAndRestore(root) {
 /* ─────────────────────────────────────────────
    1B. Streaming-Aware De-anonymisation Engine
    ───────────────────────────────────────────── *
-   Problem: AI chat interfaces stream text into the DOM by repeatedly updating
-   the same text node's nodeValue (characterData mutations) or by appending
-   new text nodes.  A plain trailing debounce(500) keeps getting reset by each
-   streaming chunk, so restoration never fires until streaming stops entirely.
+   Problem: AI chat interfaces (ChatGPT, Claude, Gemini) use React / ProseMirror
+   which aggressively re-renders the DOM during streaming, overwriting any DOM
+   changes we make.  A rAF-batched approach introduces a ~16 ms window during
+   which React can replace the very text nodes we queued, causing the restored
+   text to disappear seconds after it first appears.
 
    Solution:
-     Fast path  – Vault tokens ([PERSON_1], [ACCOUNT_2], …) are in the
-                  in-memory _vault (O(1) lookup).  They are replaced
-                  synchronously, batched in a single requestAnimationFrame so
-                  we never cause mid-frame layout thrash.  A hasPartialVaultToken
-                  guard prevents replacing an incomplete token that is still
-                  being streamed (e.g. "[PERSON_" before "_1]" arrives).
+     Fast path  – Vault tokens ([PERSON_1], [ACCOUNT_2], …) are replaced
+                  synchronously inside the MutationObserver callback itself.
+                  The observer is DISCONNECTED before any DOM write and
+                  RECONNECTED immediately after, preventing infinite loops
+                  without relying on a mutable lock flag.  This eliminates
+                  the rAF delay so React has no window to overwrite us before
+                  we apply the restoration.  A hasPartialVaultToken guard
+                  prevents replacing an incomplete token still being streamed
+                  (e.g. "[PERSON_" before "_1]" arrives).
 
      Slow path  – Non-vault synthetic patterns (phone, email, credit-card, ID)
-                  still go through the async scanAndRestore() but are now
-                  triggered with debounceWithMaxWait(150 ms trailing, 800 ms max)
-                  so the scan fires at most every 800 ms even during continuous
-                  streaming — not just after it stops.
+                  still go through the async scanAndRestore() triggered with
+                  debounceWithMaxWait(150 ms trailing, 800 ms max) so the scan
+                  fires at most every 800 ms even during continuous streaming.
    ─────────────────────────────────────────────── */
 
-// ── Per-container async scan scheduler (replaces plain debouncedScanElement) ──
+// ── Per-container async scan scheduler ──────────────────────────────────────
 const scheduleAsyncScan = debounceWithMaxWait((el) => {
   try { scanAndRestore(el); } catch { /* ignore */ }
 }, 150, 800);
-
-// ── rAF-batched vault-token flush ──────────────────────────────────────────
-// Text nodes queued for vault-token replacement are collected here and
-// processed together in one animation frame to keep the DOM mutation cost low.
-const _vaultRestorePending = new Set();
-let   _vaultRestoreRafId   = null;
-
-function queueVaultRestore(textNode) {
-  _vaultRestorePending.add(textNode);
-  if (_vaultRestoreRafId === null) {
-    _vaultRestoreRafId = requestAnimationFrame(flushVaultRestores);
-  }
-}
-
-function flushVaultRestores() {
-  _vaultRestoreRafId = null;
-  if (_vaultRestorePending.size === 0) return;
-
-  const nodes = [..._vaultRestorePending];
-  _vaultRestorePending.clear();
-
-  let totalRestored = 0;
-  _dlpScanMutating = true;
-  try {
-    for (const textNode of nodes) {
-      if (!textNode.parentNode) continue;                                      // already detached
-      if (hasPartialVaultToken(textNode.nodeValue)) continue;                  // token still streaming in
-      if (textNode.parentElement?.closest("[data-restored='true']")) continue; // already inside a restored span
-      totalRestored += applyVaultReplacements(textNode);
-    }
-  } finally {
-    _dlpScanMutating = false;
-  }
-
-  if (totalRestored > 0) {
-    try { chrome.runtime.sendMessage({ type: "ITEMS_RESTORED", count: totalRestored }); } catch { /* ignore */ }
-    console.log(`${DLP_PREFIX} שוחזרו ${totalRestored} טוקנים מ-vault בזרם AI`);
-  }
-}
 
 /**
  * Returns true when text ends with an incomplete vault-token opener such as
@@ -1556,12 +1520,35 @@ function watchForAIOutput() {
   }
 
   /**
-   * Process a single text node that was newly added or mutated by the stream:
-   *  • Fast path  – queue a vault-token replacement (synchronous, rAF-batched)
-   *  • Slow path  – schedule an async container scan for non-vault patterns
-   * @param {Text} textNode
+   * Find the most specific stable root element to observe.
+   * A narrower root means fewer irrelevant mutations and better performance
+   * during streaming.  Falls back to document.body if nothing more specific
+   * is available.
+   * @returns {Element}
    */
-  function processTextNode(textNode) {
+  function findObserveTarget() {
+    for (const sel of ["main", "[role='main']", "#__next", "#root"]) {
+      try {
+        const el = document.querySelector(sel);
+        if (el) return el;
+      } catch { /* ignore */ }
+    }
+    return document.body;
+  }
+
+  const observeConfig = { childList: true, subtree: true, characterData: true };
+  let observeTarget = findObserveTarget();
+
+  /**
+   * Inspect a single text node and categorise it for the fast or slow path.
+   * Nodes that are already inside a restored span, or that live outside any
+   * recognised AI response container, are silently ignored.
+   *
+   * @param {Text}         textNode
+   * @param {Text[]}       vaultCandidates  Accumulator – nodes to vault-restore.
+   * @param {Set<Element>} containerSet     Accumulator – containers to async-scan.
+   */
+  function classifyTextNode(textNode, vaultCandidates, containerSet) {
     if (!textNode.parentNode) return;
     const text = textNode.nodeValue;
     if (!text || !/\S/.test(text)) return;
@@ -1573,44 +1560,48 @@ function watchForAIOutput() {
     const container = findAIContainer(parentEl);
     if (!container) return;
 
-    // Fast path: vault tokens resolved from in-memory map — no async needed
-    // Use for-in to avoid the Object.keys() array allocation on every mutation
+    // Fast path: candidate for vault-token replacement (O(1) vault check)
     let hasVaultEntries = false;
     for (const k in _vault) {
       if (Object.prototype.hasOwnProperty.call(_vault, k)) { hasVaultEntries = true; break; }
     }
     if (hasVaultEntries) {
-      queueVaultRestore(textNode);
+      vaultCandidates.push(textNode);
     }
 
-    // Slow path: async scan for phone numbers, emails, CC numbers, etc.
-    scheduleAsyncScan(container);
+    // Slow path: schedule async scan for the enclosing container
+    containerSet.add(container);
   }
 
   const outputObserver = new MutationObserver((mutations) => {
-    // Skip mutations that we ourselves triggered to avoid infinite loops
+    // Skip mutations triggered by scanAndRestore (async slow path) to avoid
+    // redundant re-processing of data-restored spans.
     if (_dlpScanMutating) return;
+
+    const vaultCandidates  = [];
+    const containersToScan = new Set();
 
     for (const mutation of mutations) {
       if (mutation.type === "childList") {
         for (const node of mutation.addedNodes) {
           if (node.nodeType === Node.TEXT_NODE) {
             // Raw text node streamed directly into the DOM
-            processTextNode(/** @type {Text} */ (node));
+            classifyTextNode(/** @type {Text} */ (node), vaultCandidates, containersToScan);
           } else if (node.nodeType === Node.ELEMENT_NODE) {
             // Walk every text node inside the newly added element subtree
             const walker = document.createTreeWalker(
               node,
               NodeFilter.SHOW_TEXT,
               {
-                // Minimal filter: defer content-based rejection to processTextNode
                 acceptNode(n) {
                   return n.nodeValue ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
                 },
               },
             );
             let tn;
-            while ((tn = walker.nextNode())) processTextNode(/** @type {Text} */ (tn));
+            while ((tn = walker.nextNode())) {
+              classifyTextNode(/** @type {Text} */ (tn), vaultCandidates, containersToScan);
+            }
           }
         }
       } else if (mutation.type === "characterData") {
@@ -1618,17 +1609,59 @@ function watchForAIOutput() {
         // used by ChatGPT, Claude, Gemini, and most React-based AI chat UIs.
         const target = mutation.target;
         if (target.nodeType === Node.TEXT_NODE) {
-          processTextNode(/** @type {Text} */ (target));
+          classifyTextNode(/** @type {Text} */ (target), vaultCandidates, containersToScan);
         }
       }
     }
+
+    // ── Fast path: apply vault-token restorations synchronously ──────────────
+    // CRITICAL: Disconnect the observer BEFORE any DOM write so our own
+    // replaceChild calls do not re-trigger this callback (infinite-loop guard).
+    // Reconnect immediately in the finally block so subsequent React mutations
+    // (e.g. the next streaming chunk) are still observed.  This is more robust
+    // than a mutable lock flag because it holds even when React's reconciler
+    // fires synchronously within the same microtask batch.
+    if (vaultCandidates.length > 0) {
+      outputObserver.disconnect();
+      let totalRestored = 0;
+      try {
+        for (const tn of vaultCandidates) {
+          if (!tn.parentNode) continue;                                       // detached by React before we got here
+          if (hasPartialVaultToken(tn.nodeValue)) continue;                   // token still streaming in
+          if (tn.parentElement?.closest("[data-restored='true']")) continue;  // already inside a restored span
+          totalRestored += applyVaultReplacements(tn);
+        }
+      } finally {
+        // Always reconnect – even if an error occurs mid-loop
+        outputObserver.observe(observeTarget, observeConfig);
+      }
+      if (totalRestored > 0) {
+        try { chrome.runtime.sendMessage({ type: "ITEMS_RESTORED", count: totalRestored }); } catch { /* ignore */ }
+        console.log(`${DLP_PREFIX} שוחזרו ${totalRestored} טוקנים מ-vault בזרם AI`);
+      }
+    }
+
+    // ── Slow path: async scan for synthetic patterns (phone, email, CC, ID) ──
+    for (const container of containersToScan) {
+      scheduleAsyncScan(container);
+    }
   });
 
-  outputObserver.observe(document.body, {
-    childList:     true,
-    subtree:       true,
-    characterData: true,
-  });
+  outputObserver.observe(observeTarget, observeConfig);
+
+  // Watchdog: if the initial observe target is later removed from the DOM
+  // (e.g. a framework re-mount), fall back to document.body so we never go dark.
+  if (observeTarget !== document.body) {
+    new MutationObserver(() => {
+      if (!document.contains(observeTarget)) {
+        observeTarget = document.body;
+        try {
+          outputObserver.disconnect();
+          outputObserver.observe(observeTarget, observeConfig);
+        } catch { /* ignore */ }
+      }
+    }).observe(document.body, { childList: true, subtree: true });
+  }
 }
 
 /* ─────────────────────────────────────────────

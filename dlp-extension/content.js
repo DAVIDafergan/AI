@@ -1189,7 +1189,7 @@ const SYNTHETIC_PATTERNS = [
   /\b3\d{8}\b/g,                              // ID (starts with 3, 9 digits)
   /user_\d{3}@[a-z]+\.[a-z]{2,}/g,           // Synthetic email
   /4\d{3}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}/g,  // Credit card (Visa synthetic)
-  /\[[A-Z][A-Z0-9_]*_\d+\]/g,                   // Smart masking vault tokens: [PERSON_1], [ACCOUNT_1], …
+  /\[[A-Z][A-Z0-9_]*_\d+\]/gi,                  // Smart masking vault tokens: [PERSON_1], [ACCOUNT_1], … (case-insensitive)
 ];
 
 // Vault-token pattern hoisted to avoid recompilation on every call (g flag – reset lastIndex before use)
@@ -1208,8 +1208,20 @@ const AI_RESPONSE_SELECTORS = [
 
 async function lookupSynthetic(syntheticValue) {
   // ── 1. Check local vault first (tokens from Smart Masking) ──
-  if (Object.prototype.hasOwnProperty.call(_vault, syntheticValue)) {
-    return _vault[syntheticValue];
+  // Build candidate keys: the value as-is, uppercased, with/without brackets.
+  const stripped = syntheticValue.replace(/^\[|\]$/g, "");
+  const candidates = new Set([
+    syntheticValue,
+    syntheticValue.toUpperCase(),
+    stripped,
+    stripped.toUpperCase(),
+    `[${stripped}]`,
+    `[${stripped.toUpperCase()}]`,
+  ]);
+  for (const key of candidates) {
+    if (Object.prototype.hasOwnProperty.call(_vault, key)) {
+      return _vault[key];
+    }
   }
 
   if (restorationCache.has(syntheticValue)) {

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import mongoose from "mongoose";
 import { connectMongo, Tenant } from "../../../../lib/db.js";
 
+export const dynamic = "force-dynamic";
 // ── ScanReport Schema ──
 const ScanReportSchema = new mongoose.Schema(
   {
@@ -55,6 +56,7 @@ export async function POST(request) {
     }
 
     // ── Persist ──────────────────────────────────────────────────────────────
+
     const report = await ScanReport.create({
       tenantId: tenant._id,
       totalFilesScanned,

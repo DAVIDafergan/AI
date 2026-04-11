@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireSuperAdmin } from "../../../lib/superAdminAuth.js";
 import { connectMongo, Tenant, TenantEvent } from "../../../lib/db.js";
 
+export const dynamic = "force-dynamic";
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin":  "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -116,6 +117,7 @@ export async function POST(request) {
     });
 
     // Update tenant usage counters in a single operation
+
     const usageIncrement = resolvedEventType === "block"
       ? { "usage.totalBlocks": 1, "usage.totalScans": 1, "usage.monthlyScans": 1 }
       : { "usage.totalScans": 1, "usage.monthlyScans": 1 };

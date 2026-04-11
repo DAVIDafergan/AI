@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { connectMongo, Agent, TenantEvent } from "../../../lib/db.js";
 
+export const dynamic = "force-dynamic";
 // POST /api/agent-ping – heartbeat from agent with metrics
 export async function POST(request) {
   try {
@@ -37,6 +38,7 @@ export async function POST(request) {
     else if ((agent.metrics?.documentsIndexed || 0) === 0) syncStatus = "learning";
 
     // Log connection event
+
     await TenantEvent.create({
       tenantId: agent.tenantId,
       agentId:  agent._id,

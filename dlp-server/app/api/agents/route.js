@@ -3,6 +3,7 @@ import { requireSuperAdmin } from "../../../lib/superAdminAuth.js";
 import { connectMongo, Agent } from "../../../lib/db.js";
 import { randomUUID } from "crypto";
 
+export const dynamic = "force-dynamic";
 // GET /api/agents – list agents (optionally filter by tenantId)
 export async function GET(request) {
   try {
@@ -33,6 +34,7 @@ export async function GET(request) {
 }
 
 // POST /api/agents – create agent
+
 export async function POST(request) {
   try {
     await requireSuperAdmin(request);

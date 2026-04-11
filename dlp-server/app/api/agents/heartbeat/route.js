@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { connectMongo, Tenant, Agent, TenantEvent } from "../../../../lib/db.js";
 
+export const dynamic = "force-dynamic";
 /**
  * POST /api/agents/heartbeat
  *
@@ -121,6 +122,7 @@ export async function POST(request) {
         filesScanned,
         sensitiveTermsFound,
         // NOTE: No sensitive content is stored here, only the count.
+
       },
     });
 

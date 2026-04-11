@@ -12,6 +12,7 @@ import { connectMongo, Tenant } from "../../../lib/db.js";
 import { connectToDB } from "../../../lib/mongodb.js";
 import mongoose from "mongoose";
 
+export const dynamic = "force-dynamic";
 const ACTIVE_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
 
 // ── UserHeartbeat model (mirrors user-heartbeat/route.js schema) ──────────────
@@ -50,6 +51,7 @@ export async function GET(request) {
     }
 
     // The user-heartbeat endpoint stores organizationId = String(tenant._id)
+
     const organizationId = String(tenant._id);
 
     const cutoff = new Date(Date.now() - ACTIVE_WINDOW_MS);

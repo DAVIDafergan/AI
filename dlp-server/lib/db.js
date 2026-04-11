@@ -1,28 +1,49 @@
-// מסד נתונים בזיכרון – In-Memory Store עם תמיכה ב-Multi-tenancy
-// TODO: להעביר ל-MongoDB/Redis בסביבת Production
+// מסד נתונים – MongoDB-backed data access layer with Mongoose models
 
 import { randomUUID } from "crypto";
 import mongoose from "mongoose";
 
 // ── MongoDB connection (used by new multi-tenant models) ──
-let mongooseConnection = null;
+// Cache the promise on a module-level global so that Next.js hot-reloads and
+// concurrent requests share a single connection pool rather than spawning a new
+// one on every invocation.
+const _global = globalThis;
 
 // Disable buffering globally – operations will throw immediately if there is no
 // active connection instead of silently queuing and timing out after 10 s.
 mongoose.set("bufferCommands", false);
 
 export async function connectMongo() {
-  if (mongooseConnection && mongoose.connection.readyState === 1) {
-    return mongooseConnection;
+  if (!process.env.MONGODB_URI) {
+    throw new Error(
+      "[connectMongo] MONGODB_URI environment variable is not set. " +
+        "Please configure it before starting the server."
+    );
   }
-  const uri = process.env.MONGODB_URI || "mongodb://mongo:CJIYYeWjRwoQChiJPyxBjQGbqbsfgQeu@ballast.proxy.rlwy.net:56402";
-  try {
-    mongooseConnection = await mongoose.connect(uri);
-    return mongooseConnection;
-  } catch (err) {
-    console.error("[connectMongo] Failed to connect:", err.message);
-    throw err;
+
+  // Reuse an in-flight or resolved connection promise when one already exists.
+  if (_global._mongooseConnectionPromise) {
+    return _global._mongooseConnectionPromise;
   }
+
+  // If mongoose already has an active connection (e.g. after module reload)
+  // wrap it in a resolved promise and cache it.
+  if (mongoose.connection.readyState === 1) {
+    _global._mongooseConnectionPromise = Promise.resolve(mongoose.connection);
+    return _global._mongooseConnectionPromise;
+  }
+
+  _global._mongooseConnectionPromise = mongoose
+    .connect(process.env.MONGODB_URI)
+    .catch((err) => {
+      // Clear the cache so the next call retries instead of getting a rejected
+      // promise forever.
+      _global._mongooseConnectionPromise = null;
+      console.error("[connectMongo] Failed to connect:", err.message);
+      throw err;
+    });
+
+  return _global._mongooseConnectionPromise;
 }
 
 // ── Tenant Schema ──
@@ -46,6 +67,8 @@ const TenantSchema = new mongoose.Schema(
       allowedCategories:  [String],
       webhookUrl:         { type: String },
       slackChannel:       { type: String },
+      policies:           { type: [mongoose.Schema.Types.Mixed], default: undefined },
+      customKeywords:     { type: [mongoose.Schema.Types.Mixed], default: undefined },
     },
     usage: {
       totalScans:    { type: Number, default: 0 },
@@ -114,238 +137,342 @@ export const Tenant = mongoose.models.Tenant || mongoose.model("Tenant", TenantS
 export const Agent  = mongoose.models.Agent  || mongoose.model("Agent",  AgentSchema);
 export const TenantEvent = mongoose.models.TenantEvent || mongoose.model("TenantEvent", TenantEventSchema);
 
-// ── מאגרי נתונים ──
-const organizations = new Map(); // organizationId → orgData
-const mappings = new Map();      // mappingId → { tag, originalText, organizationId, ... }
-const logs = new Map();          // logId → logEntry
-const policies = new Map();      // organizationId → [ policy, ... ]
-const customKeywords = new Map();// organizationId → [ keyword, ... ]
+// ── VaultMapping Schema (synthetic → original text) ──
+const VaultMappingSchema = new mongoose.Schema(
+  {
+    organizationId: { type: String, required: true, index: true },
+    tag:            { type: String, required: true, unique: true, index: true },
+    originalText:   { type: String, required: true },
+    category:       { type: String, default: "" },
+    label:          { type: String, default: "" },
+    source:         { type: String, default: "" },
+  },
+  { timestamps: { createdAt: "createdAt", updatedAt: false } }
+);
+
+// ── ApiKey Schema ──
+const ApiKeySchema = new mongoose.Schema(
+  {
+    key:            { type: String, required: true, unique: true },
+    organizationId: { type: String, required: true, index: true },
+  },
+  { timestamps: true }
+);
+
+export const VaultMapping = mongoose.models.VaultMapping || mongoose.model("VaultMapping", VaultMappingSchema);
+export const ApiKey = mongoose.models.ApiKey || mongoose.model("ApiKey", ApiKeySchema);
+
+// ── In-memory stores for non-migrated data ──
 const alerts = new Map();        // alertId → alertData
-const apiKeys = new Map();       // apiKey → organizationId
 const users = new Map();         // email → userStatsObject
 
-// ── ברירת מחדל: ארגון "default-org" ──
-function seed() {
-  const defaultOrgId = "default-org";
-  organizations.set(defaultOrgId, {
-    id: defaultOrgId,
-    name: "ארגון ברירת מחדל",
-    createdAt: new Date().toISOString(),
-    contactEmail: "",
-    plan: "enterprise",
-    notes: "",
-    status: "active",
-    settings: { language: "he", timezone: "Asia/Jerusalem" },
-  });
-  // הוסף מפתחות פיתוח רק בסביבת dev/test
-  if (process.env.NODE_ENV !== "production") {
-    apiKeys.set("dev-api-key-12345", defaultOrgId);
-    apiKeys.set("test-api-key-99999", defaultOrgId);
-  }
-  // מפתח קבוע מ-env (עובד גם ב-production, שרד הפעלות מחדש)
-  if (process.env.DEFAULT_API_KEY) {
-    apiKeys.set(process.env.DEFAULT_API_KEY, defaultOrgId);
-  }
-}
-seed();
-
 // ── ניהול ארגונים ──
-export function createOrganization({ name, id, contactEmail = "", plan = "basic", notes = "", status = "active", initialPolicy = [] } = {}) {
-  const orgId = id || randomUUID();
-  const org = {
-    id: orgId,
+export async function createOrganization({ name, contactEmail = "", plan = "basic", notes = "", status = "active", initialPolicy = [] } = {}) {
+  await connectMongo();
+  const newApiKeyValue = `key-${randomUUID().replace(/-/g, "").slice(0, 20)}`;
+  const slug = (name || "org")
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9-]/g, "")
+    .slice(0, 40) + "-" + randomUUID().slice(0, 8);
+  const mongoStatus = ["active", "suspended", "trial", "expired"].includes(status) ? status : "trial";
+  const mongoPlan =
+    plan === "pro" ? "professional" :
+    plan === "enterprise" ? "enterprise" :
+    "starter";
+  const org = await Tenant.create({
     name: name || "ארגון חדש",
-    createdAt: new Date().toISOString(),
-    contactEmail,
-    plan,       // basic | pro | enterprise
-    notes,
-    status,     // active | suspended | trial
-    settings: { language: "he", timezone: "Asia/Jerusalem" },
-  };
-  organizations.set(orgId, org);
-  const newApiKey = `key-${randomUUID().replace(/-/g, "").slice(0, 20)}`;
-  apiKeys.set(newApiKey, orgId);
-  // שמירת מדיניות ראשונית אם סופקה
+    slug,
+    apiKey: newApiKeyValue,
+    apiSecret: randomUUID(),
+    contactEmail: contactEmail || "noreply@example.com",
+    plan: mongoPlan,
+    status: mongoStatus,
+  });
+  await ApiKey.create({ key: newApiKeyValue, organizationId: org._id.toString() });
   if (initialPolicy && initialPolicy.length > 0) {
-    policies.set(orgId, initialPolicy);
+    policies.set(org._id.toString(), initialPolicy);
   }
-  return { ...org, apiKey: newApiKey };
+  return {
+    id: org._id.toString(),
+    name: org.name,
+    createdAt: org.createdAt.toISOString(),
+    contactEmail: org.contactEmail,
+    plan,
+    notes,
+    status,
+    settings: { language: "he", timezone: "Asia/Jerusalem" },
+    apiKey: newApiKeyValue,
+  };
 }
 
-export function getOrganization(orgId) {
-  return organizations.get(orgId) || null;
+export async function getOrganization(orgId) {
+  await connectMongo();
+  let tenant = null;
+  try {
+    tenant = await Tenant.findById(orgId).lean();
+  } catch {
+    tenant = await Tenant.findOne({ slug: orgId }).lean();
+  }
+  if (!tenant) return null;
+  return {
+    id: tenant._id.toString(),
+    name: tenant.name,
+    createdAt: tenant.createdAt?.toISOString?.() || new Date().toISOString(),
+    contactEmail: tenant.contactEmail || "",
+    plan: tenant.plan || "starter",
+    notes: "",
+    status: tenant.status || "active",
+    settings: tenant.settings || { language: "he", timezone: "Asia/Jerusalem" },
+  };
 }
 
-export function getAllOrganizations() {
-  return [...organizations.values()];
+export async function getAllOrganizations() {
+  await connectMongo();
+  const tenants = await Tenant.find().lean();
+  return tenants.map((t) => ({
+    id: t._id.toString(),
+    name: t.name,
+    createdAt: t.createdAt?.toISOString?.() || new Date().toISOString(),
+    contactEmail: t.contactEmail || "",
+    plan: t.plan || "starter",
+    notes: "",
+    status: t.status || "active",
+    settings: t.settings || {},
+  }));
 }
 
-export function updateOrganization(orgId, updates) {
-  const existing = organizations.get(orgId);
-  if (!existing) return null;
-  const updated = { ...existing, ...updates, id: orgId };
-  organizations.set(orgId, updated);
-  return updated;
+export async function updateOrganization(orgId, updates) {
+  await connectMongo();
+  const mongoUpdates = {};
+  if (updates.name)         mongoUpdates.name         = updates.name;
+  if (updates.contactEmail) mongoUpdates.contactEmail = updates.contactEmail;
+  if (updates.status)       mongoUpdates.status       = updates.status;
+  if (updates.plan) {
+    mongoUpdates.plan =
+      updates.plan === "pro" ? "professional" :
+      updates.plan === "enterprise" ? "enterprise" :
+      "starter";
+  }
+  let tenant = null;
+  try {
+    tenant = await Tenant.findByIdAndUpdate(orgId, { $set: mongoUpdates }, { new: true }).lean();
+  } catch {
+    tenant = await Tenant.findOneAndUpdate({ slug: orgId }, { $set: mongoUpdates }, { new: true }).lean();
+  }
+  if (!tenant) return null;
+  return {
+    id: tenant._id.toString(),
+    name: tenant.name,
+    createdAt: tenant.createdAt?.toISOString?.() || new Date().toISOString(),
+    contactEmail: tenant.contactEmail || "",
+    plan: tenant.plan || "starter",
+    notes: updates.notes || "",
+    status: tenant.status || "active",
+    settings: tenant.settings || {},
+  };
 }
 
 // ── מחיקת ארגון + כל הנתונים הקשורים ──
-export function deleteOrganization(orgId) {
-  if (!organizations.has(orgId)) return false;
-  organizations.delete(orgId);
-  // מחיקת כל ה-API keys של הארגון
-  for (const [key, oid] of apiKeys.entries()) {
-    if (oid === orgId) apiKeys.delete(key);
+export async function deleteOrganization(orgId) {
+  await connectMongo();
+  let tenant = null;
+  try {
+    tenant = await Tenant.findByIdAndDelete(orgId).lean();
+  } catch {
+    tenant = await Tenant.findOneAndDelete({ slug: orgId }).lean();
   }
-  // מחיקת logs
-  for (const [id, doc] of logs.entries()) {
-    if (doc.organizationId === orgId) logs.delete(id);
-  }
-  // מחיקת mappings
-  for (const [id, doc] of mappings.entries()) {
-    if (doc.organizationId === orgId) mappings.delete(id);
-  }
-  // מחיקת policies
-  policies.delete(orgId);
-  // מחיקת keywords
-  customKeywords.delete(orgId);
-  // מחיקת alerts
-  for (const [id, doc] of alerts.entries()) {
-    if (doc.organizationId === orgId) alerts.delete(id);
-  }
+  if (!tenant) return false;
+  const resolvedId = tenant._id.toString();
+  await Promise.all([
+    ApiKey.deleteMany({ organizationId: resolvedId }),
+    VaultMapping.deleteMany({ organizationId: resolvedId }),
+    TenantEvent.deleteMany({ tenantId: tenant._id }),
+  ]);
+  policies.delete(resolvedId);
+  customKeywords.delete(resolvedId);
   return true;
 }
 
 // ── סטטיסטיקות מהירות לארגון ──
-export function getOrganizationStats(orgId) {
-  let totalBlocked = 0;
-  let lastBlockedAt = null;
-  let totalThreat = 0;
-
-  for (const doc of logs.values()) {
-    if (doc.organizationId === orgId) {
-      totalBlocked++;
-      totalThreat += doc.threatScore || 0;
-      if (!lastBlockedAt || doc.timestamp > lastBlockedAt) {
-        lastBlockedAt = doc.timestamp;
-      }
-    }
+export async function getOrganizationStats(orgId) {
+  await connectMongo();
+  let tenantId;
+  try {
+    tenantId = new mongoose.Types.ObjectId(orgId);
+  } catch {
+    return { totalBlocked: 0, lastBlockedAt: null, avgThreatScore: 0 };
   }
-
-  const avgThreatScore = totalBlocked > 0 ? Math.round(totalThreat / totalBlocked) : 0;
+  const [totalBlocked, agg] = await Promise.all([
+    TenantEvent.countDocuments({ tenantId, eventType: "block" }),
+    TenantEvent.aggregate([
+      { $match: { tenantId, eventType: "block" } },
+      {
+        $group: {
+          _id: null,
+          avgThreat: { $avg: { $ifNull: ["$details.threatScore", 0] } },
+          lastAt:    { $max: "$timestamp" },
+        },
+      },
+    ]),
+  ]);
+  const avgThreatScore = agg[0] ? Math.round(agg[0].avgThreat || 0) : 0;
+  const lastBlockedAt  = agg[0]?.lastAt?.toISOString?.() || null;
   return { totalBlocked, lastBlockedAt, avgThreatScore };
 }
 
 // ── כל הארגונים עם סטטיסטיקות ──
-export function getAllOrganizationsWithStats() {
-  return [...organizations.values()].map((org) => ({
-    ...org,
-    stats: getOrganizationStats(org.id),
-  }));
+export async function getAllOrganizationsWithStats() {
+  const orgs = await getAllOrganizations();
+  return Promise.all(
+    orgs.map(async (org) => ({
+      ...org,
+      stats: await getOrganizationStats(org.id),
+    }))
+  );
 }
 
 // ── כל ה-API Keys של ארגון ──
-export function getApiKeysForOrg(orgId) {
-  const result = [];
-  for (const [key, oid] of apiKeys.entries()) {
-    if (oid === orgId) result.push(key);
-  }
-  return result;
+export async function getApiKeysForOrg(orgId) {
+  await connectMongo();
+  const docs = await ApiKey.find({ organizationId: orgId }).lean();
+  return docs.map((d) => d.key);
 }
 
 // ── ניהול API Keys ──
-export function validateApiKey(key) {
-  const orgId = apiKeys.get(key);
-  if (!orgId) return null;
-  const org = organizations.get(orgId);
-  return org ? { organizationId: orgId, orgName: org.name } : null;
+export async function validateApiKey(key) {
+  await connectMongo();
+  // Try the dedicated ApiKey collection first
+  const apiKeyDoc = await ApiKey.findOne({ key }).lean();
+  if (apiKeyDoc) {
+    let tenant = null;
+    try {
+      tenant = await Tenant.findById(apiKeyDoc.organizationId).lean();
+    } catch { /* invalid ObjectId */ }
+    if (!tenant) return null;
+    return { organizationId: apiKeyDoc.organizationId, orgName: tenant.name };
+  }
+  // Fallback: Tenant.apiKey field (for tenants provisioned via super-admin)
+  const tenant = await Tenant.findOne({ apiKey: key }).lean();
+  if (!tenant) return null;
+  return { organizationId: tenant._id.toString(), orgName: tenant.name };
 }
 
-export function createApiKey(orgId) {
+export async function createApiKey(orgId) {
+  await connectMongo();
   const key = `key-${randomUUID().replace(/-/g, "").slice(0, 20)}`;
-  apiKeys.set(key, orgId);
+  await ApiKey.create({ key, organizationId: orgId });
   return key;
 }
 
 // ── שמירת מיפוי (synthetic → original) ──
-export function saveMappings(organizationId, entries) {
-  // entries: [{ tag, originalText, category, label, source }]
-  const saved = [];
-  for (const entry of entries) {
-    const id = randomUUID();
-    const doc = {
-      id,
-      organizationId,
-      tag: entry.tag,
-      originalText: entry.originalText,
-      category: entry.category,
-      label: entry.label || "",
-      source: entry.source || "",
-      createdAt: new Date().toISOString(),
-    };
-    mappings.set(id, doc);
-    saved.push(doc);
-  }
+export async function saveMappings(organizationId, entries) {
+  await connectMongo();
+  const docs = entries.map((entry) => ({
+    organizationId,
+    tag: entry.tag,
+    originalText: entry.originalText,
+    category: entry.category || "",
+    label: entry.label || "",
+    source: entry.source || "",
+  }));
+  // ordered:false so a duplicate-tag error on one entry won't abort the rest
+  const saved = await VaultMapping.insertMany(docs, { ordered: false }).catch((err) => {
+    // Swallow only if every write error is a duplicate-key (E11000); re-throw otherwise
+    const allDuplicates =
+      err?.writeErrors?.length > 0 &&
+      err.writeErrors.every((e) => e.code === 11000);
+    if (!allDuplicates && err.code !== 11000) throw err;
+    return err.insertedDocs || [];
+  });
   return saved;
 }
 
-export function getMappings(organizationId, limit = 100) {
-  const result = [];
-  for (const doc of mappings.values()) {
-    if (doc.organizationId === organizationId) result.push(doc);
-  }
-  return result
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-    .slice(0, limit);
+export async function getMappings(organizationId, limit = 100) {
+  await connectMongo();
+  const query = organizationId ? { organizationId } : {};
+  return VaultMapping.find(query)
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .lean();
 }
 
-export function getMappingByTag(tag) {
-  for (const doc of mappings.values()) {
-    if (doc.tag === tag) return doc;
-  }
-  return null;
+export async function getMappingByTag(tag) {
+  await connectMongo();
+  return VaultMapping.findOne({ tag }).lean();
 }
 
 // ── שמירת לוג ──
-export function saveLog(organizationId, entry) {
-  const id = randomUUID();
-  const doc = {
-    id,
-    organizationId,
-    timestamp: new Date().toISOString(),
-    type: entry.type || "UNKNOWN",
-    synthetic: entry.synthetic || "",
-    originalText: entry.originalText || "",
-    source: entry.source || "unknown",
-    status: entry.status || "blocked",
-    threatScore: entry.threatScore || 0,
-    detectionCount: entry.detectionCount || 0,
-    replacements: entry.replacements || [],
-  };
-  logs.set(id, doc);
-  return doc;
+export async function saveLog(organizationId, entry) {
+  await connectMongo();
+  let tenantId;
+  try {
+    tenantId = new mongoose.Types.ObjectId(organizationId);
+  } catch {
+    return null; // organizationId is not a valid ObjectId
+  }
+  const eventType =
+    entry.status === "blocked" || (entry.detectionCount || 0) > 0 ? "block" : "scan";
+  const score = entry.threatScore || 0;
+  const severity =
+    score >= 80 ? "critical" :
+    score >= 50 ? "high" :
+    score >= 20 ? "medium" : "low";
+  return TenantEvent.create({
+    tenantId,
+    eventType,
+    severity,
+    category: entry.type || entry.category || "",
+    userEmail: entry.userEmail || "",
+    details: {
+      type: entry.type,
+      synthetic: entry.synthetic,
+      originalText: entry.originalText,
+      source: entry.source,
+      status: entry.status,
+      threatScore: entry.threatScore,
+      detectionCount: entry.detectionCount,
+      replacements: entry.replacements,
+    },
+  });
 }
 
-export function getLogs(organizationId, limit = 50) {
-  const result = [];
-  for (const doc of logs.values()) {
-    if (doc.organizationId === organizationId) result.push(doc);
+export async function getLogs(organizationId, limit = 50) {
+  await connectMongo();
+  const query = {};
+  if (organizationId) {
+    try {
+      query.tenantId = new mongoose.Types.ObjectId(organizationId);
+    } catch {
+      return [];
+    }
   }
-  return result
-    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
-    .slice(0, limit);
+  const docs = await TenantEvent.find(query)
+    .sort({ timestamp: -1 })
+    .limit(limit)
+    .lean();
+  return docs.map((doc) => ({
+    id: doc._id.toString(),
+    organizationId: doc.tenantId?.toString() || "",
+    timestamp: doc.timestamp?.toISOString?.() || new Date().toISOString(),
+    type: doc.details?.type || doc.category || doc.eventType || "UNKNOWN",
+    synthetic: doc.details?.synthetic || "",
+    originalText: doc.details?.originalText || "",
+    source: doc.details?.source || "unknown",
+    status: doc.details?.status || (doc.eventType === "block" ? "blocked" : "clean"),
+    threatScore: doc.details?.threatScore || 0,
+    detectionCount: doc.details?.detectionCount || 0,
+    replacements: doc.details?.replacements || [],
+    userEmail: doc.userEmail || "",
+  }));
 }
 
 // ── סטטיסטיקות דינמיות ──
-export function getStats(organizationId) {
-  const orgLogs = [];
-  const orgMappings = [];
-
-  for (const doc of logs.values()) {
-    if (doc.organizationId === organizationId) orgLogs.push(doc);
-  }
-  for (const doc of mappings.values()) {
-    if (doc.organizationId === organizationId) orgMappings.push(doc);
-  }
+export async function getStats(organizationId) {
+  const [orgLogs, orgMappings] = await Promise.all([
+    getLogs(organizationId, 10000),
+    getMappings(organizationId, 10000),
+  ]);
 
   const totalBlocked = orgLogs.length;
   const avgThreatScore =
@@ -422,20 +549,58 @@ export function getStats(organizationId) {
   };
 }
 
-// ── ניהול מדיניות ──
-export function savePolicies(organizationId, policiesArray) {
-  policies.set(organizationId, policiesArray);
+// ── ניהול מדיניות (MongoDB-backed) ──
+export async function savePolicies(organizationId, policiesArray) {
+  await connectMongo();
+  try {
+    let updated = null;
+    try {
+      updated = await Tenant.findByIdAndUpdate(
+        organizationId,
+        { $set: { "settings.policies": policiesArray } },
+        { new: true }
+      ).lean();
+    } catch {
+      // organizationId is not a valid ObjectId (e.g. it is a slug string) – fall back to slug lookup
+      updated = await Tenant.findOneAndUpdate(
+        { slug: organizationId },
+        { $set: { "settings.policies": policiesArray } },
+        { new: true }
+      ).lean();
+    }
+    if (!updated) {
+      console.warn("[savePolicies] Tenant not found:", organizationId);
+    }
+  } catch (err) {
+    console.error("[savePolicies] Failed to persist policies:", err.message);
+  }
   return policiesArray;
 }
 
-export function getPolicies(organizationId) {
-  return policies.get(organizationId) || null;
+export async function getPolicies(organizationId) {
+  await connectMongo();
+  try {
+    let tenant = null;
+    try {
+      tenant = await Tenant.findById(organizationId, { "settings.policies": 1 }).lean();
+    } catch {
+      // organizationId is not a valid ObjectId – fall back to slug lookup
+      tenant = await Tenant.findOne({ slug: organizationId }, { "settings.policies": 1 }).lean();
+    }
+    if (tenant?.settings?.policies?.length > 0) {
+      return tenant.settings.policies;
+    }
+  } catch (err) {
+    console.error("[getPolicies] DB error:", err.message);
+  }
+  return null;
 }
 
 // ── מילות מפתח מותאמות ──
-export function saveCustomKeyword(organizationId, entry) {
+// ── מילות מפתח מותאמות (MongoDB-backed) ──
+export async function saveCustomKeyword(organizationId, entry) {
+  await connectMongo();
   const id = randomUUID();
-  const keywords = customKeywords.get(organizationId) || [];
   const doc = {
     id,
     organizationId,
@@ -445,20 +610,69 @@ export function saveCustomKeyword(organizationId, entry) {
     severity: entry.severity || "medium",
     createdAt: new Date().toISOString(),
   };
-  keywords.push(doc);
-  customKeywords.set(organizationId, keywords);
+  try {
+    let updated = null;
+    try {
+      updated = await Tenant.findByIdAndUpdate(
+        organizationId,
+        { $push: { "settings.customKeywords": doc } },
+        { new: true }
+      ).lean();
+    } catch {
+      // organizationId is not a valid ObjectId – fall back to slug lookup
+      updated = await Tenant.findOneAndUpdate(
+        { slug: organizationId },
+        { $push: { "settings.customKeywords": doc } },
+        { new: true }
+      ).lean();
+    }
+    if (!updated) console.warn("[saveCustomKeyword] Tenant not found:", organizationId);
+  } catch (err) {
+    console.error("[saveCustomKeyword] Failed:", err.message);
+  }
   return doc;
 }
 
-export function getCustomKeywords(organizationId) {
-  return customKeywords.get(organizationId) || [];
+export async function getCustomKeywords(organizationId) {
+  await connectMongo();
+  try {
+    let tenant = null;
+    try {
+      tenant = await Tenant.findById(organizationId, { "settings.customKeywords": 1 }).lean();
+    } catch {
+      // organizationId is not a valid ObjectId – fall back to slug lookup
+      tenant = await Tenant.findOne({ slug: organizationId }, { "settings.customKeywords": 1 }).lean();
+    }
+    return tenant?.settings?.customKeywords || [];
+  } catch (err) {
+    console.error("[getCustomKeywords] DB error:", err.message);
+    return [];
+  }
 }
 
-export function deleteCustomKeyword(organizationId, keywordId) {
-  const keywords = customKeywords.get(organizationId) || [];
-  const filtered = keywords.filter((k) => k.id !== keywordId);
-  customKeywords.set(organizationId, filtered);
-  return filtered;
+export async function deleteCustomKeyword(organizationId, keywordId) {
+  await connectMongo();
+  try {
+    let updated = null;
+    try {
+      updated = await Tenant.findByIdAndUpdate(
+        organizationId,
+        { $pull: { "settings.customKeywords": { id: keywordId } } },
+        { new: true }
+      ).lean();
+    } catch {
+      // organizationId is not a valid ObjectId – fall back to slug lookup
+      updated = await Tenant.findOneAndUpdate(
+        { slug: organizationId },
+        { $pull: { "settings.customKeywords": { id: keywordId } } },
+        { new: true }
+      ).lean();
+    }
+    return updated?.settings?.customKeywords || [];
+  } catch (err) {
+    console.error("[deleteCustomKeyword] Failed:", err.message);
+    return [];
+  }
 }
 
 // ── ניהול התראות ──
@@ -494,11 +708,8 @@ export function markAlertRead(alertId) {
 }
 
 // ── נתוני מגמה (30 ימים) ──
-export function getTrendData(organizationId) {
-  const orgLogs = [];
-  for (const doc of logs.values()) {
-    if (doc.organizationId === organizationId) orgLogs.push(doc);
-  }
+export async function getTrendData(organizationId) {
+  const orgLogs = await getLogs(organizationId, 10000);
 
   const today = new Date();
   const days = [];
@@ -526,13 +737,15 @@ export function getTrendData(organizationId) {
 }
 
 // ── ייצוא דוח כולל ──
-export function generateReport(organizationId) {
-  const org = getOrganization(organizationId);
-  const stats = getStats(organizationId);
-  const orgLogs = getLogs(organizationId, 1000);
-  const orgPolicies = getPolicies(organizationId) || [];
-  const orgKeywords = getCustomKeywords(organizationId);
-  const trendData = getTrendData(organizationId);
+export async function generateReport(organizationId) {
+  const [org, stats, orgLogs, orgPolicies, orgKeywords, trendData] = await Promise.all([
+    getOrganization(organizationId),
+    getStats(organizationId),
+    getLogs(organizationId, 1000),
+    getPolicies(organizationId).then((p) => p || []),
+    getCustomKeywords(organizationId),
+    getTrendData(organizationId),
+  ]);
 
   return {
     generatedAt: new Date().toISOString(),
@@ -575,8 +788,8 @@ export function trackRequest(organizationId) {
 }
 
 // ── compat alias: getMappingBySynthetic (used by restore-batch route) ──
-export function getMappingBySynthetic(syntheticValue) {
-  const doc = getMappingByTag(syntheticValue);
+export async function getMappingBySynthetic(syntheticValue) {
+  const doc = await getMappingByTag(syntheticValue);
   if (!doc) return null;
   // normalize to the shape expected by restore-batch
   return {
@@ -584,7 +797,7 @@ export function getMappingBySynthetic(syntheticValue) {
     original: doc.originalText,
     category: doc.category,
     label: doc.label,
-    timestamp: doc.createdAt,
+    timestamp: doc.createdAt?.toISOString?.() || doc.createdAt,
     source: doc.source,
   };
 }

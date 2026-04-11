@@ -6,7 +6,7 @@ import { getTrendData } from "../../../lib/db.js";
 export async function GET(request) {
   try {
     const { organizationId } = await authenticateRequest(request);
-    const data = getTrendData(organizationId);
+    const data = await getTrendData(organizationId);
 
     // חישוב השוואה שבועית
     const thisWeek = data.slice(-7).reduce((s, d) => s + d.blocks, 0);

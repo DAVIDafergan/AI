@@ -18,8 +18,11 @@ let localAgentUrl = DEFAULT_LOCAL_AGENT_URL;
 let tenantApiKey  = "";
 
 // ── Loop-prevention & caching ──
-const processedNodes   = new WeakSet();
-const restorationCache = new Map(); // synthetic → original
+// WeakMap instead of WeakSet: maps each text node to the last string value that was
+// fully scanned.  This lets us re-scan nodes whose content has grown since the last
+// pass (the streaming case) while still skipping nodes whose content is unchanged.
+const processedContent = new WeakMap(); // textNode → last-processed nodeValue
+const restorationCache = new Map();     // synthetic → original
 
 // ── Per-element safe-state buffer (for real-time typing DLP) ──
 const safeStateMap = new WeakMap(); // element → last known safe value
@@ -124,6 +127,43 @@ const TIMING = {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /* ─────────────────────────────────────────────
+   Utility: sendCheckText
+   Wraps chrome.runtime.sendMessage for CHECK_TEXT.
+   Resolves with the API response on success.
+   For 401/413/429 error codes resolves with a
+   { passThroughWithWarning, errorCode, message } sentinel so the caller
+   can let the text through while still notifying the user – these errors
+   must NOT cause the paste to be silently blocked.
+   Rejects on network/runtime errors.
+   ───────────────────────────────────────────── */
+function sendCheckText({ text, userEmail: email, source, mode, apiKey, agentUrl }) {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(
+      { type: "CHECK_TEXT", text, userEmail: email, source, mode, apiKey, agentUrl },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        if (response?.error) {
+          const code = response.errorCode;
+          // 401 = invalid/missing API key, 413 = text too large, 429 = rate limited.
+          // In all three cases let the original text through with a user-visible warning
+          // rather than silently blocking the paste.
+          if (code === 401 || code === 413 || code === 429) {
+            resolve({ passThroughWithWarning: true, errorCode: code, message: response.message });
+          } else {
+            reject(new Error(response.message || "Background fetch failed"));
+          }
+          return;
+        }
+        resolve(response);
+      }
+    );
+  });
+}
+
+/* ─────────────────────────────────────────────
    Utility: debounce (returns function with .cancel())
    ───────────────────────────────────────────── */
 function debounce(fn, delay) {
@@ -134,6 +174,43 @@ function debounce(fn, delay) {
   }
   debounced.cancel = () => clearTimeout(timer);
   return debounced;
+}
+
+/* ─────────────────────────────────────────────
+   Utility: debounceWithMaxWait
+   Like debounce(wait) but also fires after maxWait ms even if calls keep
+   arriving.  Required for AI streaming where mutations arrive every ~50 ms
+   and a plain trailing debounce would never fire until streaming stops.
+   Returns a function that accepts a single element argument.
+   ───────────────────────────────────────────── */
+function debounceWithMaxWait(fn, wait, maxWait) {
+  // Map<element, { trailing: timerId|null, maxTimer: timerId|null }>
+  const pending = new Map();
+
+  return function scheduleForEl(el) {
+    let entry = pending.get(el);
+    if (!entry) {
+      entry = { trailing: null, maxTimer: null };
+      pending.set(el, entry);
+    }
+
+    // Always reset the trailing timer
+    if (entry.trailing !== null) clearTimeout(entry.trailing);
+    entry.trailing = setTimeout(() => {
+      if (entry.maxTimer !== null) clearTimeout(entry.maxTimer);
+      pending.delete(el);
+      try { fn(el); } catch { /* ignore */ }
+    }, wait);
+
+    // Start the hard-cap timer only once per quiescence window
+    if (entry.maxTimer === null) {
+      entry.maxTimer = setTimeout(() => {
+        if (entry.trailing !== null) clearTimeout(entry.trailing);
+        pending.delete(el);
+        try { fn(el); } catch { /* ignore */ }
+      }, maxWait);
+    }
+  };
 }
 
 /* ─────────────────────────────────────────────
@@ -539,26 +616,18 @@ async function handlePaste(event) {
 
     const { localAgentUrl: agentUrl, tenantApiKey: apiKey, userEmail: email } = await readSettings();
 
-    const result = await new Promise((resolve, reject) => {
-      chrome.runtime.sendMessage({
-        type: "CHECK_TEXT",
-        text,
-        userEmail: email,
-        source: "paste",
-        apiKey,
-        agentUrl,
-      }, (response) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-          return;
-        }
-        if (response?.error) {
-          reject(new Error(response.message || "Background fetch failed"));
-          return;
-        }
-        resolve(response);
-      });
-    });
+    const result = await sendCheckText({ text, userEmail: email, source: "paste", apiKey, agentUrl });
+
+    // Handle server-side soft errors (API key invalid, payload too large, rate limited)
+    if (result.passThroughWithWarning) {
+      const msg =
+        result.errorCode === 401 ? "⚠️ DLP: מפתח API אינו תקין – ההדבקה הועברת ללא סינון." :
+        result.errorCode === 413 ? "⚠️ DLP: הטקסט ארוך מדי לסינון – הועבר ללא שינוי." :
+        "⚠️ DLP: מגבלת קצב בקשות הגיעה – הועבר ללא סינון.";
+      insertTextIntoField(target, text);
+      showFallbackToast(msg, "warning");
+      return;
+    }
 
     // Support both local-agent format (blocked: true) and cloud-server format (safe: false)
     const isBlocked = result.blocked === true || result.safe === false;
@@ -665,27 +734,13 @@ async function interceptInput(element) {
   try {
     const { localAgentUrl: agentUrl, tenantApiKey: apiKey, userEmail: email } = await readSettings();
 
-    const result = await new Promise((resolve, reject) => {
-      chrome.runtime.sendMessage({
-        type: "CHECK_TEXT",
-        text,
-        userEmail: email,
-        source: "typing",
-        mode: "input",
-        apiKey,
-        agentUrl,
-      }, (response) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-          return;
-        }
-        if (response?.error) {
-          reject(new Error(response.message || "Background fetch failed"));
-          return;
-        }
-        resolve(response);
-      });
-    });
+    const result = await sendCheckText({ text, userEmail: email, source: "typing", mode: "input", apiKey, agentUrl });
+
+    // Handle server-side soft errors – update safe state and let typing continue
+    if (result.passThroughWithWarning) {
+      safeStateMap.set(element, text);
+      return;
+    }
 
     // ── Hard block: revert to safe state ──
     if (result.blocked === true) {
@@ -822,26 +877,13 @@ async function interceptSend(element, retriggerFn) {
   try {
     const { localAgentUrl: agentUrl, tenantApiKey: apiKey, userEmail: email } = await readSettings();
 
-    const result = await new Promise((resolve, reject) => {
-      chrome.runtime.sendMessage({
-        type: "CHECK_TEXT",
-        text,
-        userEmail: email,
-        source: "send",
-        apiKey,
-        agentUrl,
-      }, (response) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-          return;
-        }
-        if (response?.error) {
-          reject(new Error(response.message || "Background fetch failed"));
-          return;
-        }
-        resolve(response);
-      });
-    });
+    const result = await sendCheckText({ text, userEmail: email, source: "send", apiKey, agentUrl });
+
+    // Handle server-side soft errors – fail open (let the send through)
+    if (result.passThroughWithWarning) {
+      retriggerFn?.();
+      return;
+    }
 
     // ── Smart Masking ────────────────────────────────────────────────────
     if (result.action === "mask" && result.maskedText && result.vault) {
@@ -1150,6 +1192,9 @@ const SYNTHETIC_PATTERNS = [
   /\[[A-Z][A-Z0-9_]*_\d+\]/gi,                  // Smart masking vault tokens: [PERSON_1], [ACCOUNT_1], … (case-insensitive)
 ];
 
+// Vault-token pattern hoisted to avoid recompilation on every call (g flag – reset lastIndex before use)
+const VAULT_TOKEN_PATTERN = /\[[A-Z][A-Z0-9_]*_\d+\]/g;
+
 // AI response selectors
 const AI_RESPONSE_SELECTORS = [
   'div[data-message-author-role="assistant"]',
@@ -1216,10 +1261,19 @@ function createRestoredSpan(originalText, syntheticValue) {
   return span;
 }
 
+// ── Concurrent-scan guard: prevents overlapping async scans of the same root ──
+const _activeScanRoots = new WeakSet();
+
 async function scanAndRestore(root) {
   if (!root || root.nodeType !== Node.ELEMENT_NODE) return;
   if (root.closest("[data-restored='true']")) return; // already restored parent
 
+  // Prevent a second concurrent scan of the same root while async lookups are in
+  // flight.  The debounce will re-queue a scan if more mutations arrive later.
+  if (_activeScanRoots.has(root)) return;
+  _activeScanRoots.add(root);
+
+  try {
   // Walk all text nodes
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
@@ -1232,14 +1286,18 @@ async function scanAndRestore(root) {
   const nodesToProcess = [];
   let node;
   while ((node = walker.nextNode())) {
-    if (!processedNodes.has(node)) {
+    // Re-scan the node whenever its text content has changed since the last pass.
+    // This is the key fix for streaming: a node seen as "clean" earlier may now
+    // contain a complete synthetic token after more text has been appended to it.
+    if (processedContent.get(node) !== node.nodeValue) {
       nodesToProcess.push(node);
     }
   }
 
   for (const textNode of nodesToProcess) {
-    processedNodes.add(textNode);
     const text = textNode.nodeValue;
+    // Record current content immediately so a concurrent scan skips this snapshot.
+    processedContent.set(textNode, text);
     if (!text) continue;
 
     // Collect all matches from all patterns
@@ -1346,70 +1404,229 @@ async function scanAndRestore(root) {
       // DOM operation failed – ignore
     }
   }
+  } finally {
+    _activeScanRoots.delete(root);
+  }
 }
 
 /* ─────────────────────────────────────────────
-   1B. MutationObserver for AI output
-   ───────────────────────────────────────────── */
-// Accumulate ALL elements queued during the debounce window so that streaming
-// mutations don't cause intermediate nodes to be silently dropped.
-const _pendingScanElements = new Set();
-let   _scanDebounceTimer   = null;
-function debouncedScanElement(el) {
-  _pendingScanElements.add(el);
-  clearTimeout(_scanDebounceTimer);
-  _scanDebounceTimer = setTimeout(() => {
-    const batch = Array.from(_pendingScanElements);
-    _pendingScanElements.clear();
-    for (const element of batch) {
-      try { scanAndRestore(element); } catch { /* ignore */ }
-    }
-  }, 500);
+   1B. Streaming-Aware De-anonymisation Engine
+   ───────────────────────────────────────────── *
+   Problem: AI chat interfaces stream text into the DOM by repeatedly updating
+   the same text node's nodeValue (characterData mutations) or by appending
+   new text nodes.  A plain trailing debounce(500) keeps getting reset by each
+   streaming chunk, so restoration never fires until streaming stops entirely.
+
+   Solution:
+     Fast path  – Vault tokens ([PERSON_1], [ACCOUNT_2], …) are in the
+                  in-memory _vault (O(1) lookup).  They are replaced
+                  synchronously, batched in a single requestAnimationFrame so
+                  we never cause mid-frame layout thrash.  A hasPartialVaultToken
+                  guard prevents replacing an incomplete token that is still
+                  being streamed (e.g. "[PERSON_" before "_1]" arrives).
+
+     Slow path  – Non-vault synthetic patterns (phone, email, credit-card, ID)
+                  still go through the async scanAndRestore() but are now
+                  triggered with debounceWithMaxWait(150 ms trailing, 800 ms max)
+                  so the scan fires at most every 800 ms even during continuous
+                  streaming — not just after it stops.
+   ─────────────────────────────────────────────── */
+
+// ── Per-container async scan scheduler (replaces plain debouncedScanElement) ──
+const scheduleAsyncScan = debounceWithMaxWait((el) => {
+  try { scanAndRestore(el); } catch { /* ignore */ }
+}, 150, 800);
+
+// ── rAF-batched vault-token flush ──────────────────────────────────────────
+// Text nodes queued for vault-token replacement are collected here and
+// processed together in one animation frame to keep the DOM mutation cost low.
+const _vaultRestorePending = new Set();
+let   _vaultRestoreRafId   = null;
+
+function queueVaultRestore(textNode) {
+  _vaultRestorePending.add(textNode);
+  if (_vaultRestoreRafId === null) {
+    _vaultRestoreRafId = requestAnimationFrame(flushVaultRestores);
+  }
 }
 
-function isAIResponseElement(el) {
-  if (!el || el.nodeType !== Node.ELEMENT_NODE) return false;
-  return AI_RESPONSE_SELECTORS.some((sel) => {
-    try { return el.matches(sel) || el.querySelector(sel); } catch { return false; }
-  });
+function flushVaultRestores() {
+  _vaultRestoreRafId = null;
+  if (_vaultRestorePending.size === 0) return;
+
+  const nodes = [..._vaultRestorePending];
+  _vaultRestorePending.clear();
+
+  let totalRestored = 0;
+  _dlpScanMutating = true;
+  try {
+    for (const textNode of nodes) {
+      if (!textNode.parentNode) continue;                                      // already detached
+      if (hasPartialVaultToken(textNode.nodeValue)) continue;                  // token still streaming in
+      if (textNode.parentElement?.closest("[data-restored='true']")) continue; // already inside a restored span
+      totalRestored += applyVaultReplacements(textNode);
+    }
+  } finally {
+    _dlpScanMutating = false;
+  }
+
+  if (totalRestored > 0) {
+    try { chrome.runtime.sendMessage({ type: "ITEMS_RESTORED", count: totalRestored }); } catch { /* ignore */ }
+    console.log(`${DLP_PREFIX} שוחזרו ${totalRestored} טוקנים מ-vault בזרם AI`);
+  }
+}
+
+/**
+ * Returns true when text ends with an incomplete vault-token opener such as
+ * "[PERSON_" (opening bracket found with no matching closing bracket after it).
+ * This guards against replacing a token that is still being streamed in.
+ * @param {string} text
+ */
+function hasPartialVaultToken(text) {
+  if (!text) return false;
+  const lastOpen = text.lastIndexOf("[");
+  if (lastOpen === -1) return false;
+  return text.indexOf("]", lastOpen) === -1;
+}
+
+/**
+ * Synchronously replace all vault tokens found in textNode with dlp-restored
+ * spans.  The original text node is substituted with a DocumentFragment.
+ * @param {Text} textNode
+ * @returns {number} Number of tokens replaced (0 if none found or node detached).
+ */
+function applyVaultReplacements(textNode) {
+  const text = textNode.nodeValue;
+  if (!text) return 0;
+
+   // Quick rejection: no vault keys at all (for-in avoids Object.keys array allocation)
+  let _vaultEmpty = true;
+  for (const k in _vault) { if (Object.prototype.hasOwnProperty.call(_vault, k)) { _vaultEmpty = false; break; } }
+  if (_vaultEmpty) return 0;
+
+  // Collect vault tokens present in this text, sorted by their first occurrence
+  VAULT_TOKEN_PATTERN.lastIndex = 0;
+  const matches = []; // { token: string, index: number }
+  let m;
+  while ((m = VAULT_TOKEN_PATTERN.exec(text)) !== null) {
+    if (Object.prototype.hasOwnProperty.call(_vault, m[0])) {
+      matches.push({ token: m[0], index: m.index });
+    }
+  }
+  if (matches.length === 0) return 0;
+
+  // Build replacement fragment in a single linear pass (matches are already
+  // in document order from the exec loop above, so no sort needed)
+  const fragment = document.createDocumentFragment();
+  let cursor = 0;
+  for (const { token, index } of matches) {
+    if (index > cursor) {
+      fragment.appendChild(document.createTextNode(text.slice(cursor, index)));
+    }
+    fragment.appendChild(createRestoredSpan(_vault[token], token));
+    cursor = index + token.length;
+  }
+  if (cursor < text.length) {
+    fragment.appendChild(document.createTextNode(text.slice(cursor)));
+  }
+
+  try {
+    textNode.parentNode.replaceChild(fragment, textNode);
+  } catch {
+    return 0; // DOM operation failed (node may have been removed concurrently)
+  }
+  return matches.length;
 }
 
 function watchForAIOutput() {
+  /**
+   * Resolve the nearest AI response container for a given element, or null.
+   * @param {Element|null} el
+   * @returns {Element|null}
+   */
+  function findAIContainer(el) {
+    if (!el) return null;
+    for (const sel of AI_RESPONSE_SELECTORS) {
+      try {
+        const found = el.closest(sel);
+        if (found) return found;
+      } catch { /* ignore invalid selector */ }
+    }
+    return null;
+  }
+
+  /**
+   * Process a single text node that was newly added or mutated by the stream:
+   *  • Fast path  – queue a vault-token replacement (synchronous, rAF-batched)
+   *  • Slow path  – schedule an async container scan for non-vault patterns
+   * @param {Text} textNode
+   */
+  function processTextNode(textNode) {
+    if (!textNode.parentNode) return;
+    const text = textNode.nodeValue;
+    if (!text || !/\S/.test(text)) return;
+    // Fast O(1) check on immediate parent before the costlier closest() DOM walk
+    const parentEl = textNode.parentElement;
+    if (parentEl?.getAttribute("data-restored") === "true") return;
+    if (parentEl?.closest("[data-restored='true']")) return;
+
+    const container = findAIContainer(parentEl);
+    if (!container) return;
+
+    // Fast path: vault tokens resolved from in-memory map — no async needed
+    // Use for-in to avoid the Object.keys() array allocation on every mutation
+    let hasVaultEntries = false;
+    for (const k in _vault) {
+      if (Object.prototype.hasOwnProperty.call(_vault, k)) { hasVaultEntries = true; break; }
+    }
+    if (hasVaultEntries) {
+      queueVaultRestore(textNode);
+    }
+
+    // Slow path: async scan for phone numbers, emails, CC numbers, etc.
+    scheduleAsyncScan(container);
+  }
+
   const outputObserver = new MutationObserver((mutations) => {
-    // Skip mutations triggered by our own DOM replacements to avoid re-scan loops
+    // Skip mutations that we ourselves triggered to avoid infinite loops
     if (_dlpScanMutating) return;
 
     for (const mutation of mutations) {
-      // Check added nodes
-      for (const addedNode of mutation.addedNodes) {
-        if (addedNode.nodeType === Node.ELEMENT_NODE) {
-          if (isAIResponseElement(addedNode)) {
-            debouncedScanElement(addedNode);
-          } else {
-            // Check if a parent matches
-            const closest = AI_RESPONSE_SELECTORS
-              .map((sel) => { try { return addedNode.closest?.(sel); } catch { return null; } })
-              .find(Boolean);
-            if (closest) debouncedScanElement(closest);
+      if (mutation.type === "childList") {
+        for (const node of mutation.addedNodes) {
+          if (node.nodeType === Node.TEXT_NODE) {
+            // Raw text node streamed directly into the DOM
+            processTextNode(/** @type {Text} */ (node));
+          } else if (node.nodeType === Node.ELEMENT_NODE) {
+            // Walk every text node inside the newly added element subtree
+            const walker = document.createTreeWalker(
+              node,
+              NodeFilter.SHOW_TEXT,
+              {
+                // Minimal filter: defer content-based rejection to processTextNode
+                acceptNode(n) {
+                  return n.nodeValue ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+                },
+              },
+            );
+            let tn;
+            while ((tn = walker.nextNode())) processTextNode(/** @type {Text} */ (tn));
           }
         }
-      }
-      // Check characterData changes within AI response containers
-      if (mutation.type === "characterData" && mutation.target) {
-        const parent = mutation.target.parentElement;
-        if (parent) {
-          const closest = AI_RESPONSE_SELECTORS
-            .map((sel) => { try { return parent.closest?.(sel); } catch { return null; } })
-            .find(Boolean);
-          if (closest) debouncedScanElement(closest);
+      } else if (mutation.type === "characterData") {
+        // Streaming appended text to an existing text node — the primary pattern
+        // used by ChatGPT, Claude, Gemini, and most React-based AI chat UIs.
+        const target = mutation.target;
+        if (target.nodeType === Node.TEXT_NODE) {
+          processTextNode(/** @type {Text} */ (target));
         }
       }
     }
   });
 
   outputObserver.observe(document.body, {
-    childList: true,
-    subtree: true,
+    childList:     true,
+    subtree:       true,
     characterData: true,
   });
 }

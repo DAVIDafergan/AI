@@ -1,6 +1,8 @@
 // ── מנוע זיהוי PII מתקדם עם נתונים סינתטיים וזיהוי קונטקסטואלי ──
+export const dynamic = 'force-dynamic';
 import { NextResponse } from "next/server";
-import { authenticateRequest } from "../../../lib/middleware.js";
+import { authenticateRequest, getCorsHeaders } from "../../../lib/middleware.js";
+import { checkRateLimit, RATE_LIMIT_MAX } from "../../../lib/rate-limiter.js";
 import { generateSynthetic } from "../../../lib/synthetic.js";
 import { normalizeText } from "../../../lib/evasion.js";
 import {
@@ -15,10 +17,35 @@ import {
   recordUserActivity,
   connectMongo,
   Tenant,
-  TenantEvent,
 } from "../../../lib/db.js";
 import { getDefaultPolicies, SEVERITY_SCORES } from "../../../lib/policies.js";
 import { runTriageWithStats } from "../../../lib/triage.js";
+
+/**
+ * Build CORS headers for the check-text endpoint.
+ * Uses getCorsHeaders() when ALLOWED_ORIGINS is configured; falls back to
+ * wildcard "*" for backward-compatibility with deployments that have not yet
+ * set the environment variable.
+ * @param {Request} request
+ * @returns {Record<string,string>}
+ */
+function buildCorsHeaders(request) {
+  const envCors = getCorsHeaders(request);
+  if (envCors) return envCors;
+  // Fallback: only reached when ALLOWED_ORIGINS is not configured.
+  // Log a warning in non-test environments to alert operators of the open CORS policy.
+  if (process.env.NODE_ENV !== "test") {
+    console.warn(
+      "[check-text] ALLOWED_ORIGINS is not set – falling back to wildcard CORS. " +
+      "Set ALLOWED_ORIGINS in your environment to restrict access."
+    );
+  }
+  return {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, x-api-key",
+  };
+}
 
 // ── תבניות Regex לזיהוי PII ──
 const ALL_PATTERNS = [
@@ -126,17 +153,55 @@ const THREAT_CRITICAL_THRESHOLD = 80;
 const THREAT_HIGH_THRESHOLD     = 50;
 const THREAT_MEDIUM_THRESHOLD   = 20;
 
+// ── Payload size limit ──
+const MAX_TEXT_LENGTH = 10_000;
+
 // ── POST: זיהוי והחלפת PII ──
 export async function POST(request) {
   try {
     const auth = await authenticateRequest(request);
     const { organizationId } = auth;
 
+    // ── Rate limiting ──
+    const rawApiKey = request.headers.get("x-api-key");
+    // Prefer the API key as the rate-limit key because it is already authenticated.
+    // Fall back to the leftmost IP in x-forwarded-for (set by a trusted reverse
+    // proxy).  Note: if the application is exposed directly without a proxy this
+    // header can be spoofed; deploy behind a proxy (nginx, Cloudflare, etc.) that
+    // strips/overwrites x-forwarded-for to mitigate spoofing.
+    const forwarded = request.headers.get("x-forwarded-for");
+    const ip = forwarded ? forwarded.split(",")[0].trim() : "unknown";
+    const rateLimitKey = rawApiKey || ip;
+
+    const { allowed, remaining, retryAfter } = await checkRateLimit(rateLimitKey);
+    if (!allowed) {
+      return NextResponse.json(
+        { error: "Too Many Requests" },
+        {
+          status: 429,
+          headers: {
+            ...buildCorsHeaders(request),
+            "Retry-After": String(retryAfter),
+            "X-RateLimit-Limit": String(RATE_LIMIT_MAX),
+            "X-RateLimit-Remaining": "0",
+          },
+        }
+      );
+    }
+
     const body = await request.json();
     const { text, source = "api", mode = "paste", userEmail = "anonymous@unknown.com" } = body;
 
     if (!text || typeof text !== "string") {
-      return NextResponse.json({ error: "text is required" }, { status: 400 });
+      return NextResponse.json({ error: "text is required" }, { status: 400, headers: buildCorsHeaders(request) });
+    }
+
+    // ── Payload size limit (prevents ReDoS and memory exhaustion) ──
+    if (text.length > MAX_TEXT_LENGTH) {
+      return NextResponse.json(
+        { error: `Payload Too Large: text must not exceed ${MAX_TEXT_LENGTH} characters` },
+        { status: 413, headers: buildCorsHeaders(request) }
+      );
     }
 
     // ── Tier 0: Evasion normalisation ─────────────────────────────────────
@@ -170,13 +235,13 @@ export async function POST(request) {
     const scanTargets = [normalizedText, ...extraFragments];
 
     // טעינת מדיניות הארגון
-    let orgPolicies = getPolicies(organizationId);
+    let orgPolicies = await getPolicies(organizationId);
     if (!orgPolicies) {
       orgPolicies = getDefaultPolicies(organizationId);
     }
 
     // מילות מפתח מותאמות
-    const customKws = getCustomKeywords(organizationId);
+    const customKws = await getCustomKeywords(organizationId);
 
     // ── Triage מהיר לפני סריקה מלאה ──
     // Run triage on the normalised text so obfuscation doesn't bypass early exit
@@ -271,9 +336,12 @@ export async function POST(request) {
       (a, b) => b.original.length - a.original.length
     );
     for (const { original, synthetic } of sortedReplacements) {
-      // החלפת כל המופעים של original
+      // בניית regex שמכבד גבולות מילה (\b) כאשר הישות מתחילה/מסתיימת בתו מילה,
+      // כדי למנוע החלפה חלקית שעלולה לפגוע בטקסט, רווחים, ניקוד או עיצוב Markdown/HTML.
       const escaped = original.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      redactedText = redactedText.replace(new RegExp(escaped, "g"), synthetic);
+      const prefix = /^\w/.test(original) ? "\\b" : "";
+      const suffix = /\w$/.test(original) ? "\\b" : "";
+      redactedText = redactedText.replace(new RegExp(`${prefix}${escaped}${suffix}`, "g"), synthetic);
     }
 
     // ── 6. חישוב ציון איום ──
@@ -281,7 +349,11 @@ export async function POST(request) {
 
     // ── 7. שמירת מיפויים ולוג ──
     if (mappingEntries.length > 0) {
-      saveMappings(organizationId, mappingEntries);
+      try {
+        await saveMappings(organizationId, mappingEntries);
+      } catch (dbErr) {
+        console.warn("[check-text] saveMappings failed:", dbErr.message);
+      }
     }
 
     // ── 7b. רישום פעילות משתמש ──
@@ -295,17 +367,21 @@ export async function POST(request) {
         ? replacements[0].label
         : "ניקי";
 
-    saveLog(organizationId, {
-      type: primaryType,
-      synthetic: replacements[0]?.synthetic || "",
-      originalText: replacements[0]?.original || "",
-      source,
-      userEmail,
-      status: replacements.length > 0 ? "blocked" : "clean",
-      threatScore,
-      detectionCount: replacements.length,
-      replacements,
-    });
+    try {
+      await saveLog(organizationId, {
+        type: primaryType,
+        synthetic: replacements[0]?.synthetic || "",
+        originalText: replacements[0]?.original || "",
+        source,
+        userEmail,
+        status: replacements.length > 0 ? "blocked" : "clean",
+        threatScore,
+        detectionCount: replacements.length,
+        replacements,
+      });
+    } catch (dbErr) {
+      console.warn("[check-text] saveLog failed:", dbErr.message);
+    }
 
     // ── 8. זיהוי אנומליה ──
     const reqPerMinute = trackRequest(organizationId);
@@ -324,26 +400,12 @@ export async function POST(request) {
       });
     }
 
-    // ── 9. שמירה ל-MongoDB לחיבור עם הדשבורד ──
-    const rawApiKey = request.headers.get("x-api-key");
+    // ── 9. עדכון שימוש ב-Tenant ──
     if (rawApiKey) {
       try {
         await connectMongo();
         const tenant = await Tenant.findOne({ apiKey: rawApiKey }).lean();
         if (tenant) {
-          const eventType = replacements.length > 0 ? "block" : "scan";
-          const sev =
-            threatScore >= THREAT_CRITICAL_THRESHOLD ? "critical" :
-            threatScore >= THREAT_HIGH_THRESHOLD     ? "high" :
-            threatScore >= THREAT_MEDIUM_THRESHOLD   ? "medium" : "low";
-          await TenantEvent.create({
-            tenantId: tenant._id,
-            eventType,
-            severity: sev,
-            category: replacements[0]?.category,
-            userEmail,
-            details: { threatScore, detectionCount: replacements.length, source },
-          });
           const blocksInc = replacements.length > 0 ? { "usage.totalBlocks": 1 } : {};
           await Tenant.updateOne(
             { _id: tenant._id },
@@ -354,7 +416,7 @@ export async function POST(request) {
           );
         }
       } catch (mongoErr) {
-        console.warn("[check-text] MongoDB event save failed:", mongoErr.message);
+        console.warn("[check-text] Tenant usage update failed:", mongoErr.message);
       }
     }
 
@@ -373,27 +435,21 @@ export async function POST(request) {
         userEmail,
       },
       {
-        headers: {
-          "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Headers": "Content-Type, x-api-key",
-        },
+        headers: buildCorsHeaders(request),
       }
     );
   } catch (err) {
     if (err.status === 401) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: buildCorsHeaders(request) });
     }
     console.error("[check-text] Error:", err);
-    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+    return NextResponse.json({ error: "Internal Server Error" }, { status: 500, headers: buildCorsHeaders(request) });
   }
 }
 
 // ── GET: שחזור ערך מקורי לפי ערך סינתטי (tag) ──
 export async function GET(request) {
-  const corsHeaders = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "Content-Type, x-api-key",
-  };
+  const corsHeaders = buildCorsHeaders(request);
   try {
     const { searchParams } = new URL(request.url);
     // Support both "tag" (primary) and legacy "synthetic" param
@@ -406,7 +462,7 @@ export async function GET(request) {
       );
     }
 
-    const mapping = getMappingByTag(tag);
+    const mapping = await getMappingByTag(tag);
     if (!mapping) {
       return NextResponse.json(
         { found: false, originalText: tag },
@@ -433,13 +489,9 @@ export async function GET(request) {
   }
 }
 
-export async function OPTIONS() {
+export async function OPTIONS(request) {
   return new NextResponse(null, {
     status: 204,
-    headers: {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, x-api-key",
-    },
+    headers: buildCorsHeaders(request),
   });
 }

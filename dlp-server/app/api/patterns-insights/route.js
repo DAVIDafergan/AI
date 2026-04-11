@@ -5,7 +5,7 @@ export async function GET() {
   const patternStats = getPatternStats();
 
   // peak hours: group logs by hour
-  const logs = getLogs({ limit: 1000 });
+  const logs = await getLogs(null, 1000);
   const hourCounts = Array(24).fill(0);
   for (const log of logs) {
     if (log.timestamp) {

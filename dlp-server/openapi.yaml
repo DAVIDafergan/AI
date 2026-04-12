@@ -1,0 +1,661 @@
+openapi: "3.1.0"
+
+info:
+  title: GhostLayer DLP API
+  version: "3.0.0"
+  description: |
+    **GhostLayer** is an enterprise Data Loss Prevention (DLP) platform.
+
+    This specification documents the REST APIs used to provision tenants,
+    generate agent API keys, and poll or stream security events.  All
+    endpoints require super-admin authentication via the
+    `x-super-admin-key` request header (or a valid `super_admin_auth`
+    session cookie for browser-based flows).
+
+    ## Authentication
+    Supply your super-admin key in every request:
+    ```
+    x-super-admin-key: <YOUR_SUPER_ADMIN_KEY>
+    ```
+
+    ## Infrastructure-as-Code (IaC)
+    Use the `/api/provision` endpoint together with `/api/tenants` to
+    fully automate GhostLayer deployments from Terraform, Ansible, or
+    any CI/CD pipeline.
+
+  contact:
+    name: GhostLayer Security Team
+    url: https://ghostlayer.io
+  license:
+    name: Proprietary
+
+servers:
+  - url: https://ai-production-ffa9.up.railway.app
+    description: Production
+  - url: http://localhost:3000
+    description: Local development
+
+# ── Security ───────────────────────────────────────────────────────────────────
+
+security:
+  - SuperAdminKey: []
+
+components:
+  securitySchemes:
+    SuperAdminKey:
+      type: apiKey
+      in: header
+      name: x-super-admin-key
+      description: Super-admin API key set via the `SUPER_ADMIN_KEY` environment variable.
+
+  # ── Reusable schemas ─────────────────────────────────────────────────────────
+  schemas:
+
+    # ── Tenant ──────────────────────────────────────────────────────────────
+    Tenant:
+      type: object
+      description: A GhostLayer tenant (organisation).
+      required: [_id, name, slug, apiKey, contactEmail, plan, status, createdAt]
+      properties:
+        _id:
+          type: string
+          description: MongoDB ObjectId.
+          examples: ["664f1b2c3e4d5a6b7c8d9e0f"]
+        name:
+          type: string
+          description: Human-readable organisation name.
+          examples: ["Acme Corp"]
+        slug:
+          type: string
+          description: URL-safe identifier derived from `name`.
+          examples: ["acme-corp"]
+        apiKey:
+          type: string
+          format: uuid
+          description: Tenant API key (public identifier, safe to log).
+        contactEmail:
+          type: string
+          format: email
+          examples: ["security@acme.com"]
+        contactName:
+          type: string
+          examples: ["Jane Smith"]
+        plan:
+          type: string
+          enum: [starter, professional, enterprise]
+          default: starter
+        domain:
+          type: string
+          description: Primary email domain of the organisation.
+          examples: ["acme.com"]
+        status:
+          type: string
+          enum: [active, suspended, pending]
+          default: active
+        agentCount:
+          type: integer
+          description: Total number of registered agents for this tenant.
+        onlineAgentCount:
+          type: integer
+          description: Number of agents that sent a heartbeat in the last 60 s.
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    TenantCredentials:
+      type: object
+      description: |
+        Full credentials returned **once** at creation time.
+        Store these securely – the `apiSecret` cannot be retrieved again.
+      required: [apiKey, apiSecret]
+      properties:
+        apiKey:
+          type: string
+          format: uuid
+        apiSecret:
+          type: string
+          description: 64-hex-character secret.  Treat as a password.
+          examples: ["a3f1...e7d2"]
+
+    # ── Agent ────────────────────────────────────────────────────────────────
+    Agent:
+      type: object
+      description: A GhostLayer agent instance deployed inside a tenant network.
+      required: [_id, tenantId, name, agentKey, environment, createdAt]
+      properties:
+        _id:
+          type: string
+        tenantId:
+          type: string
+          description: ObjectId of the parent tenant.
+        name:
+          type: string
+          examples: ["london-office-agent"]
+        agentKey:
+          type: string
+          description: Unique key used by the agent to authenticate heartbeats.
+        environment:
+          type: string
+          enum: [production, staging, development]
+          default: production
+        lastPing:
+          type: string
+          format: date-time
+          description: UTC timestamp of the most-recent heartbeat.
+        createdAt:
+          type: string
+          format: date-time
+
+    DeploymentConfig:
+      type: object
+      description: Ready-to-use deployment artefacts for the new agent.
+      properties:
+        envConfig:
+          type: string
+          description: |
+            Newline-delimited environment variable assignments suitable for a
+            `.env` file or a systemd `EnvironmentFile=` directive.
+          examples:
+            - |
+              DLP_SERVER_URL=https://ai-production-ffa9.up.railway.app
+              DLP_TENANT_API_KEY=<uuid>
+              DLP_AGENT_KEY=agent-abc123
+              DLP_ENVIRONMENT=production
+              DLP_PING_INTERVAL=30000
+        dockerCommand:
+          type: string
+          description: |
+            Fully-parameterised `docker run` command that starts the agent
+            container with the correct environment variables.
+
+    # ── Events ───────────────────────────────────────────────────────────────
+    TenantEvent:
+      type: object
+      description: A security event recorded by the GhostLayer platform.
+      required: [_id, tenantId, eventType, timestamp]
+      properties:
+        _id:
+          type: string
+        tenantId:
+          type: string
+        userEmail:
+          type: string
+          format: email
+        eventType:
+          type: string
+          enum: [block, allow, alert, scan]
+          description: Outcome of the DLP decision.
+        category:
+          type: string
+          description: DLP category that triggered the event (e.g. PII, CREDENTIALS).
+        severity:
+          type: string
+          enum: [Info, Low, Medium, High, Critical]
+        riskScore:
+          type: integer
+          minimum: 0
+          maximum: 100
+        zScore:
+          type: number
+          description: |
+            Statistical Z-score of the sensitive data volume against the
+            user's historical baseline.  Values > 3 indicate a 3σ anomaly.
+        requiresMFA:
+          type: boolean
+        anomalyFlags:
+          type: array
+          items:
+            type: string
+            enum:
+              - HIGH_PASTE_RATE
+              - LARGE_PASTE
+              - FINANCIAL_ANOMALY
+              - CREDENTIAL_ANOMALY
+              - UNUSUAL_CONTENT_SHIFT
+              - EVASION_DETECTED
+              - SOCIAL_ENGINEERING_ATTEMPT
+              - STATISTICAL_ANOMALY_3SIGMA
+        timestamp:
+          type: string
+          format: date-time
+
+    SseStatsPayload:
+      type: object
+      description: Aggregated KPI snapshot pushed over the SSE stream.
+      properties:
+        totalTenants:
+          type: integer
+        activeTenants:
+          type: integer
+        totalAgents:
+          type: integer
+        onlineAgents:
+          type: integer
+        blocksToday:
+          type: integer
+
+    # ── Common error ─────────────────────────────────────────────────────────
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Human-readable error message.
+          examples: ["name and contactEmail are required"]
+
+  parameters:
+    TenantId:
+      name: tenantId
+      in: path
+      required: true
+      description: MongoDB ObjectId of the tenant.
+      schema:
+        type: string
+        examples: ["664f1b2c3e4d5a6b7c8d9e0f"]
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid super-admin credentials.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+    NotFound:
+      description: Requested resource was not found.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+    InternalError:
+      description: Unexpected server error.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+# ── Paths ──────────────────────────────────────────────────────────────────────
+
+paths:
+
+  # ── Tenants ────────────────────────────────────────────────────────────────
+
+  /api/tenants:
+    get:
+      operationId: listTenants
+      summary: List all tenants
+      description: |
+        Returns all tenants enriched with live agent counts.
+        Requires super-admin authentication.
+      tags: [Tenants]
+      responses:
+        "200":
+          description: Array of tenants.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tenants:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Tenant"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    post:
+      operationId: createTenant
+      summary: Create a new tenant
+      description: |
+        Provisions a new GhostLayer tenant (organisation).  Returns the tenant
+        record **and** the `apiSecret` (shown only once).
+
+        Use the returned `apiKey` as `DLP_TENANT_API_KEY` in agent `.env` files.
+      tags: [Tenants]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, contactEmail]
+              properties:
+                name:
+                  type: string
+                  description: Organisation display name.
+                  examples: ["Acme Corp"]
+                contactEmail:
+                  type: string
+                  format: email
+                  examples: ["security@acme.com"]
+                contactName:
+                  type: string
+                  examples: ["Jane Smith"]
+                plan:
+                  type: string
+                  enum: [starter, professional, enterprise]
+                  default: starter
+                domain:
+                  type: string
+                  examples: ["acme.com"]
+            examples:
+              minimal:
+                summary: Minimal tenant
+                value:
+                  name: Acme Corp
+                  contactEmail: security@acme.com
+              full:
+                summary: Full tenant
+                value:
+                  name: Acme Corp
+                  contactEmail: security@acme.com
+                  contactName: Jane Smith
+                  plan: enterprise
+                  domain: acme.com
+      responses:
+        "201":
+          description: Tenant created.  Save the `apiSecret` – it is never shown again.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tenant:
+                    $ref: "#/components/schemas/Tenant"
+                  credentials:
+                    $ref: "#/components/schemas/TenantCredentials"
+        "400":
+          description: Missing required fields.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: Tenant name or slug already exists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/tenants/{tenantId}:
+    get:
+      operationId: getTenant
+      summary: Get a single tenant
+      tags: [Tenants]
+      parameters:
+        - $ref: "#/components/parameters/TenantId"
+      responses:
+        "200":
+          description: Tenant detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tenant"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    patch:
+      operationId: updateTenant
+      summary: Update a tenant
+      tags: [Tenants]
+      parameters:
+        - $ref: "#/components/parameters/TenantId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                plan:
+                  type: string
+                  enum: [starter, professional, enterprise]
+                status:
+                  type: string
+                  enum: [active, suspended, pending]
+                contactEmail:
+                  type: string
+                  format: email
+                contactName:
+                  type: string
+      responses:
+        "200":
+          description: Updated tenant.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tenant"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    delete:
+      operationId: deleteTenant
+      summary: Delete a tenant
+      tags: [Tenants]
+      parameters:
+        - $ref: "#/components/parameters/TenantId"
+      responses:
+        "200":
+          description: Tenant deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  # ── Agent provisioning (API key generation) ────────────────────────────────
+
+  /api/provision:
+    post:
+      operationId: provisionAgent
+      summary: Provision a new agent and generate its API key
+      description: |
+        Creates a new GhostLayer agent record for an existing tenant and
+        returns a unique `agentKey` together with ready-to-use deployment
+        artefacts (`.env` snippet and `docker run` command).
+
+        This is the primary **API key generation** endpoint for IaC workflows.
+        Each call produces one agent with a unique, non-reusable key.
+      tags: [Agent Provisioning]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tenantId, name]
+              properties:
+                tenantId:
+                  type: string
+                  description: ObjectId of the tenant that will own this agent.
+                  examples: ["664f1b2c3e4d5a6b7c8d9e0f"]
+                name:
+                  type: string
+                  description: Human-readable label for the agent.
+                  examples: ["london-office-agent"]
+                environment:
+                  type: string
+                  enum: [production, staging, development]
+                  default: production
+            examples:
+              production:
+                summary: Production agent
+                value:
+                  tenantId: "664f1b2c3e4d5a6b7c8d9e0f"
+                  name: london-office-agent
+                  environment: production
+      responses:
+        "201":
+          description: Agent provisioned successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  agent:
+                    $ref: "#/components/schemas/Agent"
+                  deploymentConfig:
+                    $ref: "#/components/schemas/DeploymentConfig"
+        "400":
+          description: Missing required fields.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Tenant not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  # ── Events ─────────────────────────────────────────────────────────────────
+
+  /api/events/stream:
+    get:
+      operationId: streamEvents
+      summary: Real-time event stream (Server-Sent Events)
+      description: |
+        Opens a persistent **Server-Sent Events (SSE)** connection that pushes
+        three event types to the client:
+
+        | Event name | Cadence      | Payload                         |
+        |------------|--------------|---------------------------------|
+        | `stats`    | every 10 s   | `SseStatsPayload`               |
+        | `events`   | every 10 s   | `TenantEvent[]` (last 60 s)     |
+        | `ping`     | every 25 s   | `{ ts: number }` – keepalive    |
+
+        The stream closes automatically after 5 minutes; clients must
+        reconnect using the standard `EventSource` retry mechanism or an
+        equivalent HTTP/2 reconnect strategy.
+
+        ### Browser example
+        ```js
+        const es = new EventSource("/api/events/stream", { withCredentials: true });
+        es.addEventListener("stats",  (e) => console.log(JSON.parse(e.data)));
+        es.addEventListener("events", (e) => console.log(JSON.parse(e.data)));
+        ```
+
+        ### Polling alternative
+        If SSE is not suitable (e.g. behind a buffering proxy), use
+        `GET /api/tenant-events` with standard `Authorization` / API key
+        headers to poll discrete event batches.
+      tags: [Events]
+      responses:
+        "200":
+          description: SSE stream established.
+          headers:
+            Content-Type:
+              schema:
+                type: string
+                enum: ["text/event-stream; charset=utf-8"]
+            Cache-Control:
+              schema:
+                type: string
+                enum: ["no-cache, no-transform"]
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: |
+                  Newline-delimited SSE frames.  Each frame follows the
+                  format:
+                  ```
+                  event: <name>
+                  data: <JSON payload>
+
+                  ```
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/tenant-events:
+    get:
+      operationId: listTenantEvents
+      summary: Poll tenant security events (REST alternative to SSE)
+      description: |
+        Returns a paginated list of security events for the authenticated
+        tenant.  Use the `since` parameter to implement efficient
+        incremental polling.
+      tags: [Events]
+      parameters:
+        - name: since
+          in: query
+          description: ISO 8601 timestamp – return only events after this time.
+          schema:
+            type: string
+            format: date-time
+        - name: limit
+          in: query
+          description: Maximum number of events to return (default 50, max 200).
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - name: eventType
+          in: query
+          description: Filter by event type.
+          schema:
+            type: string
+            enum: [block, allow, alert, scan]
+      responses:
+        "200":
+          description: Event list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  events:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/TenantEvent"
+                  total:
+                    type: integer
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+# ── Reusable parameters & responses are declared in the top-level components block above.
+
+# ── Tags ──────────────────────────────────────────────────────────────────────
+
+tags:
+  - name: Tenants
+    description: Manage GhostLayer tenant organisations.
+  - name: Agent Provisioning
+    description: Generate agent API keys and retrieve deployment artefacts.
+  - name: Events
+    description: Stream or poll real-time security events and KPI statistics.

@@ -31,23 +31,53 @@
  * @module fragment-cache
  */
 
-// ── Redis client (optional – graceful fallback to in-memory) ─────────────────
+// ── Fragment cache constants ──────────────────────────────────────────────────
+
+/** Fragment window TTL in seconds (5 minutes). */
+const FRAGMENT_TTL_SEC   = 5 * 60;
+/** Fragment window TTL in milliseconds. */
+const FRAGMENT_TTL_MS    = FRAGMENT_TTL_SEC * 1000;
+/** Maximum number of fragments retained per user in the sliding window. */
+const MAX_FRAGMENT_COUNT = 50;
+/** Maximum total byte budget for all fragments in a user's window. */
+const MAX_CACHE_BYTES    = 100_000; // 100 KB
+
+// ── UEBA constants ────────────────────────────────────────────────────────────
 
 /**
  * Maximum number of historical volume samples retained per user.
  * Older samples are trimmed so the list never grows unbounded.
  */
 const UEBA_HISTORY_MAX  = 200;
-const UEBA_REDIS_KEY    = (userKey) => `ueba:vol:${userKey}`;
+const UEBA_REDIS_KEY    = (key) => `ueba:vol:${key}`;
 
-let _uebaRedis = null;
+// ── User key helper ───────────────────────────────────────────────────────────
 
 /**
- * Lazily obtain a Redis client for UEBA baseline storage.
- * Returns null if the connection cannot be established.
+ * Normalise a user email address to a stable, Redis-safe key.
+ * Strips characters outside the safe set [a-z0-9._@-] after lower-casing so
+ * the resulting string is always safe to use as a Redis key segment.
+ * @param {string} email
+ * @returns {string}
  */
-async function getUebaRedis() {
-  if (_uebaRedis) return _uebaRedis;
+function userKey(email) {
+  return (email || "anonymous")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9._@-]/g, "_");
+}
+
+// ── Redis client (optional – graceful fallback to in-memory) ─────────────────
+
+let _redisClient = null;
+
+/**
+ * Lazily obtain a Redis client shared by all subsystems (fragments, profiles,
+ * and UEBA volume history).  Returns null if the connection cannot be
+ * established so callers can fall back gracefully.
+ */
+async function getRedisClient() {
+  if (_redisClient) return _redisClient;
   try {
     const { default: Redis } = await import("ioredis");
     const url = process.env.REDIS_URL || "redis://localhost:6379";
@@ -59,54 +89,64 @@ async function getUebaRedis() {
     });
     client.on("error", (err) => {
       if (err.code !== "ECONNREFUSED" && err.code !== "ENOTFOUND") {
-        console.error("[ueba] Redis error:", err.message);
+        console.error("[fragment-cache] Redis error:", err.message);
       }
     });
     await client.connect();
-    _uebaRedis = client;
+    _redisClient = client;
     return client;
   } catch {
     return null;
   }
 }
 
+/**
+ * Returns true when `redis` is a live, ready connection.
+ * Centralises the readiness guard used throughout this module.
+ * @param {import("ioredis").Redis | null} redis
+ * @returns {boolean}
+ */
+function isRedisReady(redis) {
+  return redis !== null && redis.status === "ready";
+}
+
 /** In-memory fallback: userKey → number[] (volume history) */
 const _memVolumeHistory = new Map();
 
 /**
- * Fetch the existing volume history for `userKey` without modifying it.
+ * Fetch the existing volume history for `key` without modifying it.
  *
- * @param {string} userKey
+ * @param {string} key  Normalised user key.
  * @returns {Promise<number[]>}  History (oldest first), up to UEBA_HISTORY_MAX entries.
  */
-async function fetchVolumeHistory(userKey) {
+async function fetchVolumeHistory(key) {
   try {
-    const redis = await getUebaRedis();
-    if (redis && redis.status === "ready") {
-      const raw = await redis.lrange(UEBA_REDIS_KEY(userKey), 0, -1);
+    const redis = await getRedisClient();
+    if (isRedisReady(redis)) {
+      const raw = await redis.lrange(UEBA_REDIS_KEY(key), 0, -1);
       return raw.map(Number);
     }
   } catch (err) {
     console.error("[ueba] Redis read failed, using in-memory fallback:", err.message);
   }
-  return [...(_memVolumeHistory.get(userKey) || [])];
+  return [...(_memVolumeHistory.get(key) || [])];
 }
 
 /**
- * Append a volume sample for `userKey` to the history store (Redis or memory).
+ * Append a volume sample for `key` to the history store (Redis or memory).
  * Trims the list to UEBA_HISTORY_MAX entries.
  *
- * @param {string} userKey
+ * @param {string} key
  * @param {number} volume  Character count of the current sensitive payload.
  * @returns {Promise<void>}
  */
-async function appendVolumeHistory(userKey, volume) {
+async function appendVolumeHistory(key, volume) {
   try {
-    const redis = await getUebaRedis();
-    if (redis && redis.status === "ready") {
-      const key = UEBA_REDIS_KEY(userKey);
-      await redis.rpush(key, volume);
-      await redis.ltrim(key, -UEBA_HISTORY_MAX, -1);
+    const redis = await getRedisClient();
+    if (isRedisReady(redis)) {
+      const redisKey = UEBA_REDIS_KEY(key);
+      await redis.rpush(redisKey, volume);
+      await redis.ltrim(redisKey, -UEBA_HISTORY_MAX, -1);
       return;
     }
   } catch (err) {
@@ -114,10 +154,10 @@ async function appendVolumeHistory(userKey, volume) {
   }
 
   // In-memory fallback
-  const history = _memVolumeHistory.get(userKey) || [];
+  const history = _memVolumeHistory.get(key) || [];
   history.push(volume);
   if (history.length > UEBA_HISTORY_MAX) history.splice(0, history.length - UEBA_HISTORY_MAX);
-  _memVolumeHistory.set(userKey, history);
+  _memVolumeHistory.set(key, history);
 }
 
 // ── Statistical helpers ───────────────────────────────────────────────────────
@@ -161,47 +201,6 @@ export function computeZScore(value, history) {
   if (sigma === 0) return 0;
   return (value - mu) / sigma;
 }
-
-// ── UEBA volume history ───────────────────────────────────────────────────────
-
-/** In-memory fallback: userKey → number[] (volume history) */
-const _memVolumeHistory = new Map();
-
-/**
- * Fetch the existing volume history for `key` without modifying it.
- * @param {string} key  Normalised user key.
- * @returns {Promise<number[]>}  History (oldest first), up to UEBA_HISTORY_MAX entries.
- */
-async function fetchVolumeHistory(key) {
-  try {
-    const raw = await getRedisClient().lrange(UEBA_REDIS_KEY(key), 0, -1);
-    return raw.map(Number);
-  } catch {
-    return [...(_memVolumeHistory.get(key) || [])];
-  }
-}
-
-/**
- * Append a volume sample for `key` to the history store and trim to UEBA_HISTORY_MAX.
- * @param {string} key
- * @param {number} volume  Character count of the current sensitive payload.
- * @returns {Promise<void>}
- */
-async function appendVolumeHistory(key, volume) {
-  try {
-    const redisKey = UEBA_REDIS_KEY(key);
-    await getRedisClient().rpush(redisKey, volume);
-    await getRedisClient().ltrim(redisKey, -UEBA_HISTORY_MAX, -1);
-    return;
-  } catch { /* fall through to in-memory */ }
-
-  // In-memory fallback
-  const history = _memVolumeHistory.get(key) || [];
-  history.push(volume);
-  if (history.length > UEBA_HISTORY_MAX) history.splice(0, history.length - UEBA_HISTORY_MAX);
-  _memVolumeHistory.set(key, history);
-}
-// ── Fragment Cache ────────────────────────────────────────────────────────────
 
 // ── Fragment Cache ────────────────────────────────────────────────────────────
 
@@ -250,7 +249,9 @@ function pruneFragments(frags, add) {
 /** Load raw fragment array from Redis (or [] on miss/error). */
 async function loadFragments(key) {
   try {
-    const raw = await getRedisClient().get(`frag:${key}`);
+    const redis = await getRedisClient();
+    if (!isRedisReady(redis)) return [];
+    const raw = await redis.get(`frag:${key}`);
     return raw ? JSON.parse(raw) : [];
   } catch {
     return [];
@@ -260,7 +261,9 @@ async function loadFragments(key) {
 /** Persist fragment array to Redis with a sliding 5-minute TTL. */
 async function saveFragments(key, frags) {
   try {
-    await getRedisClient().setex(`frag:${key}`, FRAGMENT_TTL_SEC, JSON.stringify(frags));
+    const redis = await getRedisClient();
+    if (!isRedisReady(redis)) return;
+    await redis.setex(`frag:${key}`, FRAGMENT_TTL_SEC, JSON.stringify(frags));
   } catch {
     // Non-fatal – worst case the fragment window is lost on the next read.
   }
@@ -318,7 +321,8 @@ export async function getFragmentCount(userEmail) {
 export async function clearFragments(userEmail) {
   const key = userKey(userEmail);
   try {
-    await getRedisClient().del(`frag:${key}`);
+    const redis = await getRedisClient();
+    if (isRedisReady(redis)) await redis.del(`frag:${key}`);
   } catch {
     // Non-fatal
   }
@@ -357,7 +361,9 @@ const PROFILE_WINDOW_MS = 30 * 60 * 1000; // 30 minutes for rate calculation
 /** Load a user profile from Redis (or null on miss/error). */
 async function loadProfile(key) {
   try {
-    const raw = await getRedisClient().get(`profile:${key}`);
+    const redis = await getRedisClient();
+    if (!isRedisReady(redis)) return null;
+    const raw = await redis.get(`profile:${key}`);
     return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
@@ -367,7 +373,9 @@ async function loadProfile(key) {
 /** Persist a user profile to Redis (no TTL – profiles are long-lived baselines). */
 async function saveProfile(key, profile) {
   try {
-    await getRedisClient().set(`profile:${key}`, JSON.stringify(profile));
+    const redis = await getRedisClient();
+    if (!isRedisReady(redis)) return;
+    await redis.set(`profile:${key}`, JSON.stringify(profile));
   } catch {
     // Non-fatal
   }
@@ -412,9 +420,6 @@ export async function updateUserProfile(userEmail, text, evasionTechniques = [])
   const key   = userKey(userEmail);
   const now   = Date.now();
   const types = detectContentTypes(text);
-  const key     = userEmail.toLowerCase().trim() || "anonymous";
-  const now     = Date.now();
-  const types   = detectContentTypes(text);
 
   let profile = await loadProfile(key);
   if (!profile) {
@@ -541,34 +546,6 @@ export async function updateUserProfile(userEmail, text, evasionTechniques = [])
     severity = "Info";
   }
 
-  // ── Severity classification ──────────────────────────────────────────────
-  let severity;
-  if (anomalyFlags.includes("STATISTICAL_ANOMALY_3SIGMA")) {
-    severity = "Critical";
-  } else if (riskScore >= 70) {
-    severity = "High";
-  } else if (riskScore >= 40) {
-    severity = "Medium";
-  } else if (riskScore >= 10) {
-    severity = "Low";
-  } else {
-    severity = "Info";
-  }
-
-  // ── Severity classification ──────────────────────────────────────────────
-  let severity;
-  if (anomalyFlags.includes("STATISTICAL_ANOMALY_3SIGMA")) {
-    severity = "Critical";
-  } else if (riskScore >= 70) {
-    severity = "High";
-  } else if (riskScore >= 40) {
-    severity = "Medium";
-  } else if (riskScore >= 10) {
-    severity = "Low";
-  } else {
-    severity = "Info";
-  }
-
   // MFA required for high-risk anomalies or statistical outliers
   const requiresMFA = severity === "Critical" ||
     riskScore >= 50 ||
@@ -595,7 +572,8 @@ export async function getUserProfile(userEmail) {
  * @returns {Promise<Array<{ email: string } & UserProfile>>}
  */
 export async function getAllProfiles() {
-  const redis = getRedisClient();
+  const redis = await getRedisClient();
+  if (!isRedisReady(redis)) return [];
   const keys  = [];
   let   cursor = "0";
 

@@ -119,7 +119,7 @@ function buildConnectionInstructions(serverUrl, apiKey) {
 
   return {
     browserExtension: [
-      "התקן את התוסף DLP Shield מ-Chrome Web Store",
+      "התקן את תוסף ה-GHOST מ-Chrome Web Store",
       `לחץ על אייקון המגן בסרגל הכלים`,
       `בשדה "כתובת שרת DLP" הכנס: ${serverUrl}`,
       "מפתח ה-API יוזן אוטומטית דרך מנהל המערכת",

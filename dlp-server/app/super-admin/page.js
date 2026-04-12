@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Bell, Clock, Plus, Shield } from "lucide-react";
+import { Bell, Clock, Plus } from "lucide-react";
+import GhostLogo from "../../components/GhostLogo";
 import SuperAdminSidebar from "./components/SuperAdminSidebar";
 import GlobalKpiBar      from "./components/GlobalKpiBar";
 import TenantsTable      from "./components/TenantsTable";
@@ -50,9 +51,9 @@ function AuthGate({ onAuth }) {
     <div className="min-h-screen bg-[#0a0a0f] flex items-center justify-center">
       <div className="w-80 bg-[#0d0d14] border border-cyan-900/40 rounded-2xl p-8 space-y-5 shadow-[0_0_60px_rgba(34,211,238,0.07)]">
         <div className="flex items-center gap-3">
-          <Shield className="text-cyan-400" size={24} />
+          <GhostLogo size={24} className="text-cyan-400" />
           <div>
-            <h1 className="text-cyan-300 font-bold text-sm tracking-widest">GHOSTLAYER</h1>
+            <h1 className="text-cyan-300 font-bold text-sm tracking-widest">GHOST</h1>
             <p className="text-slate-500 text-xs">Super Admin</p>
           </div>
         </div>
@@ -240,8 +241,8 @@ export default function SuperAdminPage() {
         {/* Top bar */}
         <header className="flex items-center justify-between px-6 py-3.5 border-b border-slate-800/60 bg-[#0a0a0f]/80 backdrop-blur-sm shrink-0">
           <div className="flex items-center gap-3">
-            <Shield className="text-cyan-500" size={18} />
-            <span className="text-sm font-bold text-cyan-300 tracking-widest">GhostLayer Super Admin</span>
+            <GhostLogo size={18} className="text-cyan-500" />
+            <span className="text-sm font-bold text-cyan-300 tracking-widest">GHOST Super Admin</span>
           </div>
           <div className="flex items-center gap-4">
             <SystemClock />

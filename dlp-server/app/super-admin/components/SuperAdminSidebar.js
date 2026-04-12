@@ -2,9 +2,10 @@
 
 import { useState } from "react";
 import {
-  Shield, LayoutDashboard, Building2, Cpu, Activity,
+  LayoutDashboard, Building2, Cpu, Activity,
   Map, Radio, ChevronLeft, ChevronRight, LogOut,
 } from "lucide-react";
+import GhostLogo from "../../../components/GhostLogo";
 
 const NAV_ITEMS = [
   { id: "overview",  label: "סקירה כללית",  icon: LayoutDashboard },
@@ -26,10 +27,10 @@ export default function SuperAdminSidebar({ activeTab, onTabChange }) {
     >
       {/* Logo */}
       <div className="flex items-center gap-3 px-4 py-5 border-b border-cyan-900/30">
-        <Shield className="text-cyan-400 shrink-0" size={22} />
+        <GhostLogo size={22} className="text-cyan-400 shrink-0" />
         {!collapsed && (
           <span className="text-cyan-300 font-bold text-sm tracking-widest whitespace-nowrap">
-            GhostLayer
+            GHOST
           </span>
         )}
       </div>

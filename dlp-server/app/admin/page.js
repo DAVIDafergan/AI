@@ -3,14 +3,14 @@
 /**
  * app/admin/page.js
  *
- * GhostLayer – מרכז ניהול לקוח
+ * GHOST – מרכז ניהול לקוח
  * שלב 1: חיבור סוכן השרת
  * שלב 2: פריסת מגני עובדים
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
-  Shield, Brain, Cpu, Server, Download, Copy, CheckCheck,
+  Brain, Cpu, Server, Download, Copy, CheckCheck,
   Activity, Users, Zap, Lock, Eye, ChevronRight,
   Terminal, AlertCircle, Wifi, RefreshCw, UserCheck, Replace,
   TrendingUp, Clock, Filter, Search, ChevronDown, ChevronUp,
@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import ActiveUsersPanel from "./components/ActiveUsersPanel";
 import CustomKeywordsManager from "./components/CustomKeywordsManager";
+import GhostLogo from "../../components/GhostLogo";
 
 function clsx(...cls) { return cls.filter(Boolean).join(" "); }
 function formatNum(n) { return (n ?? 0).toLocaleString("he-IL"); }
@@ -802,9 +803,9 @@ function AuthGate({ onAuth }) {
     <div className="min-h-screen bg-[#030712] flex items-center justify-center" dir="rtl">
       <div className="w-80 bg-[#0d0d14] border border-cyan-900/40 rounded-2xl p-8 space-y-5 shadow-[0_0_60px_rgba(34,211,238,0.07)]">
         <div className="flex items-center gap-3">
-          <Shield className="text-cyan-400" size={24} />
+          <GhostLogo size={24} className="text-cyan-400" />
           <div>
-            <h1 className="text-cyan-300 font-bold text-sm tracking-widest">GHOSTLAYER</h1>
+            <h1 className="text-cyan-300 font-bold text-sm tracking-widest">GHOST</h1>
             <p className="text-slate-500 text-xs">מרכז ניהול לקוח</p>
           </div>
         </div>
@@ -888,10 +889,10 @@ export default function CommandCenterDashboard() {
       <header className="sticky top-0 z-40 flex items-center justify-between px-6 py-3 bg-[#030712]/90 backdrop-blur border-b border-slate-800/60">
         <div className="flex items-center gap-3">
           <div className="p-1.5 bg-cyan-500/10 rounded-lg border border-cyan-500/20">
-            <Shield className="w-5 h-5 text-cyan-400" />
+            <GhostLogo size={20} className="text-cyan-400" />
           </div>
           <div className="flex items-baseline gap-2">
-            <span className="font-bold text-base tracking-tight text-white">GhostLayer</span>
+            <span className="font-bold text-base tracking-tight text-white">GHOST</span>
             {data?.tenant?.name && <span className="text-xs text-cyan-400 font-medium">{data.tenant.name}</span>}
             <span className="text-xs text-slate-500 font-medium tracking-widest uppercase hidden md:inline">מרכז ניהול</span>
           </div>
@@ -924,7 +925,7 @@ export default function CommandCenterDashboard() {
         <div className="text-center space-y-2 pt-2">
           <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight">
             <span className="text-white">פרוס</span>{" "}
-            <span className="bg-gradient-to-r from-cyan-400 to-purple-500 bg-clip-text text-transparent">GhostLayer</span>{" "}
+            <span className="bg-gradient-to-r from-cyan-400 to-purple-500 bg-clip-text text-transparent">GHOST</span>{" "}
             <span className="text-white">תוך דקות</span>
           </h1>
           <p className="text-slate-400 text-base max-w-xl mx-auto">
@@ -964,7 +965,7 @@ export default function CommandCenterDashboard() {
         <RecentEvents events={data?.recentEvents || []} />
 
         <p className="text-center text-xs text-slate-700 pb-6">
-          GhostLayer מעבד את כל המידע הרגיש באופן מקומי. שום טקסט רגיל לא מגיע ל-LLM חיצוניים או שרתים של צד שלישי.
+          GHOST מעבד את כל המידע הרגיש באופן מקומי. שום טקסט רגיל לא מגיע ל-LLM חיצוניים או שרתים של צד שלישי.
         </p>
       </main>
     </div>

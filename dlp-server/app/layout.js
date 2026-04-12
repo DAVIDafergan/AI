@@ -1,7 +1,7 @@
 import "./globals.css";
 
 export const metadata = {
-  title: "DLP Shield – Admin Dashboard",
+  title: "GHOST – Admin Dashboard",
 };
 
 export default function RootLayout({ children }) {

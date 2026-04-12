@@ -505,7 +505,7 @@ async function runDetectionPipeline({ text, userEmail, source = "paste", verbose
   const scanTargets = [normalized, ...extractedFragments];
 
   // ── Behavior Analytics (Tier 5 – early, non-blocking) ────────────────────
-  const behaviorResult = updateUserProfile(userEmail, text, evasionTechniques);
+  const behaviorResult = await updateUserProfile(userEmail, text, evasionTechniques);
 
   // ── Dynamic threshold: lower block threshold for high-risk users ──────────
   // When the UEBA engine has flagged this user with anomalous behaviour,
@@ -520,8 +520,8 @@ async function runDetectionPipeline({ text, userEmail, source = "paste", verbose
   let fragmentWindowText = "";
   let fragmentCount = 0;
   if (!skipFragment) {
-    fragmentWindowText = recordFragment(userEmail, normalized, source);
-    fragmentCount      = getFragmentCount(userEmail);
+    fragmentWindowText = await recordFragment(userEmail, normalized, source);
+    fragmentCount      = await getFragmentCount(userEmail);
     // Also add the combined window to scan targets (for split-data detection)
     if (fragmentCount > 1) {
       scanTargets.push(fragmentWindowText);
@@ -665,7 +665,7 @@ async function runDetectionPipeline({ text, userEmail, source = "paste", verbose
     }
 
     // Clear fragment cache after a block to prevent re-assembly
-    if (detectedFromFragment) clearFragments(userEmail);
+    if (detectedFromFragment) await clearFragments(userEmail);
 
     // Fire-and-forget cloud event (metadata only, no sensitive text)
     if (_tenantApiKey) {
@@ -784,13 +784,13 @@ export async function startApiServer(options = {}) {
   });
 
   // ── Admin: behavioral profiles ────────────────────────────────────────────
-  app.get("/api/behavior-profiles", (req, res) => {
+  app.get("/api/behavior-profiles", async (req, res) => {
     // Require the tenant API key so only the local admin can access this
     const key = req.headers["x-api-key"] || "";
     if (_tenantApiKey && key !== _tenantApiKey) {
       return res.status(403).json({ error: "Forbidden" });
     }
-    return res.json({ profiles: getAllProfiles() });
+    return res.json({ profiles: await getAllProfiles() });
   });
 
   // ── File upload OCR check endpoint (multipart/form-data) ────────────────

@@ -128,10 +128,19 @@ const TenantEventSchema = new mongoose.Schema({
   userEmail: { type: String },
   ip:        { type: String },
   timestamp: { type: Date, default: Date.now },
+  // Per-tenant data-retention: MongoDB variable TTL index on this field.
+  // Set to timestamp + tenant.settings.retentionDays at creation time.
+  // Events without expireAt fall back to the fixed 90-day index on timestamp.
+  expireAt:  { type: Date },
 });
 
 TenantEventSchema.index({ tenantId: 1, timestamp: -1 });
-TenantEventSchema.index({ timestamp: 1 }, { expireAfterSeconds: 90 * 24 * 60 * 60 }); // TTL 90 days
+// Variable TTL: MongoDB deletes a document once expireAt is in the past.
+// expireAfterSeconds: 0 means "expire exactly at the expireAt value".
+TenantEventSchema.index({ expireAt: 1 }, { expireAfterSeconds: 0, sparse: true });
+// Fallback fixed TTL for events that pre-date the expireAt field or were
+// created without a tenant retentionDays value (90-day hard cap).
+TenantEventSchema.index({ timestamp: 1 }, { expireAfterSeconds: 90 * 24 * 60 * 60 });
 
 export const Tenant = mongoose.models.Tenant || mongoose.model("Tenant", TenantSchema);
 export const Agent  = mongoose.models.Agent  || mongoose.model("Agent",  AgentSchema);

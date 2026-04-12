@@ -14,6 +14,17 @@
  *   Redis (key: ueba:vol:<userKey>).  On each event we compute the Z-score of
  *   the current volume against that history.  If Z > 3 the event is flagged
  *   STATISTICAL_ANOMALY_3SIGMA with severity "Critical" and requiresMFA = true.
+ *   When Redis is unavailable the module falls back gracefully to in-memory.
+ *
+ * State is persisted in Redis so it survives agent restarts and supports
+ * multi-process deployments.  Each function is async because Redis I/O is
+ * asynchronous.  Falls back gracefully to no-op behaviour if Redis is
+ * unavailable, allowing the agent to continue running in degraded mode.
+ *
+ * Redis key layout:
+ *   frag:{userKey}     – JSON array of Fragment objects; TTL = FRAGMENT_TTL_SEC
+ *   profile:{userKey}  – JSON object of UserProfile; no TTL (persistent baseline)
+ *   ueba:vol:{userKey} – Redis list of volume history numbers (rpush/ltrim)
  *   When Redis is unavailable the module falls back to in-memory history and
  *   continues to operate normally.
  *
@@ -151,19 +162,109 @@ export function computeZScore(value, history) {
   return (value - mu) / sigma;
 }
 
+// ── UEBA volume history ───────────────────────────────────────────────────────
+
+/** In-memory fallback: userKey → number[] (volume history) */
+const _memVolumeHistory = new Map();
+
+/**
+ * Fetch the existing volume history for `key` without modifying it.
+ * @param {string} key  Normalised user key.
+ * @returns {Promise<number[]>}  History (oldest first), up to UEBA_HISTORY_MAX entries.
+ */
+async function fetchVolumeHistory(key) {
+  try {
+    const raw = await getRedisClient().lrange(UEBA_REDIS_KEY(key), 0, -1);
+    return raw.map(Number);
+  } catch {
+    return [...(_memVolumeHistory.get(key) || [])];
+  }
+}
+
+/**
+ * Append a volume sample for `key` to the history store and trim to UEBA_HISTORY_MAX.
+ * @param {string} key
+ * @param {number} volume  Character count of the current sensitive payload.
+ * @returns {Promise<void>}
+ */
+async function appendVolumeHistory(key, volume) {
+  try {
+    const redisKey = UEBA_REDIS_KEY(key);
+    await getRedisClient().rpush(redisKey, volume);
+    await getRedisClient().ltrim(redisKey, -UEBA_HISTORY_MAX, -1);
+    return;
+  } catch { /* fall through to in-memory */ }
+
+  // In-memory fallback
+  const history = _memVolumeHistory.get(key) || [];
+  history.push(volume);
+  if (history.length > UEBA_HISTORY_MAX) history.splice(0, history.length - UEBA_HISTORY_MAX);
+  _memVolumeHistory.set(key, history);
+}
 // ── Fragment Cache ────────────────────────────────────────────────────────────
 
-const FRAGMENT_TTL_MS     = 5 * 60 * 1000;  // 5 minutes
-const MAX_CACHE_BYTES     = 50_000;           // 50 KB per user (prevents memory abuse)
-const MAX_FRAGMENT_COUNT  = 20;               // maximum fragments kept per user
+// ── Fragment Cache ────────────────────────────────────────────────────────────
 
 /**
  * @typedef {{ text: string, ts: number, source: string }} Fragment
  * @typedef {Fragment[]} UserFragmentList
  */
 
-/** @type {Map<string, UserFragmentList>} */
-const _fragmentStore = new Map();
+/**
+ * Read, prune expired fragments, apply limits, persist the updated list, and
+ * return the pruned array.  Extracted so recordFragment and read-only helpers
+ * share the same pruning logic.
+ *
+ * @param {string}       key    Redis field key (userKey)
+ * @param {Fragment[]}   frags  Raw array loaded from Redis (may include expired).
+ * @param {Fragment|null} add   Optional new fragment to append before pruning.
+ * @returns {{ frags: Fragment[], changed: boolean }}
+ */
+function pruneFragments(frags, add) {
+  const now     = Date.now();
+  let   updated = frags.filter((f) => now - f.ts < FRAGMENT_TTL_MS);
+  let   changed = updated.length !== frags.length;
+
+  if (add) {
+    updated.push(add);
+    changed = true;
+  }
+
+  // Enforce count limit
+  if (updated.length > MAX_FRAGMENT_COUNT) {
+    updated = updated.slice(updated.length - MAX_FRAGMENT_COUNT);
+    changed = true;
+  }
+
+  // Enforce byte budget
+  let totalBytes = updated.reduce((acc, f) => acc + (f?.text?.length || 0), 0);
+  while (totalBytes > MAX_CACHE_BYTES && updated.length > 1) {
+    const removed = updated.shift();
+    totalBytes -= removed?.text?.length || 0;
+    changed = true;
+  }
+
+  return { frags: updated, changed };
+}
+
+/** Load raw fragment array from Redis (or [] on miss/error). */
+async function loadFragments(key) {
+  try {
+    const raw = await getRedisClient().get(`frag:${key}`);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Persist fragment array to Redis with a sliding 5-minute TTL. */
+async function saveFragments(key, frags) {
+  try {
+    await getRedisClient().setex(`frag:${key}`, FRAGMENT_TTL_SEC, JSON.stringify(frags));
+  } catch {
+    // Non-fatal – worst case the fragment window is lost on the next read.
+  }
+}
 
 /**
  * Record a new text fragment for the given user and return the concatenated
@@ -172,65 +273,55 @@ const _fragmentStore = new Map();
  * @param {string} userEmail
  * @param {string} text        The new fragment to add.
  * @param {string} [source]    Where it came from: "paste" | "typing" | "image".
- * @returns {string}  Concatenated window text (for combined pattern matching).
+ * @returns {Promise<string>}  Concatenated window text (for combined pattern matching).
  */
-export function recordFragment(userEmail, text, source = "paste") {
-  const now = Date.now();
-  const key = userEmail.toLowerCase().trim() || "anonymous";
-
-  // Retrieve and prune expired fragments
-  let frags = (_fragmentStore.get(key) || []).filter((f) => now - f.ts < FRAGMENT_TTL_MS);
-
-  // Add the new fragment
-  frags.push({ text, ts: now, source });
-
-  // Enforce count limit (drop oldest)
-  if (frags.length > MAX_FRAGMENT_COUNT) {
-    frags = frags.slice(frags.length - MAX_FRAGMENT_COUNT);
-  }
-
-  // Enforce byte limit (drop oldest until under budget)
-  let totalBytes = frags.reduce((acc, f) => acc + f.text.length, 0);
-  while (totalBytes > MAX_CACHE_BYTES && frags.length > 1) {
-    const removed = frags.shift();
-    totalBytes -= removed.text.length;
-  }
-
-  _fragmentStore.set(key, frags);
-
+export async function recordFragment(userEmail, text, source = "paste") {
+  const key  = userKey(userEmail);
+  const raw  = await loadFragments(key);
+  const now  = Date.now();
+  const { frags } = pruneFragments(raw, { text, ts: now, source });
+  await saveFragments(key, frags);
   return frags.map((f) => f.text).join("\n");
 }
 
 /**
  * Peek at the current window without adding a new fragment.
  * @param {string} userEmail
- * @returns {string}
+ * @returns {Promise<string>}
  */
-export function peekFragmentWindow(userEmail) {
-  const now = Date.now();
-  const key = userEmail.toLowerCase().trim() || "anonymous";
-  const frags = (_fragmentStore.get(key) || []).filter((f) => now - f.ts < FRAGMENT_TTL_MS);
+export async function peekFragmentWindow(userEmail) {
+  const key  = userKey(userEmail);
+  const raw  = await loadFragments(key);
+  const { frags, changed } = pruneFragments(raw, null);
+  if (changed) await saveFragments(key, frags);
   return frags.map((f) => f.text).join("\n");
 }
 
 /**
  * Returns the number of fragments in the current window for the user.
  * @param {string} userEmail
- * @returns {number}
+ * @returns {Promise<number>}
  */
-export function getFragmentCount(userEmail) {
-  const now = Date.now();
-  const key = userEmail.toLowerCase().trim() || "anonymous";
-  return (_fragmentStore.get(key) || []).filter((f) => now - f.ts < FRAGMENT_TTL_MS).length;
+export async function getFragmentCount(userEmail) {
+  const key  = userKey(userEmail);
+  const raw  = await loadFragments(key);
+  const { frags, changed } = pruneFragments(raw, null);
+  if (changed) await saveFragments(key, frags);
+  return frags.length;
 }
 
 /**
  * Clear the fragment window for a user (called after a block/alert is raised).
  * @param {string} userEmail
+ * @returns {Promise<void>}
  */
-export function clearFragments(userEmail) {
-  const key = userEmail.toLowerCase().trim() || "anonymous";
-  _fragmentStore.delete(key);
+export async function clearFragments(userEmail) {
+  const key = userKey(userEmail);
+  try {
+    await getRedisClient().del(`frag:${key}`);
+  } catch {
+    // Non-fatal
+  }
 }
 
 // ── User Behavior Analytics ───────────────────────────────────────────────────
@@ -261,10 +352,26 @@ const CONTENT_TYPE_SIGNALS = {
  * }} UserProfile
  */
 
-/** @type {Map<string, UserProfile>} */
-const _profileStore = new Map();
-
 const PROFILE_WINDOW_MS = 30 * 60 * 1000; // 30 minutes for rate calculation
+
+/** Load a user profile from Redis (or null on miss/error). */
+async function loadProfile(key) {
+  try {
+    const raw = await getRedisClient().get(`profile:${key}`);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Persist a user profile to Redis (no TTL – profiles are long-lived baselines). */
+async function saveProfile(key, profile) {
+  try {
+    await getRedisClient().set(`profile:${key}`, JSON.stringify(profile));
+  } catch {
+    // Non-fatal
+  }
+}
 
 /**
  * Detect the content type(s) present in `text` using lightweight regexes.
@@ -302,14 +409,17 @@ function detectContentTypes(text) {
  * }>}
  */
 export async function updateUserProfile(userEmail, text, evasionTechniques = []) {
+  const key   = userKey(userEmail);
+  const now   = Date.now();
+  const types = detectContentTypes(text);
   const key     = userEmail.toLowerCase().trim() || "anonymous";
   const now     = Date.now();
   const types   = detectContentTypes(text);
 
-  let profile = _profileStore.get(key);
+  let profile = await loadProfile(key);
   if (!profile) {
     profile = {
-      totalPastes:      0,
+      totalPastes:       0,
       contentTypeCounts: {},
       lastSeen:          now,
       pasteTimestamps:   [],
@@ -415,7 +525,21 @@ export async function updateUserProfile(userEmail, text, evasionTechniques = [])
 
   profile.riskScore    = riskScore;
   profile.anomalyFlags = anomalyFlags;
-  _profileStore.set(key, profile);
+  await saveProfile(key, profile);
+
+  // ── Severity classification ──────────────────────────────────────────────
+  let severity;
+  if (anomalyFlags.includes("STATISTICAL_ANOMALY_3SIGMA")) {
+    severity = "Critical";
+  } else if (riskScore >= 70) {
+    severity = "High";
+  } else if (riskScore >= 40) {
+    severity = "Medium";
+  } else if (riskScore >= 10) {
+    severity = "Low";
+  } else {
+    severity = "Info";
+  }
 
   // ── Severity classification ──────────────────────────────────────────────
   let severity;
@@ -444,20 +568,48 @@ export async function updateUserProfile(userEmail, text, evasionTechniques = [])
 /**
  * Return the current profile for a user (read-only snapshot).
  * @param {string} userEmail
- * @returns {UserProfile | null}
+ * @returns {Promise<UserProfile | null>}
  */
-export function getUserProfile(userEmail) {
-  const key = userEmail.toLowerCase().trim() || "anonymous";
-  return _profileStore.get(key) ?? null;
+export async function getUserProfile(userEmail) {
+  const key = userKey(userEmail);
+  return loadProfile(key);
 }
 
 /**
  * Return all stored user profiles (for admin dashboard).
- * @returns {Array<{ email: string } & UserProfile>}
+ * Uses Redis SCAN to enumerate all profile:* keys without blocking.
+ * @returns {Promise<Array<{ email: string } & UserProfile>>}
  */
-export function getAllProfiles() {
-  return Array.from(_profileStore.entries()).map(([email, profile]) => ({
-    email,
-    ...profile,
-  }));
+export async function getAllProfiles() {
+  const redis = getRedisClient();
+  const keys  = [];
+  let   cursor = "0";
+
+  try {
+    do {
+      const [nextCursor, batch] = await redis.scan(cursor, "MATCH", "profile:*", "COUNT", "100");
+      cursor = nextCursor;
+      keys.push(...batch);
+    } while (cursor !== "0");
+  } catch {
+    return [];
+  }
+
+  if (keys.length === 0) return [];
+
+  const values = await redis.mget(...keys);
+  const results = [];
+  for (let i = 0; i < keys.length; i++) {
+    if (values[i]) {
+      try {
+        const email   = keys[i].replace(/^profile:/, "");
+        const profile = JSON.parse(values[i]);
+        results.push({ email, ...profile });
+      } catch {
+        // Skip malformed entries
+      }
+    }
+  }
+  return results;
 }
+

@@ -6,13 +6,150 @@
  * (e.g. first half of a credit-card number, then the second half), this module
  * detects the combination and flags it as a fragmentation attack.
  *
- * Also implements lightweight User Behavior Analytics (UBA) that builds a
- * per-user baseline and raises a risk flag when anomalous behaviour is detected.
+ * Also implements Advanced User and Entity Behavior Analytics (UEBA) that builds
+ * a per-user baseline and raises a risk flag when anomalous behaviour is detected.
  *
- * All data is in-memory only – nothing is written to disk.
+ * Statistical Anomaly Detection (Z-score / 3σ rule):
+ *   A running history of sensitive-data volumes (character counts) is stored in
+ *   Redis (key: ueba:vol:<userKey>).  On each event we compute the Z-score of
+ *   the current volume against that history.  If Z > 3 the event is flagged
+ *   STATISTICAL_ANOMALY_3SIGMA with severity "Critical" and requiresMFA = true.
+ *   When Redis is unavailable the module falls back to in-memory history and
+ *   continues to operate normally.
  *
  * @module fragment-cache
  */
+
+// ── Redis client (optional – graceful fallback to in-memory) ─────────────────
+
+/**
+ * Maximum number of historical volume samples retained per user.
+ * Older samples are trimmed so the list never grows unbounded.
+ */
+const UEBA_HISTORY_MAX  = 200;
+const UEBA_REDIS_KEY    = (userKey) => `ueba:vol:${userKey}`;
+
+let _uebaRedis = null;
+
+/**
+ * Lazily obtain a Redis client for UEBA baseline storage.
+ * Returns null if the connection cannot be established.
+ */
+async function getUebaRedis() {
+  if (_uebaRedis) return _uebaRedis;
+  try {
+    const { default: Redis } = await import("ioredis");
+    const url = process.env.REDIS_URL || "redis://localhost:6379";
+    const client = new Redis(url, {
+      lazyConnect: true,
+      enableOfflineQueue: false,
+      maxRetriesPerRequest: 0,
+      retryStrategy: () => null,
+    });
+    client.on("error", (err) => {
+      if (err.code !== "ECONNREFUSED" && err.code !== "ENOTFOUND") {
+        console.error("[ueba] Redis error:", err.message);
+      }
+    });
+    await client.connect();
+    _uebaRedis = client;
+    return client;
+  } catch {
+    return null;
+  }
+}
+
+/** In-memory fallback: userKey → number[] (volume history) */
+const _memVolumeHistory = new Map();
+
+/**
+ * Fetch the existing volume history for `userKey` without modifying it.
+ *
+ * @param {string} userKey
+ * @returns {Promise<number[]>}  History (oldest first), up to UEBA_HISTORY_MAX entries.
+ */
+async function fetchVolumeHistory(userKey) {
+  try {
+    const redis = await getUebaRedis();
+    if (redis && redis.status === "ready") {
+      const raw = await redis.lrange(UEBA_REDIS_KEY(userKey), 0, -1);
+      return raw.map(Number);
+    }
+  } catch (err) {
+    console.error("[ueba] Redis read failed, using in-memory fallback:", err.message);
+  }
+  return [...(_memVolumeHistory.get(userKey) || [])];
+}
+
+/**
+ * Append a volume sample for `userKey` to the history store (Redis or memory).
+ * Trims the list to UEBA_HISTORY_MAX entries.
+ *
+ * @param {string} userKey
+ * @param {number} volume  Character count of the current sensitive payload.
+ * @returns {Promise<void>}
+ */
+async function appendVolumeHistory(userKey, volume) {
+  try {
+    const redis = await getUebaRedis();
+    if (redis && redis.status === "ready") {
+      const key = UEBA_REDIS_KEY(userKey);
+      await redis.rpush(key, volume);
+      await redis.ltrim(key, -UEBA_HISTORY_MAX, -1);
+      return;
+    }
+  } catch (err) {
+    console.error("[ueba] Redis write failed, using in-memory fallback:", err.message);
+  }
+
+  // In-memory fallback
+  const history = _memVolumeHistory.get(userKey) || [];
+  history.push(volume);
+  if (history.length > UEBA_HISTORY_MAX) history.splice(0, history.length - UEBA_HISTORY_MAX);
+  _memVolumeHistory.set(userKey, history);
+}
+
+// ── Statistical helpers ───────────────────────────────────────────────────────
+
+/**
+ * Compute the population mean of an array of numbers.
+ * @param {number[]} values
+ * @returns {number}
+ */
+function mean(values) {
+  if (values.length === 0) return 0;
+  return values.reduce((s, v) => s + v, 0) / values.length;
+}
+
+/**
+ * Compute the population standard deviation of an array of numbers.
+ * @param {number[]} values
+ * @param {number}   [mu]   Pre-computed mean (optional, avoids second pass).
+ * @returns {number}
+ */
+function stddev(values, mu) {
+  if (values.length < 2) return 0;
+  const m = mu !== undefined ? mu : mean(values);
+  const variance = values.reduce((s, v) => s + (v - m) ** 2, 0) / values.length;
+  return Math.sqrt(variance);
+}
+
+/**
+ * Compute the Z-score of `value` against the provided historical sample set.
+ * Returns 0 when the history is too small (< 2 points) to be meaningful.
+ *
+ * @param {number}   value    The current observation.
+ * @param {number[]} history  Historical observations (the new value should NOT
+ *                            be included – pass the list *before* appending).
+ * @returns {number}  Z-score (positive = above average, negative = below).
+ */
+export function computeZScore(value, history) {
+  if (history.length < 2) return 0;
+  const mu = mean(history);
+  const sigma = stddev(history, mu);
+  if (sigma === 0) return 0;
+  return (value - mu) / sigma;
+}
 
 // ── Fragment Cache ────────────────────────────────────────────────────────────
 
@@ -145,23 +282,26 @@ function detectContentTypes(text) {
  * return an anomaly report.
  *
  * Anomaly signals (returned as strings in `anomalyFlags`):
- *   UNUSUAL_CONTENT_SHIFT  – user suddenly pastes a very different content type
- *   HIGH_PASTE_RATE        – more than 10 pastes in 1 minute
- *   LARGE_PASTE            – single paste > 5 000 chars
- *   FRAGMENTATION_PATTERN  – 3+ consecutive pastes of incomplete-looking data
- *   CREDENTIAL_ANOMALY     – credential content from a user who never does this
- *   FINANCIAL_ANOMALY      – financial data from a user who never does this
+ *   UNUSUAL_CONTENT_SHIFT      – user suddenly pastes a very different content type
+ *   HIGH_PASTE_RATE            – more than 10 pastes in 1 minute
+ *   LARGE_PASTE                – single paste > 5 000 chars
+ *   FRAGMENTATION_PATTERN      – 3+ consecutive pastes of incomplete-looking data
+ *   CREDENTIAL_ANOMALY         – credential content from a user who never does this
+ *   FINANCIAL_ANOMALY          – financial data from a user who never does this
+ *   STATISTICAL_ANOMALY_3SIGMA – current volume is > 3σ above historical baseline
  *
  * @param {string}   userEmail
  * @param {string}   text
  * @param {string[]} evasionTechniques  Evasion techniques detected in this paste.
- * @returns {{
+ * @returns {Promise<{
  *   riskScore: number,
  *   anomalyFlags: string[],
  *   requiresMFA: boolean,
- * }}
+ *   severity: "Info" | "Low" | "Medium" | "High" | "Critical",
+ *   zScore: number,
+ * }>}
  */
-export function updateUserProfile(userEmail, text, evasionTechniques = []) {
+export async function updateUserProfile(userEmail, text, evasionTechniques = []) {
   const key     = userEmail.toLowerCase().trim() || "anonymous";
   const now     = Date.now();
   const types   = detectContentTypes(text);
@@ -244,29 +384,61 @@ export function updateUserProfile(userEmail, text, evasionTechniques = []) {
     anomalyFlags.push("SOCIAL_ENGINEERING_ATTEMPT");
   }
 
+  // ── Statistical Anomaly Detection (Z-score / 3σ) ─────────────────────────
+  // Fetch the historical volume baseline BEFORE recording this sample so the
+  // current event is not included in the reference distribution.
+  const volumeHistory = await fetchVolumeHistory(key).catch(() => []);
+  const zScore = computeZScore(text.length, volumeHistory);
+
+  // Record the new sample so it becomes part of the next event's baseline.
+  await appendVolumeHistory(key, text.length).catch(() => {});
+
+  // Flag as Critical if the current volume is > 3 standard deviations above
+  // the user's personal baseline.  We require at least 10 historical samples
+  // before the rule fires to avoid false-positives during the warm-up period.
+  if (volumeHistory.length >= 10 && zScore > 3) {
+    anomalyFlags.push("STATISTICAL_ANOMALY_3SIGMA");
+  }
+
   // ── Risk score (0–100) ──
   const riskScore = Math.min(
     100,
-    (anomalyFlags.includes("HIGH_PASTE_RATE")          ? 20 : 0) +
-    (anomalyFlags.includes("LARGE_PASTE")              ? 10 : 0) +
-    (anomalyFlags.includes("FINANCIAL_ANOMALY")        ? 30 : 0) +
-    (anomalyFlags.includes("CREDENTIAL_ANOMALY")       ? 30 : 0) +
-    (anomalyFlags.includes("UNUSUAL_CONTENT_SHIFT")    ? 20 : 0) +
-    (anomalyFlags.includes("EVASION_DETECTED")         ? 25 : 0) +
-    (anomalyFlags.includes("SOCIAL_ENGINEERING_ATTEMPT")? 35 : 0),
+    (anomalyFlags.includes("HIGH_PASTE_RATE")              ? 20 : 0) +
+    (anomalyFlags.includes("LARGE_PASTE")                  ? 10 : 0) +
+    (anomalyFlags.includes("FINANCIAL_ANOMALY")            ? 30 : 0) +
+    (anomalyFlags.includes("CREDENTIAL_ANOMALY")           ? 30 : 0) +
+    (anomalyFlags.includes("UNUSUAL_CONTENT_SHIFT")        ? 20 : 0) +
+    (anomalyFlags.includes("EVASION_DETECTED")             ? 25 : 0) +
+    (anomalyFlags.includes("SOCIAL_ENGINEERING_ATTEMPT")   ? 35 : 0) +
+    (anomalyFlags.includes("STATISTICAL_ANOMALY_3SIGMA")   ? 40 : 0),
   );
 
   profile.riskScore    = riskScore;
   profile.anomalyFlags = anomalyFlags;
   _profileStore.set(key, profile);
 
-  // MFA required for high-risk anomalies
-  const requiresMFA = riskScore >= 50 ||
+  // ── Severity classification ──────────────────────────────────────────────
+  let severity;
+  if (anomalyFlags.includes("STATISTICAL_ANOMALY_3SIGMA")) {
+    severity = "Critical";
+  } else if (riskScore >= 70) {
+    severity = "High";
+  } else if (riskScore >= 40) {
+    severity = "Medium";
+  } else if (riskScore >= 10) {
+    severity = "Low";
+  } else {
+    severity = "Info";
+  }
+
+  // MFA required for high-risk anomalies or statistical outliers
+  const requiresMFA = severity === "Critical" ||
+    riskScore >= 50 ||
     anomalyFlags.includes("FINANCIAL_ANOMALY") ||
     anomalyFlags.includes("CREDENTIAL_ANOMALY") ||
     anomalyFlags.includes("SOCIAL_ENGINEERING_ATTEMPT");
 
-  return { riskScore, anomalyFlags, requiresMFA };
+  return { riskScore, anomalyFlags, requiresMFA, severity, zScore };
 }
 
 /**

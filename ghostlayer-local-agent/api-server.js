@@ -26,8 +26,9 @@
  *   Returns all user behavioral profiles (admin endpoint, requires x-api-key).
  */
 
-import express from "express";
-import cors    from "cors";
+import express        from "express";
+import cors           from "cors";
+import multer         from "multer";
 import { querySimilarity, loadIndex } from "./vector-store.js";
 import { initNLP } from "./nlp-engine.js";
 import { sendTenantEvent } from "./cloud-sync.js";
@@ -42,10 +43,11 @@ import {
 } from "./fragment-cache.js";
 import { classifyIntent, HIGH_RISK_INTENTS, initIntentClassifier } from "./intent-classifier.js";
 import { analyzeCodeAst, summarizeAstFindings } from "./ast-analyzer.js";
+import { initSpooler, updateSpoolerConfig } from "./offline-spooler.js";
 
 // ── Thresholds ────────────────────────────────────────────────────────────────
 const BLOCK_THRESHOLD = 0.82;
-const AGENT_VERSION   = "3.2.0";
+const AGENT_VERSION   = "3.3.0";
 
 // Pre-loaded index shared across all requests (refreshed on startup)
 let _cachedIndex = null;
@@ -111,6 +113,71 @@ const TIER1_PATTERNS = [
 
 // ── Mask patterns (superset – also used for post-NER regex masking) ───────────
 const MASK_PATTERNS = TIER1_PATTERNS;
+
+// ── LLM Security: Prompt Injection & Jailbreak Signatures ────────────────────
+// Tier 0.5 – runs before all other tiers on the raw (pre-normalised) input AND
+// on the normalised form.  A match here fires an LLM_JAILBREAK_ATTEMPT event
+// with Critical severity and unconditionally blocks the prompt.
+
+/** Phrases that indicate a prompt-injection attempt. */
+const PROMPT_INJECTION_PATTERNS = [
+  /ignore\s+(all\s+)?(previous|prior|earlier|above|preceding)\s+(instructions?|prompt|context|rules?|constraints?|guidelines?)/i,
+  /disregard\s+(all\s+)?(previous|prior|earlier|above|system)\s+(instructions?|prompt|context|rules?)/i,
+  /forget\s+(everything|all)\s+(you|i)\s+(were|was|have\s+been)\s+(told|given|instructed)/i,
+  /you\s+are\s+now\s+(a|an|the)\s+(?!assistant|helpful)[a-z ]{2,40}(?:bot|ai|model|llm|system)/i,
+  /\bnew\s+system\s+prompt\b/i,
+  /\boverride\s+(?:your\s+)?(?:safety|content|ethical?|alignment)\s+(?:filter|rule|policy|guideline|restriction)/i,
+  /\byour\s+real\s+instructions?\s+are\b/i,
+  /\bpretend\s+(?:that\s+)?you\s+(?:have\s+no|don'?t\s+have\s+any|are\s+not\s+bound\s+by)/i,
+  /act\s+as\s+if\s+you\s+(?:have\s+no|were\s+not)\s+(?:restriction|filter|rule|ethic|align)/i,
+];
+
+/** Phrases that indicate a jailbreak attempt (DAN, persona-based, etc.). */
+const JAILBREAK_PATTERNS = [
+  /\bDAN\b.*(?:mode|jailbreak|unlock|bypass)/i,
+  /\bdo\s+anything\s+now\b/i,
+  /jailbreak(?:ed|ing)?\s+(?:mode|prompt|version)/i,
+  /\bdeveloper\s+mode\b.*(?:enabled|unlocked|activated|on)/i,
+  /\bunfiltered\s+(?:mode|version|ai|response)\b/i,
+  /\bno\s+(?:restrictions?|limits?|rules?|filters?|censorship|ethics?|morals?|guardrails?)\b/i,
+  /\byou\s+(?:must|should|will|shall)\s+(?:comply|obey|follow|answer)\s+(?:without|regardless)/i,
+  /\bstay\s+in\s+character\b.*(?:no\s+matter|regardless|always|at\s+all\s+times)/i,
+  /\btoken\s+smuggling\b/i,
+  /\bsimulated\s+(?:reality|world|universe)\s+where\s+(?:there\s+are\s+)?no\s+rules/i,
+  /\byour\s+training\s+(?:data|constraints?|rules?)\s+(?:don'?t|do\s+not)\s+apply/i,
+  /grandmother\s+exploit/i,
+  /\bhypnosis\s+prompt\b/i,
+];
+
+/**
+ * Check text for LLM prompt-injection and jailbreak attack patterns.
+ *
+ * @param {string} raw       Raw (pre-normalisation) text.
+ * @param {string} normalized Post-normalisation text.
+ * @returns {{
+ *   isLlmAttack: boolean,
+ *   attackType: "PROMPT_INJECTION" | "LLM_JAILBREAK" | null,
+ *   matchedPattern: string | null,
+ * }}
+ */
+function detectLlmAttack(raw, normalized) {
+  const targets = [raw, normalized];
+
+  for (const text of targets) {
+    for (const re of PROMPT_INJECTION_PATTERNS) {
+      if (re.test(text)) {
+        return { isLlmAttack: true, attackType: "PROMPT_INJECTION", matchedPattern: re.source };
+      }
+    }
+    for (const re of JAILBREAK_PATTERNS) {
+      if (re.test(text)) {
+        return { isLlmAttack: true, attackType: "LLM_JAILBREAK", matchedPattern: re.source };
+      }
+    }
+  }
+
+  return { isLlmAttack: false, attackType: null, matchedPattern: null };
+}
 
 // ── Context-aware patterns: detect sensitive data inside tables / code ────────
 const CONTEXT_PATTERNS = [
@@ -400,6 +467,40 @@ async function runDetectionPipeline({ text, userEmail, source = "paste", verbose
     extractedFragments,
   } = normalizeForDetection(text);
 
+  // ── Tier 0.5: LLM Security – Prompt Injection & Jailbreak Detection ──────
+  // Runs on both the raw text and normalised form before any other tier so that
+  // obfuscated jailbreak attempts (e.g. homoglyph-encoded "DAN mode") are caught.
+  const llmAttack = detectLlmAttack(text, normalized);
+  if (llmAttack.isLlmAttack) {
+    if (verbose) {
+      console.log(`[api-server] LLM attack detected: ${llmAttack.attackType} – pattern: ${llmAttack.matchedPattern}`);
+    }
+    // Fire a Critical cloud event (metadata only – no raw text)
+    if (_tenantApiKey) {
+      sendTenantEvent({
+        tenantApiKey:     _tenantApiKey,
+        serverUrl:        _serverUrl,
+        userEmail,
+        action:           "BLOCKED",
+        sensitivityLevel: "critical",
+        matchedEntities:  [],
+        detectionTier:    "llm_security",
+        evasionTechniques,
+        context:          { source, attackType: llmAttack.attackType },
+        eventType:        "LLM_JAILBREAK_ATTEMPT",
+      }).catch(() => {});
+    }
+    return {
+      action:        "block",
+      blocked:       true,
+      eventType:     "LLM_JAILBREAK_ATTEMPT",
+      severity:      "critical",
+      reason:        `LLM ${llmAttack.attackType === "PROMPT_INJECTION" ? "Prompt Injection" : "Jailbreak"} attempt detected.`,
+      detectionTier: "llm_security",
+      evasionTechniques,
+    };
+  }
+
   // Build a list of texts to scan: normalised original + any extracted fragments
   const scanTargets = [normalized, ...extractedFragments];
 
@@ -640,6 +741,9 @@ export async function startApiServer(options = {}) {
   if (apiKey)    _tenantApiKey = apiKey;
   if (serverUrl) _serverUrl    = serverUrl;
 
+  // Initialise the offline spooler so events are never lost during downtime
+  initSpooler({ tenantApiKey: _tenantApiKey, serverUrl: _serverUrl, verbose });
+
   // Pre-load the vector index once
   _cachedIndex = await loadIndex();
 
@@ -649,6 +753,20 @@ export async function startApiServer(options = {}) {
 
   // Prime the custom deny-list (best-effort)
   await refreshCustomKeywords();
+
+  // Multer instance for /api/check-file (memory storage – no temp files on disk)
+  const upload = multer({
+    storage: multer.memoryStorage(),
+    limits:  { fileSize: 10 * 1024 * 1024 }, // 10 MB per file
+    fileFilter(_req, file, cb) {
+      // Only accept image MIME types for OCR scanning
+      if (file.mimetype.startsWith("image/")) {
+        cb(null, true);
+      } else {
+        cb(new Error("Only image files are accepted by /api/check-file"));
+      }
+    },
+  });
 
   const app = express();
 
@@ -675,7 +793,85 @@ export async function startApiServer(options = {}) {
     return res.json({ profiles: getAllProfiles() });
   });
 
-  // ── Image OCR check endpoint ──────────────────────────────────────────────
+  // ── File upload OCR check endpoint (multipart/form-data) ────────────────
+  // Accepts an image file via multipart upload, extracts text with OCR, and
+  // runs the full DLP detection pipeline.  Designed for drag-and-drop and
+  // <input type="file"> upload interception from the browser extension.
+  //
+  //  POST /api/check-file
+  //    Content-Type: multipart/form-data
+  //    Fields:
+  //      file      (required)  The image file to scan.
+  //      userEmail (optional)  Employee email for telemetry.
+  app.post("/api/check-file", upload.single("file"), async (req, res) => {
+    const userEmail = ((req.body?.userEmail ?? req.query?.userEmail) || "").trim() || "unknown";
+
+    if (!req.file) {
+      return res.status(400).json({ action: "allow", blocked: false, reason: "No file uploaded." });
+    }
+
+    try {
+      // Lazy-load Tesseract.js only when needed
+      let tesseract;
+      try {
+        tesseract = await import("tesseract.js");
+      } catch {
+        return res.status(503).json({
+          action:  "allow",
+          blocked: false,
+          reason:  "OCR engine not available. Install tesseract.js to enable image scanning.",
+        });
+      }
+
+      let ocrText = "";
+      try {
+        const { data } = await tesseract.recognize(req.file.buffer, "eng+heb", {
+          logger: () => {},
+        });
+        ocrText = data?.text ?? "";
+      } catch (ocrErr) {
+        if (verbose) console.warn(`[api-server] OCR failed (check-file): ${ocrErr.message}`);
+        return res.json({ action: "allow", blocked: false, reason: "OCR extraction failed – file allowed." });
+      }
+
+      if (!ocrText.trim()) {
+        return res.json({ action: "allow", blocked: false, reason: "No text found in uploaded image." });
+      }
+
+      if (verbose) {
+        console.log(`[api-server] /api/check-file OCR extracted ${ocrText.length} chars for ${userEmail} (${req.file.originalname})`);
+      }
+
+      const checkResult = await runDetectionPipeline({
+        text: ocrText, userEmail, verbose, failClosed,
+        source: "file_upload",
+        skipFragment: true,
+      });
+
+      if (checkResult.blocked) {
+        checkResult.reason = `[OCR File] ${checkResult.reason}`;
+        if (!checkResult.detectionTier?.startsWith("llm_security")) {
+          checkResult.detectionTier = `ocr+${checkResult.detectionTier}`;
+        }
+      }
+
+      onCheck?.(checkResult);
+      return res.json(checkResult);
+
+    } catch (err) {
+      if (err.message?.includes("Only image files")) {
+        return res.status(415).json({ action: "block", blocked: failClosed, reason: err.message });
+      }
+      console.error(`[api-server] /api/check-file error: ${err.message}`);
+      return res.status(500).json({
+        action:  "block",
+        blocked: failClosed,
+        reason:  "File check engine error – blocked for safety.",
+      });
+    }
+  });
+
+  // ── Image OCR check endpoint (base64 data-URI) ───────────────────────────
   // Accepts a base64 data-URI image, runs OCR, and checks the extracted text.
   app.post("/api/check-image", async (req, res) => {
     const imageData = (req.body?.imageData ?? "").trim();

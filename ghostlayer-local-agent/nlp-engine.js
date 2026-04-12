@@ -140,12 +140,16 @@ async function extractEntities(text, ner, verbose = false) {
 
   if (!ner) return { persons, orgs };
 
+  const t0 = Date.now();
+  let chunkCount = 0;
+
   for (const chunk of chunkText(text)) {
     if (!chunk.trim()) continue;
 
     let results;
     try {
       results = await ner(chunk, { aggregation_strategy: "simple" });
+      chunkCount++;
     } catch (err) {
       // Skip chunks that cause model errors (e.g. unsupported characters)
       if (verbose) console.warn(`[nlp] Warning: NER chunk skipped – ${err.message}`);
@@ -163,6 +167,11 @@ async function extractEntities(text, ner, verbose = false) {
       if (label === "PER" || label.endsWith("-PER"))       persons.add(word);
       else if (label === "ORG" || label.endsWith("-ORG"))  orgs.add(word);
     }
+  }
+
+  const elapsed = Date.now() - t0;
+  if (chunkCount > 0) {
+    console.log(`[GhostLayer] Tier 2 AI took ${elapsed}ms – ${chunkCount} chunk(s), ${persons.size} person(s), ${orgs.size} org(s)`);
   }
 
   return { persons, orgs };

@@ -6,8 +6,15 @@
  * (e.g. first half of a credit-card number, then the second half), this module
  * detects the combination and flags it as a fragmentation attack.
  *
- * Also implements lightweight User Behavior Analytics (UBA) that builds a
- * per-user baseline and raises a risk flag when anomalous behaviour is detected.
+ * Also implements Advanced User and Entity Behavior Analytics (UEBA) that builds
+ * a per-user baseline and raises a risk flag when anomalous behaviour is detected.
+ *
+ * Statistical Anomaly Detection (Z-score / 3σ rule):
+ *   A running history of sensitive-data volumes (character counts) is stored in
+ *   Redis (key: ueba:vol:<userKey>).  On each event we compute the Z-score of
+ *   the current volume against that history.  If Z > 3 the event is flagged
+ *   STATISTICAL_ANOMALY_3SIGMA with severity "Critical" and requiresMFA = true.
+ *   When Redis is unavailable the module falls back gracefully to in-memory.
  *
  * State is persisted in Redis so it survives agent restarts and supports
  * multi-process deployments.  Each function is async because Redis I/O is
@@ -15,30 +22,119 @@
  * unavailable, allowing the agent to continue running in degraded mode.
  *
  * Redis key layout:
- *   frag:{userKey}    – JSON array of Fragment objects; TTL = FRAGMENT_TTL_SEC
- *   profile:{userKey} – JSON object of UserProfile; no TTL (persistent baseline)
+ *   frag:{userKey}     – JSON array of Fragment objects; TTL = FRAGMENT_TTL_SEC
+ *   profile:{userKey}  – JSON object of UserProfile; no TTL (persistent baseline)
+ *   ueba:vol:{userKey} – Redis list of volume history numbers (rpush/ltrim)
  *
  * @module fragment-cache
  */
 
 import { getRedisClient } from "./redis-client.js";
 
-// ── Fragment Cache ────────────────────────────────────────────────────────────
+// ── Constants ─────────────────────────────────────────────────────────────────
 
-const FRAGMENT_TTL_MS  = 5 * 60 * 1000;  // 5 minutes (ms, for per-fragment filtering)
-const FRAGMENT_TTL_SEC = 5 * 60;          // 5 minutes (seconds, for Redis key TTL)
-const MAX_CACHE_BYTES  = 50_000;           // 50 KB per user (prevents memory abuse)
-const MAX_FRAGMENT_COUNT = 20;             // maximum fragments kept per user
+const FRAGMENT_TTL_MS    = 5 * 60 * 1000;  // 5 minutes (ms, for per-fragment filtering)
+const FRAGMENT_TTL_SEC   = 5 * 60;          // 5 minutes (seconds, for Redis key TTL)
+const MAX_CACHE_BYTES    = 50_000;           // 50 KB per user (prevents memory abuse)
+const MAX_FRAGMENT_COUNT = 20;               // maximum fragments kept per user
+const UEBA_HISTORY_MAX   = 200;              // max volume-history samples per user
+const UEBA_REDIS_KEY     = (key) => `ueba:vol:${key}`;
 
-/**
- * @typedef {{ text: string, ts: number, source: string }} Fragment
- * @typedef {Fragment[]} UserFragmentList
- */
+// ── Shared helpers ────────────────────────────────────────────────────────────
 
 /** Normalise email into a Redis-safe key segment. */
 function userKey(userEmail) {
   return (userEmail || "").toLowerCase().trim() || "anonymous";
 }
+
+// ── Statistical helpers ───────────────────────────────────────────────────────
+
+/**
+ * Compute the population mean of an array of numbers.
+ * @param {number[]} values
+ * @returns {number}
+ */
+function mean(values) {
+  if (values.length === 0) return 0;
+  return values.reduce((s, v) => s + v, 0) / values.length;
+}
+
+/**
+ * Compute the population standard deviation of an array of numbers.
+ * @param {number[]} values
+ * @param {number}   [mu]   Pre-computed mean (optional, avoids second pass).
+ * @returns {number}
+ */
+function stddev(values, mu) {
+  if (values.length < 2) return 0;
+  const m = mu !== undefined ? mu : mean(values);
+  const variance = values.reduce((s, v) => s + (v - m) ** 2, 0) / values.length;
+  return Math.sqrt(variance);
+}
+
+/**
+ * Compute the Z-score of `value` against the provided historical sample set.
+ * Returns 0 when the history is too small (< 2 points) to be meaningful.
+ *
+ * @param {number}   value    The current observation.
+ * @param {number[]} history  Historical observations (the new value should NOT
+ *                            be included – pass the list *before* appending).
+ * @returns {number}  Z-score (positive = above average, negative = below).
+ */
+export function computeZScore(value, history) {
+  if (history.length < 2) return 0;
+  const mu = mean(history);
+  const sigma = stddev(history, mu);
+  if (sigma === 0) return 0;
+  return (value - mu) / sigma;
+}
+
+// ── UEBA volume history ───────────────────────────────────────────────────────
+
+/** In-memory fallback: userKey → number[] (volume history) */
+const _memVolumeHistory = new Map();
+
+/**
+ * Fetch the existing volume history for `key` without modifying it.
+ * @param {string} key  Normalised user key.
+ * @returns {Promise<number[]>}  History (oldest first), up to UEBA_HISTORY_MAX entries.
+ */
+async function fetchVolumeHistory(key) {
+  try {
+    const raw = await getRedisClient().lrange(UEBA_REDIS_KEY(key), 0, -1);
+    return raw.map(Number);
+  } catch {
+    return [...(_memVolumeHistory.get(key) || [])];
+  }
+}
+
+/**
+ * Append a volume sample for `key` to the history store and trim to UEBA_HISTORY_MAX.
+ * @param {string} key
+ * @param {number} volume  Character count of the current sensitive payload.
+ * @returns {Promise<void>}
+ */
+async function appendVolumeHistory(key, volume) {
+  try {
+    const redisKey = UEBA_REDIS_KEY(key);
+    await getRedisClient().rpush(redisKey, volume);
+    await getRedisClient().ltrim(redisKey, -UEBA_HISTORY_MAX, -1);
+    return;
+  } catch { /* fall through to in-memory */ }
+
+  // In-memory fallback
+  const history = _memVolumeHistory.get(key) || [];
+  history.push(volume);
+  if (history.length > UEBA_HISTORY_MAX) history.splice(0, history.length - UEBA_HISTORY_MAX);
+  _memVolumeHistory.set(key, history);
+}
+
+// ── Fragment Cache ────────────────────────────────────────────────────────────
+
+/**
+ * @typedef {{ text: string, ts: number, source: string }} Fragment
+ * @typedef {Fragment[]} UserFragmentList
+ */
 
 /**
  * Read, prune expired fragments, apply limits, persist the updated list, and
@@ -219,12 +315,13 @@ function detectContentTypes(text) {
  * return an anomaly report.
  *
  * Anomaly signals (returned as strings in `anomalyFlags`):
- *   UNUSUAL_CONTENT_SHIFT  – user suddenly pastes a very different content type
- *   HIGH_PASTE_RATE        – more than 10 pastes in 1 minute
- *   LARGE_PASTE            – single paste > 5 000 chars
- *   FRAGMENTATION_PATTERN  – 3+ consecutive pastes of incomplete-looking data
- *   CREDENTIAL_ANOMALY     – credential content from a user who never does this
- *   FINANCIAL_ANOMALY      – financial data from a user who never does this
+ *   UNUSUAL_CONTENT_SHIFT      – user suddenly pastes a very different content type
+ *   HIGH_PASTE_RATE            – more than 10 pastes in 1 minute
+ *   LARGE_PASTE                – single paste > 5 000 chars
+ *   FRAGMENTATION_PATTERN      – 3+ consecutive pastes of incomplete-looking data
+ *   CREDENTIAL_ANOMALY         – credential content from a user who never does this
+ *   FINANCIAL_ANOMALY          – financial data from a user who never does this
+ *   STATISTICAL_ANOMALY_3SIGMA – current volume is > 3σ above historical baseline
  *
  * @param {string}   userEmail
  * @param {string}   text
@@ -233,6 +330,8 @@ function detectContentTypes(text) {
  *   riskScore: number,
  *   anomalyFlags: string[],
  *   requiresMFA: boolean,
+ *   severity: "Info" | "Low" | "Medium" | "High" | "Critical",
+ *   zScore: number,
  * }>}
  */
 export async function updateUserProfile(userEmail, text, evasionTechniques = []) {
@@ -318,29 +417,61 @@ export async function updateUserProfile(userEmail, text, evasionTechniques = [])
     anomalyFlags.push("SOCIAL_ENGINEERING_ATTEMPT");
   }
 
+  // ── Statistical Anomaly Detection (Z-score / 3σ) ─────────────────────────
+  // Fetch the historical volume baseline BEFORE recording this sample so the
+  // current event is not included in the reference distribution.
+  const volumeHistory = await fetchVolumeHistory(key).catch(() => []);
+  const zScore = computeZScore(text.length, volumeHistory);
+
+  // Record the new sample so it becomes part of the next event's baseline.
+  await appendVolumeHistory(key, text.length).catch(() => {});
+
+  // Flag as Critical if the current volume is > 3 standard deviations above
+  // the user's personal baseline.  We require at least 10 historical samples
+  // before the rule fires to avoid false-positives during the warm-up period.
+  if (volumeHistory.length >= 10 && zScore > 3) {
+    anomalyFlags.push("STATISTICAL_ANOMALY_3SIGMA");
+  }
+
   // ── Risk score (0–100) ──
   const riskScore = Math.min(
     100,
-    (anomalyFlags.includes("HIGH_PASTE_RATE")           ? 20 : 0) +
-    (anomalyFlags.includes("LARGE_PASTE")               ? 10 : 0) +
-    (anomalyFlags.includes("FINANCIAL_ANOMALY")         ? 30 : 0) +
-    (anomalyFlags.includes("CREDENTIAL_ANOMALY")        ? 30 : 0) +
-    (anomalyFlags.includes("UNUSUAL_CONTENT_SHIFT")     ? 20 : 0) +
-    (anomalyFlags.includes("EVASION_DETECTED")          ? 25 : 0) +
-    (anomalyFlags.includes("SOCIAL_ENGINEERING_ATTEMPT")? 35 : 0),
+    (anomalyFlags.includes("HIGH_PASTE_RATE")              ? 20 : 0) +
+    (anomalyFlags.includes("LARGE_PASTE")                  ? 10 : 0) +
+    (anomalyFlags.includes("FINANCIAL_ANOMALY")            ? 30 : 0) +
+    (anomalyFlags.includes("CREDENTIAL_ANOMALY")           ? 30 : 0) +
+    (anomalyFlags.includes("UNUSUAL_CONTENT_SHIFT")        ? 20 : 0) +
+    (anomalyFlags.includes("EVASION_DETECTED")             ? 25 : 0) +
+    (anomalyFlags.includes("SOCIAL_ENGINEERING_ATTEMPT")   ? 35 : 0) +
+    (anomalyFlags.includes("STATISTICAL_ANOMALY_3SIGMA")   ? 40 : 0),
   );
 
   profile.riskScore    = riskScore;
   profile.anomalyFlags = anomalyFlags;
   await saveProfile(key, profile);
 
-  // MFA required for high-risk anomalies
-  const requiresMFA = riskScore >= 50 ||
+  // ── Severity classification ──────────────────────────────────────────────
+  let severity;
+  if (anomalyFlags.includes("STATISTICAL_ANOMALY_3SIGMA")) {
+    severity = "Critical";
+  } else if (riskScore >= 70) {
+    severity = "High";
+  } else if (riskScore >= 40) {
+    severity = "Medium";
+  } else if (riskScore >= 10) {
+    severity = "Low";
+  } else {
+    severity = "Info";
+  }
+
+  // MFA required for high-risk anomalies or statistical outliers
+  const requiresMFA = severity === "Critical" ||
+    riskScore >= 50 ||
     anomalyFlags.includes("FINANCIAL_ANOMALY") ||
     anomalyFlags.includes("CREDENTIAL_ANOMALY") ||
     anomalyFlags.includes("SOCIAL_ENGINEERING_ATTEMPT");
 
-  return { riskScore, anomalyFlags, requiresMFA };
+  return { riskScore, anomalyFlags, requiresMFA, severity, zScore };
 }
 
 /**

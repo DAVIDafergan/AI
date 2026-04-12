@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireSuperAdmin } from "../../../lib/superAdminAuth.js";
 import { connectMongo, Tenant, Agent } from "../../../lib/db.js";
+import { recordAuditLog, getClientIp } from "../../../lib/auditLog.js";
 import { randomUUID } from "crypto";
 
 export const dynamic = "force-dynamic";
@@ -75,7 +76,14 @@ export async function POST(request) {
       domain,
     });
 
-    // Return full credentials ONCE – client should store them securely
+    await recordAuditLog({
+      tenantId:  tenant._id,
+      actorId:   "super_admin",
+      action:    "CREATE_TENANT",
+      resource:  `tenant:${tenant._id}`,
+      ipAddress: getClientIp(request),
+      metadata:  { name, plan: plan || "starter" },
+    });
 
     return NextResponse.json({
       tenant,

@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { authenticateRequest } from "../../../lib/middleware.js";
 import { getPolicies, savePolicies } from "../../../lib/db.js";
 import { getDefaultPolicies } from "../../../lib/policies.js";
+import { recordAuditLog, getClientIp } from "../../../lib/auditLog.js";
 
 // GET – החזרת כל המדיניות לארגון
 export async function GET(request) {
@@ -38,6 +39,16 @@ export async function PUT(request) {
       };
     });
     await savePolicies(organizationId, updated);
+
+    await recordAuditLog({
+      tenantId:  organizationId,
+      actorId:   request.headers.get("x-api-key") ?? "unknown",
+      action:    "CHANGE_POLICY",
+      resource:  `policy:${id}`,
+      ipAddress: getClientIp(request),
+      metadata:  { enabled, severity },
+    });
+
     return NextResponse.json({ success: true, policies: updated });
   } catch (err) {
     if (err.status === 401) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -60,6 +71,16 @@ export async function POST(request) {
     const newPolicy = { id, label, description: description || "", enabled, category, severity, organizationId };
     orgPolicies.push(newPolicy);
     await savePolicies(organizationId, orgPolicies);
+
+    await recordAuditLog({
+      tenantId:  organizationId,
+      actorId:   request.headers.get("x-api-key") ?? "unknown",
+      action:    "CREATE_POLICY",
+      resource:  `policy:${id}`,
+      ipAddress: getClientIp(request),
+      metadata:  { label, category, severity },
+    });
+
     return NextResponse.json({ success: true, policy: newPolicy }, { status: 201 });
   } catch (err) {
     if (err.status === 401) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

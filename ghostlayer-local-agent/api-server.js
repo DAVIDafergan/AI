@@ -5,15 +5,18 @@
  * text snippet or image contains sensitive company data.
  * All processing is local – nothing is forwarded to the cloud.
  *
- * Detection runs in six ordered tiers:
- *   Tier 0 – Evasion Normalisation : strip obfuscation before any check
- *   Tier 1 – Regex Layer           : fast pattern matching
- *   Tier 1.5 – AST Code Analysis   : detect business logic in pasted code (Acorn)
- *   Tier 1.6 – Intent Classification: zero-shot NLI model detects leakage intent
- *   Tier 2 – Custom Deny-List      : admin-defined keywords
- *   Tier 3 – Vector Semantic       : embedding-based similarity
- *   Tier 4 – Fragment Memory       : detect split-data attacks across pastes
- *   Tier 5 – Behavior Analytics    : anomaly / user-risk scoring (dynamic threshold)
+ * Detection runs in the following ordered tiers (Cascade Fast-Path):
+ *   Tier 0   – Bloom Filter Fast-Path : keyword pre-screen, < 1ms bypass
+ *   Tier 0.5 – Semantic Cache (Redis) : return cached decision on repeat payloads
+ *   Tier 1   – Evasion Normalisation  : strip obfuscation before any check
+ *   Tier 1.5 – LLM Security           : prompt-injection & jailbreak detection
+ *   Tier 2   – Regex Layer            : fast PII pattern matching
+ *   Tier 2.5 – AST Code Analysis      : detect business logic in pasted code (Acorn)
+ *   Tier 2.6 – Intent Classification  : zero-shot NLI model detects leakage intent
+ *   Tier 3   – Custom Deny-List       : admin-defined keywords
+ *   Tier 4   – Vector Semantic        : embedding-based similarity
+ *   Tier 5   – Fragment Memory        : detect split-data attacks across pastes
+ *   Tier 6   – Behavior Analytics     : anomaly / user-risk scoring (dynamic threshold)
  *
  * POST /api/check
  *   Body:  { "text": string, "userEmail": string }
@@ -30,7 +33,7 @@ import express        from "express";
 import cors           from "cors";
 import multer         from "multer";
 import { querySimilarity, loadIndex } from "./vector-store.js";
-import { initNLP } from "./nlp-engine.js";
+import { initNLP, loadBrain } from "./nlp-engine.js";
 import { sendTenantEvent } from "./cloud-sync.js";
 import { normalizeForDetection, hasEvasionSignals } from "./evasion-detector.js";
 import {
@@ -44,6 +47,8 @@ import {
 import { classifyIntent, HIGH_RISK_INTENTS, initIntentClassifier } from "./intent-classifier.js";
 import { analyzeCodeAst, summarizeAstFindings } from "./ast-analyzer.js";
 import { initSpooler, updateSpoolerConfig } from "./offline-spooler.js";
+import { initBloomFilter, bloomCheck, addTermsToFilter, isBloomFilterReady, getBloomFilterStats } from "./bloom-filter.js";
+import { getCachedResult, setCachedResult } from "./semantic-cache.js";
 
 // ── Thresholds ────────────────────────────────────────────────────────────────
 const BLOCK_THRESHOLD = 0.82;
@@ -93,7 +98,18 @@ async function refreshCustomKeywords() {
     if (etag) _customKeywordsEtag = etag;
 
     const data = await resp.json();
-    _customKeywords = Array.isArray(data.keywords) ? data.keywords : [];
+    const newKeywords = Array.isArray(data.keywords) ? data.keywords : [];
+
+    // Push any newly-fetched keywords into the live Bloom Filter so the
+    // fast-path knows about them without requiring a full restart.
+    // Use a Set for O(n) lookups rather than repeated Array.some() scans.
+    const existingWords = new Set(_customKeywords.map((kw) => kw.word));
+    const added = newKeywords.filter((kw) => kw.word && !existingWords.has(kw.word));
+    if (added.length > 0) {
+      addTermsToFilter(added.map((kw) => kw.word));
+    }
+
+    _customKeywords = newKeywords;
   } catch {
     // Non-critical – keep using the existing list
   }
@@ -427,12 +443,31 @@ function maskEntities(text, nerEntities = [], customKws = []) {
 
 /**
  * Warm the in-memory index cache so the first request is not slow.
- * Also pre-loads the intent classifier model in the background.
+ * Also pre-loads the intent classifier model in the background and
+ * initialises the Bloom Filter with the saved corporate brain context.
  *
  * @returns {Promise<void>}
  */
 export async function warmCache() {
   _cachedIndex = await loadIndex();
+
+  // Initialise the Bloom Filter with brain entities persisted from the last
+  // indexing run so the fast-path knows about corporate persons / orgs before
+  // the background re-index completes.
+  try {
+    const brain = await loadBrain();
+    const brainData = brain
+      ? {
+          learnedPersons: brain.learnedIndex?.learnedPersons ?? [],
+          learnedOrgs:    brain.learnedIndex?.learnedOrgs    ?? [],
+        }
+      : {};
+    initBloomFilter(brainData);
+  } catch {
+    // Brain file not yet available – initialise with built-in vocabulary only.
+    initBloomFilter();
+  }
+
   // Pre-warm the intent classifier in the background (non-blocking)
   initIntentClassifier().catch(() => {});
 }
@@ -457,7 +492,37 @@ async function runDetectionPipeline({ text, userEmail, source = "paste", verbose
   // Refresh the custom deny-list in the background (non-blocking)
   refreshCustomKeywords().catch(() => {});
 
-  // ── Tier 0: Evasion Normalisation ────────────────────────────────────────
+  // ── Tier 0: Bloom Filter Fast-Path (target < 1ms) ────────────────────────
+  // If the Bloom Filter reports that no known sensitive keyword, entity, or
+  // structural PII signal is present, bypass ALL AI models immediately.
+  // The Bloom Filter has zero false negatives: a miss guarantees clean text.
+  if (!bloomCheck(text)) {
+    if (verbose) {
+      console.log("[api-server] Tier 0 Bloom Filter: fast-path clean – pipeline bypassed.");
+    }
+    return {
+      action:        "allow",
+      allowed:       true,
+      blocked:       false,
+      reason:        "No sensitive content detected.",
+      detectionTier: "bloom_filter",
+      fastPath:      true,
+    };
+  }
+
+  // ── Tier 0.5: Semantic Cache (Redis) ──────────────────────────────────────
+  // If this exact payload (or a structurally identical one) was analysed
+  // within the last hour, return the cached decision without running any
+  // AI models.
+  const cachedResult = await getCachedResult(text);
+  if (cachedResult) {
+    if (verbose) {
+      console.log(`[api-server] Tier 0.5 Semantic Cache: cache hit (${text.length} chars) – returning cached decision.`);
+    }
+    return cachedResult;
+  }
+
+  // ── Tier 1: Evasion Normalisation ────────────────────────────────────────
   // Normalise obfuscated text (homoglyphs, zero-width chars, base64, etc.)
   // before running any detection so evasion attempts are caught.
   const {
@@ -691,7 +756,7 @@ async function runDetectionPipeline({ text, userEmail, source = "paste", verbose
       }).catch(() => {});
     }
 
-    return {
+    const blockResult = {
       action:            behaviorBlock ? "block" : "mask",
       blocked:           true,
       reason,
@@ -710,9 +775,17 @@ async function runDetectionPipeline({ text, userEmail, source = "paste", verbose
         businessLogicFunctions: astResult.businessLogicFunctions,
       } : undefined,
     };
+
+    // Cache the blocking decision (vault is excluded by setCachedResult).
+    // Behaviour-based blocks are per-user and must not be cached globally.
+    if (!behaviorBlock) {
+      setCachedResult(text, blockResult).catch(() => {});
+    }
+
+    return blockResult;
   }
 
-  return {
+  const allowResult = {
     action:            "allow",
     blocked:           false,
     reason:            "No sensitive content detected.",
@@ -720,6 +793,12 @@ async function runDetectionPipeline({ text, userEmail, source = "paste", verbose
     behaviorRisk:      behaviorResult,
     intent:            intentResult,
   };
+
+  // Cache the full-pipeline allow result so repeated clean payloads skip the
+  // heavy tiers (vector search, intent classifier) on subsequent requests.
+  setCachedResult(text, allowResult).catch(() => {});
+
+  return allowResult;
 }
 
 /**
@@ -751,8 +830,22 @@ export async function startApiServer(options = {}) {
     console.log(`[api-server] Vector index loaded: ${_cachedIndex.length} document(s)`);
   }
 
-  // Prime the custom deny-list (best-effort)
+  // Prime the custom deny-list (best-effort); new keywords are added to the
+  // Bloom Filter inside refreshCustomKeywords().
   await refreshCustomKeywords();
+
+  // Ensure the Bloom Filter is initialised even when startApiServer() is called
+  // directly without a preceding warmCache() (e.g. in tests or dry-run mode).
+  if (!isBloomFilterReady()) {
+    initBloomFilter({ customKeywords: _customKeywords });
+  }
+
+  if (verbose) {
+    const stats = getBloomFilterStats();
+    if (stats) {
+      console.log(`[api-server] Bloom Filter ready: ${stats.itemsAdded} term(s) loaded, ${stats.sizeBytes} bytes.`);
+    }
+  }
 
   // Multer instance for /api/check-file (memory storage – no temp files on disk)
   const upload = multer({
@@ -776,10 +869,11 @@ export async function startApiServer(options = {}) {
   // ── Health check ─────────────────────────────────────────────────────────
   app.get("/api/health", (_req, res) => {
     res.json({
-      status:         "ok",
-      indexedDocs:    _cachedIndex.length,
-      customKeywords: _customKeywords.length,
-      agentVersion:   AGENT_VERSION,
+      status:          "ok",
+      indexedDocs:     _cachedIndex.length,
+      customKeywords:  _customKeywords.length,
+      agentVersion:    AGENT_VERSION,
+      bloomFilter:     getBloomFilterStats(),
     });
   });
 

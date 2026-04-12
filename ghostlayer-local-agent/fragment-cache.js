@@ -25,26 +25,99 @@
  *   frag:{userKey}     – JSON array of Fragment objects; TTL = FRAGMENT_TTL_SEC
  *   profile:{userKey}  – JSON object of UserProfile; no TTL (persistent baseline)
  *   ueba:vol:{userKey} – Redis list of volume history numbers (rpush/ltrim)
+ *   When Redis is unavailable the module falls back to in-memory history and
+ *   continues to operate normally.
  *
  * @module fragment-cache
  */
 
-import { getRedisClient } from "./redis-client.js";
+// ── Redis client (optional – graceful fallback to in-memory) ─────────────────
 
-// ── Constants ─────────────────────────────────────────────────────────────────
+/**
+ * Maximum number of historical volume samples retained per user.
+ * Older samples are trimmed so the list never grows unbounded.
+ */
+const UEBA_HISTORY_MAX  = 200;
+const UEBA_REDIS_KEY    = (userKey) => `ueba:vol:${userKey}`;
 
-const FRAGMENT_TTL_MS    = 5 * 60 * 1000;  // 5 minutes (ms, for per-fragment filtering)
-const FRAGMENT_TTL_SEC   = 5 * 60;          // 5 minutes (seconds, for Redis key TTL)
-const MAX_CACHE_BYTES    = 50_000;           // 50 KB per user (prevents memory abuse)
-const MAX_FRAGMENT_COUNT = 20;               // maximum fragments kept per user
-const UEBA_HISTORY_MAX   = 200;              // max volume-history samples per user
-const UEBA_REDIS_KEY     = (key) => `ueba:vol:${key}`;
+let _uebaRedis = null;
 
-// ── Shared helpers ────────────────────────────────────────────────────────────
+/**
+ * Lazily obtain a Redis client for UEBA baseline storage.
+ * Returns null if the connection cannot be established.
+ */
+async function getUebaRedis() {
+  if (_uebaRedis) return _uebaRedis;
+  try {
+    const { default: Redis } = await import("ioredis");
+    const url = process.env.REDIS_URL || "redis://localhost:6379";
+    const client = new Redis(url, {
+      lazyConnect: true,
+      enableOfflineQueue: false,
+      maxRetriesPerRequest: 0,
+      retryStrategy: () => null,
+    });
+    client.on("error", (err) => {
+      if (err.code !== "ECONNREFUSED" && err.code !== "ENOTFOUND") {
+        console.error("[ueba] Redis error:", err.message);
+      }
+    });
+    await client.connect();
+    _uebaRedis = client;
+    return client;
+  } catch {
+    return null;
+  }
+}
 
-/** Normalise email into a Redis-safe key segment. */
-function userKey(userEmail) {
-  return (userEmail || "").toLowerCase().trim() || "anonymous";
+/** In-memory fallback: userKey → number[] (volume history) */
+const _memVolumeHistory = new Map();
+
+/**
+ * Fetch the existing volume history for `userKey` without modifying it.
+ *
+ * @param {string} userKey
+ * @returns {Promise<number[]>}  History (oldest first), up to UEBA_HISTORY_MAX entries.
+ */
+async function fetchVolumeHistory(userKey) {
+  try {
+    const redis = await getUebaRedis();
+    if (redis && redis.status === "ready") {
+      const raw = await redis.lrange(UEBA_REDIS_KEY(userKey), 0, -1);
+      return raw.map(Number);
+    }
+  } catch (err) {
+    console.error("[ueba] Redis read failed, using in-memory fallback:", err.message);
+  }
+  return [...(_memVolumeHistory.get(userKey) || [])];
+}
+
+/**
+ * Append a volume sample for `userKey` to the history store (Redis or memory).
+ * Trims the list to UEBA_HISTORY_MAX entries.
+ *
+ * @param {string} userKey
+ * @param {number} volume  Character count of the current sensitive payload.
+ * @returns {Promise<void>}
+ */
+async function appendVolumeHistory(userKey, volume) {
+  try {
+    const redis = await getUebaRedis();
+    if (redis && redis.status === "ready") {
+      const key = UEBA_REDIS_KEY(userKey);
+      await redis.rpush(key, volume);
+      await redis.ltrim(key, -UEBA_HISTORY_MAX, -1);
+      return;
+    }
+  } catch (err) {
+    console.error("[ueba] Redis write failed, using in-memory fallback:", err.message);
+  }
+
+  // In-memory fallback
+  const history = _memVolumeHistory.get(userKey) || [];
+  history.push(volume);
+  if (history.length > UEBA_HISTORY_MAX) history.splice(0, history.length - UEBA_HISTORY_MAX);
+  _memVolumeHistory.set(userKey, history);
 }
 
 // ── Statistical helpers ───────────────────────────────────────────────────────
@@ -128,6 +201,7 @@ async function appendVolumeHistory(key, volume) {
   if (history.length > UEBA_HISTORY_MAX) history.splice(0, history.length - UEBA_HISTORY_MAX);
   _memVolumeHistory.set(key, history);
 }
+// ── Fragment Cache ────────────────────────────────────────────────────────────
 
 // ── Fragment Cache ────────────────────────────────────────────────────────────
 
@@ -338,6 +412,9 @@ export async function updateUserProfile(userEmail, text, evasionTechniques = [])
   const key   = userKey(userEmail);
   const now   = Date.now();
   const types = detectContentTypes(text);
+  const key     = userEmail.toLowerCase().trim() || "anonymous";
+  const now     = Date.now();
+  const types   = detectContentTypes(text);
 
   let profile = await loadProfile(key);
   if (!profile) {
@@ -449,6 +526,20 @@ export async function updateUserProfile(userEmail, text, evasionTechniques = [])
   profile.riskScore    = riskScore;
   profile.anomalyFlags = anomalyFlags;
   await saveProfile(key, profile);
+
+  // ── Severity classification ──────────────────────────────────────────────
+  let severity;
+  if (anomalyFlags.includes("STATISTICAL_ANOMALY_3SIGMA")) {
+    severity = "Critical";
+  } else if (riskScore >= 70) {
+    severity = "High";
+  } else if (riskScore >= 40) {
+    severity = "Medium";
+  } else if (riskScore >= 10) {
+    severity = "Low";
+  } else {
+    severity = "Info";
+  }
 
   // ── Severity classification ──────────────────────────────────────────────
   let severity;

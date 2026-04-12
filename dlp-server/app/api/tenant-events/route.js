@@ -75,7 +75,6 @@ export async function POST(request) {
     let resolvedSeverity;
     let resolvedDetails;
     let resolvedWebhookUrl;
-    let resolvedExpireAt;
 
     if (tenantApiKey) {
       // ── Auth path: validate tenantApiKey and resolve tenant ──────────────

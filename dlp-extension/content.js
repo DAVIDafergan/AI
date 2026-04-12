@@ -219,14 +219,30 @@ function debounceWithMaxWait(fn, wait, maxWait) {
 function loadSettings() {
   return new Promise((resolve) => {
     try {
-      chrome.storage.local.get(["localAgentUrl", "tenantApiKey", "employeeEmail"], (data) => {
-        if (!chrome.runtime.lastError) {
-          if (data.localAgentUrl) localAgentUrl = data.localAgentUrl;
-          if (data.tenantApiKey)  tenantApiKey  = data.tenantApiKey;
-          if (data.employeeEmail) userEmail     = data.employeeEmail;
-        }
-        resolve();
-      });
+      // Prefer managed storage (IT/MDM/GPO) and fall back to local storage
+      const applyLocal = (managed) => {
+        chrome.storage.local.get(["localAgentUrl", "tenantApiKey", "employeeEmail"], (local) => {
+          if (!chrome.runtime.lastError) {
+            // managed values take precedence when present
+            const resolvedUrl = managed?.localAgentUrl || local.localAgentUrl;
+            const resolvedKey = managed?.tenantApiKey  || local.tenantApiKey;
+            if (resolvedUrl) localAgentUrl = resolvedUrl;
+            if (resolvedKey) tenantApiKey  = resolvedKey;
+            if (local.employeeEmail) userEmail = local.employeeEmail;
+          }
+          resolve();
+        });
+      };
+
+      try {
+        chrome.storage.managed.get(["tenantApiKey", "localAgentUrl"], (managed) => {
+          const managedData = chrome.runtime.lastError ? null : managed;
+          applyLocal(managedData);
+        });
+      } catch {
+        // managed storage unavailable (e.g. unpacked extension without policy) – skip
+        applyLocal(null);
+      }
     } catch {
       // extension context may be invalidated – ignore
       resolve();
@@ -236,14 +252,25 @@ function loadSettings() {
 
 /* ─────────────────────────────────────────────
    Read fresh settings right before a fetch.
-   Reads ['serverUrl', 'localAgentUrl', 'tenantApiKey', 'userEmail', 'employeeEmail']
-   from chrome.storage.local.  serverUrl (saved by popup.js) takes priority over
+   Checks chrome.storage.managed first (IT/MDM/GPO policy) and falls back to
+   chrome.storage.local.  serverUrl (saved by popup.js) takes priority over
    localAgentUrl (saved by options.js).  Falls back to DEFAULT_LOCAL_AGENT_URL.
    ───────────────────────────────────────────── */
 function readSettings() {
   return new Promise((resolve) => {
+    const buildResult = (managed, local) => {
+      // Managed values (IT policy) override user-set local values
+      const apiKey   = managed?.tenantApiKey  || local.tenantApiKey  || "";
+      const finalUrl = managed?.localAgentUrl || local.serverUrl || local.localAgentUrl || DEFAULT_LOCAL_AGENT_URL;
+      resolve({
+        localAgentUrl: finalUrl,
+        tenantApiKey:  apiKey,
+        userEmail:     local.employeeEmail || local.userEmail || userEmail || "anonymous@unknown.com",
+      });
+    };
+
     try {
-      chrome.storage.local.get(["serverUrl", "localAgentUrl", "tenantApiKey", "userEmail", "employeeEmail"], (data) => {
+      chrome.storage.local.get(["serverUrl", "localAgentUrl", "tenantApiKey", "userEmail", "employeeEmail"], (local) => {
         if (chrome.runtime.lastError) {
           resolve({
             localAgentUrl: DEFAULT_LOCAL_AGENT_URL,
@@ -252,12 +279,14 @@ function readSettings() {
           });
           return;
         }
-        const finalUrl = data.serverUrl || data.localAgentUrl || DEFAULT_LOCAL_AGENT_URL;
-        resolve({
-          localAgentUrl: finalUrl,
-          tenantApiKey:  data.tenantApiKey  || "",
-          userEmail:     data.employeeEmail || data.userEmail || userEmail || "anonymous@unknown.com",
-        });
+        try {
+          chrome.storage.managed.get(["tenantApiKey", "localAgentUrl"], (managed) => {
+            buildResult(chrome.runtime.lastError ? null : managed, local);
+          });
+        } catch {
+          // managed storage unavailable (e.g. unpacked extension without policy)
+          buildResult(null, local);
+        }
       });
     } catch {
       // extension context may be invalidated – fall back to safe defaults
@@ -1966,6 +1995,80 @@ async function handleImagePaste(event) {
 }
 
 /**
+ * Send an image file (as raw binary) to the local agent's /api/check-file
+ * endpoint using multipart/form-data.
+ * Returns the API response or null on network error.
+ * @param {File|Blob} file
+ * @param {string}    email
+ * @returns {Promise<object|null>}
+ */
+async function checkFileWithOcr(file, email) {
+  try {
+    const { localAgentUrl: agentUrl } = await readSettings();
+    const formData = new FormData();
+    formData.append("file", file, file.name || "image.png");
+    formData.append("userEmail", email || userEmail);
+
+    // Direct fetch from the content script (no background proxy needed since
+    // the local agent runs on the same machine, so no CORS headers are required).
+    const res = await fetch(`${agentUrl}/api/check-file`, {
+      method: "POST",
+      body:   formData,
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Intercept drag-and-drop of image files onto the page.
+ * Checks every dropped image through OCR before allowing it to be processed.
+ */
+function watchDragAndDrop() {
+  // dragover must be captured to allow drop event to fire
+  document.addEventListener("dragover", (e) => {
+    // Only intercept if dragged items contain files
+    if (e.dataTransfer?.types?.includes("Files")) {
+      e.preventDefault();
+    }
+  }, true);
+
+  document.addEventListener("drop", async (e) => {
+    const files = Array.from(e.dataTransfer?.files || []);
+    const imageFiles = files.filter((f) => f.type.startsWith("image/"));
+    if (imageFiles.length === 0) return;
+
+    // Cancel the drop – we will re-allow it only after a clean OCR scan
+    e.preventDefault();
+    e.stopImmediatePropagation();
+
+    for (const file of imageFiles) {
+      try {
+        const result = await checkFileWithOcr(file, userEmail);
+        if (result?.blocked) {
+          showFallbackToast(
+            `🛡️ GhostLayer: קובץ גרור-ושחרר נחסם – ${result.reason || "נמצא מידע רגיש בתמונה"}`,
+            "warning",
+          );
+          console.warn(`${DLP_PREFIX} גרור-ושחרר נחסם:`, result.reason);
+          return; // block the drop entirely if any image is sensitive
+        }
+      } catch {
+        // Fail open – do not block on OCR errors during drag-and-drop
+      }
+    }
+
+    // All images cleared – inform the user that they must drop the files again.
+    // Re-firing a prevented drop event is not possible in browsers; the user
+    // performs the drop a second time, which then proceeds unimpeded.
+    showFallbackToast("✅ GhostLayer: הקבצים נסרקו ונמצאו בטוחים. אנא גרור ושחרר שנית להמשך.", "success");
+  }, true);
+}
+
+/**
  * Intercept <input type="file"> change events.
  * When the user selects image files, check each one before allowing upload.
  */
@@ -2082,13 +2185,14 @@ async function init() {
   // 1A.2. Aggressive Send-button & form submit interceptors
   watchSendButtons();
 
-  // Image OCR protection: watch file inputs
+  // Image OCR protection: watch file inputs and drag-and-drop
   watchFileInputs();
+  watchDragAndDrop();
 
   // 1B. Watch for AI output / responses (+ vault token de-anonymisation)
   watchForAIOutput();
 
-  console.log(`${DLP_PREFIX} v3 נטען – יירוט הדבקות + הקלדה + שליחה + סריקת תשובות AI + הגנת OCR פעילים.`);
+  console.log(`${DLP_PREFIX} v3 נטען – יירוט הדבקות + הקלדה + שליחה + סריקת תשובות AI + הגנת OCR + גרור-ושחרר פעילים.`);
 }
 
 init();

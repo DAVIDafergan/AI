@@ -288,6 +288,7 @@ function printDryRunSummary(files, scanResults) {
   console.log(`  📈  Avg sensitivity score   : ${scanResults.averageSensitivityScore}/100`);
   console.log(`  🧠  Brain file              : .ghostlayer_brain.json`);
   console.log(`  🔢  Vector index            : Qdrant (ghostlayer_documents collection)`);
+  console.log(`  🔢  Vector index            : .ghostlayer_vectors.json`);
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 }
 

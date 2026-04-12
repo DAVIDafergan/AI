@@ -18,6 +18,9 @@
       "run_at": "document_idle"
     }
   ],
+  "storage": {
+    "managed_schema": "managed_schema.json"
+  },
   "permissions": ["storage", "identity", "identity.email", "alarms", "activeTab", "contextMenus"],
   "host_permissions": [
     "<all_urls>"

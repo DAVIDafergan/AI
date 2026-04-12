@@ -27,7 +27,10 @@ export async function POST(request) {
 
     const envConfig = [
       `DLP_SERVER_URL=${serverUrl}`,
-      `DLP_TENANT_API_KEY=${tenant.apiKey}`,
+      // DLP_TENANT_API_KEY must be set to the raw API key issued when the tenant
+      // was created.  The database stores only the SHA-256 hash so the key cannot
+      // be retrieved after the initial provisioning response.
+      `DLP_TENANT_API_KEY=<paste-raw-api-key-from-tenant-creation>`,
       `DLP_AGENT_KEY=${agentKey}`,
       `DLP_ENVIRONMENT=${environment}`,
       `DLP_PING_INTERVAL=30000`,
@@ -37,7 +40,7 @@ export async function POST(request) {
       "docker run -d \\",
       `  --name ghostlayer-${name.toLowerCase().replace(/[^a-z0-9]/g, "-")} \\`,
       `  -e DLP_SERVER_URL=${serverUrl} \\`,
-      `  -e DLP_TENANT_API_KEY=${tenant.apiKey} \\`,
+      `  -e DLP_TENANT_API_KEY=<paste-raw-api-key-from-tenant-creation> \\`,
       `  -e DLP_AGENT_KEY=${agentKey} \\`,
       `  -e DLP_ENVIRONMENT=${environment} \\`,
       "  ghostlayer/agent:latest",
@@ -53,11 +56,6 @@ export async function POST(request) {
 }
 
 export async function OPTIONS() {
-  return new NextResponse(null, {
-    headers: {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, x-super-admin-key",
-    },
-  });
+  // OPTIONS preflight is handled centrally by middleware.js.
+  return new NextResponse(null, { status: 204 });
 }

@@ -1,16 +1,34 @@
 // מסד נתונים – MongoDB-backed data access layer with Mongoose models
 
-import { randomUUID, createHash } from "crypto";
+import { randomUUID, createHmac } from "crypto";
 import mongoose from "mongoose";
 
 /**
- * Return the SHA-256 hex digest of an API key.
- * All API keys are stored as hashes; raw keys are never persisted.
+ * Return the HMAC-SHA256 hex digest of an API key, keyed with the server-side
+ * secret `API_KEY_HMAC_SECRET`.  Using a keyed hash means that the stored
+ * digests are worthless to an attacker who obtains only the database – they
+ * also need the HMAC secret to perform an offline dictionary attack.
+ *
+ * All API keys are stored as these keyed hashes; raw keys are never persisted.
+ *
+ * Note: CodeQL may flag HMAC-SHA256 as "insufficient password hash" because it
+ * expects bcrypt/Argon2 for low-entropy user passwords.  API keys are
+ * high-entropy random tokens (UUID = 122 bits of entropy) for which a fast
+ * keyed hash is both correct and industry-standard (GitHub, Stripe, etc.).
+ * lgtm[js/insufficient-password-hash]
+ *
  * @param {string} key – the raw API key
- * @returns {string} – 64-char hex SHA-256 digest
+ * @returns {string} – 64-char hex HMAC-SHA256 digest
  */
-export function hashApiKey(key) {
-  return createHash("sha256").update(key).digest("hex");
+export function hashApiKey(key) { // lgtm[js/insufficient-password-hash]
+  const secret = process.env.API_KEY_HMAC_SECRET;
+  if (!secret) {
+    throw new Error(
+      "[hashApiKey] API_KEY_HMAC_SECRET environment variable is not set. " +
+        "Configure it before starting the server."
+    );
+  }
+  return createHmac("sha256", secret).update(key).digest("hex");
 }
 
 // ── MongoDB connection (used by new multi-tenant models) ──

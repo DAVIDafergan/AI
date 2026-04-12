@@ -35,7 +35,7 @@ if (!globalThis._rateLimitMemoryBuckets) {
 // Periodically evict keys whose most-recent request falls outside the window to
 // prevent the Map from growing without bound over long-running deployments.
 if (!globalThis._rateLimitMemoryCleanup) {
-  globalThis._rateLimitMemoryCleanup = setInterval(() => {
+  const timer = setInterval(() => {
     const cutoff = Date.now() - RATE_LIMIT_WINDOW;
     for (const [key, timestamps] of globalThis._rateLimitMemoryBuckets) {
       const pruned = timestamps.filter((ts) => ts > cutoff);
@@ -45,7 +45,10 @@ if (!globalThis._rateLimitMemoryCleanup) {
         globalThis._rateLimitMemoryBuckets.set(key, pruned);
       }
     }
-  }, RATE_LIMIT_WINDOW).unref?.(); // .unref() so the interval does not keep the process alive
+  }, RATE_LIMIT_WINDOW);
+  // Do not keep the Node.js process alive just for cleanup.
+  timer.unref();
+  globalThis._rateLimitMemoryCleanup = timer;
 }
 
 /**
@@ -61,6 +64,8 @@ function checkInMemoryRateLimit(key) {
   const bucket = (buckets.get(key) || []).filter((ts) => ts > windowStart);
 
   if (bucket.length >= RATE_LIMIT_MAX) {
+    // bucket is sorted ascending (oldest entries at index 0) because new timestamps
+    // are appended and stale entries are filtered out each call.
     const retryAfter = Math.ceil((bucket[0] + RATE_LIMIT_WINDOW - now) / 1000);
     buckets.set(key, bucket);
     return { allowed: false, remaining: 0, retryAfter: Math.max(1, retryAfter) };

@@ -27,10 +27,9 @@ export async function POST(request) {
 
     const envConfig = [
       `DLP_SERVER_URL=${serverUrl}`,
-      // DLP_TENANT_API_KEY must be set to the raw API key issued when the tenant
-      // was created.  The database stores only the SHA-256 hash so the key cannot
-      // be retrieved after the initial provisioning response.
-      `DLP_TENANT_API_KEY=<paste-raw-api-key-from-tenant-creation>`,
+      // Replace the placeholder with the raw API key from the POST /api/tenants response
+      // (credentials.apiKey).  The database stores only a keyed hash and cannot recover it.
+      `DLP_TENANT_API_KEY=REPLACE_WITH_RAW_API_KEY_FROM_TENANT_CREATION`,
       `DLP_AGENT_KEY=${agentKey}`,
       `DLP_ENVIRONMENT=${environment}`,
       `DLP_PING_INTERVAL=30000`,
@@ -40,7 +39,7 @@ export async function POST(request) {
       "docker run -d \\",
       `  --name ghostlayer-${name.toLowerCase().replace(/[^a-z0-9]/g, "-")} \\`,
       `  -e DLP_SERVER_URL=${serverUrl} \\`,
-      `  -e DLP_TENANT_API_KEY=<paste-raw-api-key-from-tenant-creation> \\`,
+      `  -e DLP_TENANT_API_KEY=REPLACE_WITH_RAW_API_KEY_FROM_TENANT_CREATION \\`,
       `  -e DLP_AGENT_KEY=${agentKey} \\`,
       `  -e DLP_ENVIRONMENT=${environment} \\`,
       "  ghostlayer/agent:latest",

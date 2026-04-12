@@ -1,0 +1,101 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# GhostLayer Local Agent – One-Click Docker Stack
+#
+# Start the entire stack:
+#   cp .env.template .env   # fill in API_KEY and SERVER_URL
+#   docker compose up -d
+#
+# Services:
+#   agent   – GhostLayer Node.js scanner (port 4000 → browser extensions)
+#   qdrant  – Local vector database      (internal only)
+#   redis   – Cache / state layer        (internal only)
+#
+# Data:
+#   ./corporate_data  – Mount your documents here before starting
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── GhostLayer Node.js Agent ────────────────────────────────────────────────
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ghostlayer-agent
+    restart: unless-stopped
+    ports:
+      - "${LOCAL_PORT:-4000}:${LOCAL_PORT:-4000}"
+    environment:
+      API_KEY:    ${API_KEY}
+      SERVER_URL: ${SERVER_URL:-}
+      SCAN_DIR:   /data
+      LOCAL_PORT: ${LOCAL_PORT:-4000}
+      VERBOSE:    ${VERBOSE:-false}
+      REDIS_URL:  redis://redis:6379
+      QDRANT_URL: http://qdrant:6333
+    volumes:
+      # Mount your corporate documents as read-only inside the container
+      - ./corporate_data:/data:ro
+      # Persist the Transformers.js model cache so models aren't re-downloaded on restart
+      - agent_cache:/app/.cache
+    depends_on:
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    networks:
+      - ghostlayer-agent-net
+
+  # ── Qdrant – Local Vector Database ─────────────────────────────────────────
+  qdrant:
+    image: qdrant/qdrant:v1.9.2
+    container_name: ghostlayer-qdrant
+    restart: unless-stopped
+    expose:
+      - "6333"
+      - "6334"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:6333/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - ghostlayer-agent-net
+
+  # ── Redis – Cache & State Layer ─────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: ghostlayer-redis
+    restart: unless-stopped
+    # Enable AOF persistence so fragment-cache and UBA profiles survive restarts
+    command: redis-server --appendonly yes --save 60 1 --loglevel warning
+    expose:
+      - "6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - ghostlayer-agent-net
+
+# ── Named Volumes ──────────────────────────────────────────────────────────────
+volumes:
+  qdrant_storage:
+    name: ghostlayer_qdrant_storage
+  redis_data:
+    name: ghostlayer_redis_data
+  agent_cache:
+    name: ghostlayer_agent_cache
+
+# ── Internal Network ───────────────────────────────────────────────────────────
+networks:
+  ghostlayer-agent-net:
+    name: ghostlayer-agent-net
+    driver: bridge

@@ -4,10 +4,42 @@
 // ── Constants ─────────────────────────────────────────────────────────────────
 const HEALTH_CHECK_TIMEOUT_MS = 8000;
 
+/**
+ * Read a setting from chrome.storage.managed first (IT/MDM/GPO), then fall back
+ * to chrome.storage.local.  Returns a merged object with managed values taking
+ * priority over local ones.
+ */
+function readManagedThenLocal(keys) {
+  return new Promise((resolve) => {
+    const mergeAndResolve = (managed, local) => {
+      const merged = Object.assign({}, local);
+      if (managed) {
+        for (const k of Object.keys(managed)) {
+          if (managed[k] !== undefined && managed[k] !== null && managed[k] !== "") {
+            merged[k] = managed[k];
+          }
+        }
+      }
+      resolve(merged);
+    };
+
+    chrome.storage.local.get(keys, (local) => {
+      try {
+        chrome.storage.managed.get(keys, (managed) => {
+          mergeAndResolve(chrome.runtime.lastError ? null : managed, local || {});
+        });
+      } catch {
+        // managed storage unavailable (e.g. unpacked extension without policy)
+        mergeAndResolve(null, local || {});
+      }
+    });
+  });
+}
+
+
+
 // ── Cached email ──────────────────────────────────────────────────────────────
 let cachedEmail = null;
-
-// ── Listen for messages from content.js ──────────────────────────────────────
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "ITEMS_RESTORED") {
     incrementRestoredCount(message.count);
@@ -267,9 +299,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
  */
 async function syncLivePolicy() {
   try {
-    const data = await new Promise((resolve) => {
-      chrome.storage.local.get(["serverUrl", "tenantApiKey", "enabled"], resolve);
-    });
+    const data = await readManagedThenLocal(["serverUrl", "tenantApiKey", "enabled"]);
     if (!data.enabled) return;
 
     const serverUrl = data.serverUrl || "https://ai-production-ffa9.up.railway.app";
@@ -328,12 +358,9 @@ async function performHealthCheck() {
  */
 async function sendUserHeartbeat() {
   try {
-    const data = await new Promise((resolve) => {
-      chrome.storage.local.get(
-        ["serverUrl", "tenantApiKey", "employeeEmail", "userEmail", "enabled", "interceptedCount"],
-        resolve
-      );
-    });
+    const data = await readManagedThenLocal(
+      ["serverUrl", "tenantApiKey", "employeeEmail", "userEmail", "enabled", "interceptedCount"]
+    );
     if (!data.enabled) return;
 
     const serverUrl = data.serverUrl || "https://ai-production-ffa9.up.railway.app";

@@ -219,14 +219,30 @@ function debounceWithMaxWait(fn, wait, maxWait) {
 function loadSettings() {
   return new Promise((resolve) => {
     try {
-      chrome.storage.local.get(["localAgentUrl", "tenantApiKey", "employeeEmail"], (data) => {
-        if (!chrome.runtime.lastError) {
-          if (data.localAgentUrl) localAgentUrl = data.localAgentUrl;
-          if (data.tenantApiKey)  tenantApiKey  = data.tenantApiKey;
-          if (data.employeeEmail) userEmail     = data.employeeEmail;
-        }
-        resolve();
-      });
+      // Prefer managed storage (IT/MDM/GPO) and fall back to local storage
+      const applyLocal = (managed) => {
+        chrome.storage.local.get(["localAgentUrl", "tenantApiKey", "employeeEmail"], (local) => {
+          if (!chrome.runtime.lastError) {
+            // managed values take precedence when present
+            const resolvedUrl = managed?.localAgentUrl || local.localAgentUrl;
+            const resolvedKey = managed?.tenantApiKey  || local.tenantApiKey;
+            if (resolvedUrl) localAgentUrl = resolvedUrl;
+            if (resolvedKey) tenantApiKey  = resolvedKey;
+            if (local.employeeEmail) userEmail = local.employeeEmail;
+          }
+          resolve();
+        });
+      };
+
+      try {
+        chrome.storage.managed.get(["tenantApiKey", "localAgentUrl"], (managed) => {
+          const managedData = chrome.runtime.lastError ? null : managed;
+          applyLocal(managedData);
+        });
+      } catch {
+        // managed storage unavailable (e.g. unpacked extension without policy) – skip
+        applyLocal(null);
+      }
     } catch {
       // extension context may be invalidated – ignore
       resolve();
@@ -236,14 +252,25 @@ function loadSettings() {
 
 /* ─────────────────────────────────────────────
    Read fresh settings right before a fetch.
-   Reads ['serverUrl', 'localAgentUrl', 'tenantApiKey', 'userEmail', 'employeeEmail']
-   from chrome.storage.local.  serverUrl (saved by popup.js) takes priority over
+   Checks chrome.storage.managed first (IT/MDM/GPO policy) and falls back to
+   chrome.storage.local.  serverUrl (saved by popup.js) takes priority over
    localAgentUrl (saved by options.js).  Falls back to DEFAULT_LOCAL_AGENT_URL.
    ───────────────────────────────────────────── */
 function readSettings() {
   return new Promise((resolve) => {
+    const buildResult = (managed, local) => {
+      // Managed values (IT policy) override user-set local values
+      const apiKey   = managed?.tenantApiKey  || local.tenantApiKey  || "";
+      const finalUrl = managed?.localAgentUrl || local.serverUrl || local.localAgentUrl || DEFAULT_LOCAL_AGENT_URL;
+      resolve({
+        localAgentUrl: finalUrl,
+        tenantApiKey:  apiKey,
+        userEmail:     local.employeeEmail || local.userEmail || userEmail || "anonymous@unknown.com",
+      });
+    };
+
     try {
-      chrome.storage.local.get(["serverUrl", "localAgentUrl", "tenantApiKey", "userEmail", "employeeEmail"], (data) => {
+      chrome.storage.local.get(["serverUrl", "localAgentUrl", "tenantApiKey", "userEmail", "employeeEmail"], (local) => {
         if (chrome.runtime.lastError) {
           resolve({
             localAgentUrl: DEFAULT_LOCAL_AGENT_URL,
@@ -252,12 +279,14 @@ function readSettings() {
           });
           return;
         }
-        const finalUrl = data.serverUrl || data.localAgentUrl || DEFAULT_LOCAL_AGENT_URL;
-        resolve({
-          localAgentUrl: finalUrl,
-          tenantApiKey:  data.tenantApiKey  || "",
-          userEmail:     data.employeeEmail || data.userEmail || userEmail || "anonymous@unknown.com",
-        });
+        try {
+          chrome.storage.managed.get(["tenantApiKey", "localAgentUrl"], (managed) => {
+            buildResult(chrome.runtime.lastError ? null : managed, local);
+          });
+        } catch {
+          // managed storage unavailable (e.g. unpacked extension without policy)
+          buildResult(null, local);
+        }
       });
     } catch {
       // extension context may be invalidated – fall back to safe defaults

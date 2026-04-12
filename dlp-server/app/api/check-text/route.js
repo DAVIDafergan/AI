@@ -23,28 +23,14 @@ import { runTriageWithStats } from "../../../lib/triage.js";
 
 /**
  * Build CORS headers for the check-text endpoint.
- * Uses getCorsHeaders() when ALLOWED_ORIGINS is configured; falls back to
- * wildcard "*" for backward-compatibility with deployments that have not yet
- * set the environment variable.
+ * Uses getCorsHeaders() based on the ALLOWED_ORIGINS environment variable.
+ * If the origin is not in the allowed list, returns an empty object so the
+ * browser enforces the CORS restriction (fail-secure).
  * @param {Request} request
  * @returns {Record<string,string>}
  */
 function buildCorsHeaders(request) {
-  const envCors = getCorsHeaders(request);
-  if (envCors) return envCors;
-  // Fallback: only reached when ALLOWED_ORIGINS is not configured.
-  // Log a warning in non-test environments to alert operators of the open CORS policy.
-  if (process.env.NODE_ENV !== "test") {
-    console.warn(
-      "[check-text] ALLOWED_ORIGINS is not set – falling back to wildcard CORS. " +
-      "Set ALLOWED_ORIGINS in your environment to restrict access."
-    );
-  }
-  return {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, x-api-key",
-  };
+  return getCorsHeaders(request) ?? {};
 }
 
 // ── תבניות Regex לזיהוי PII ──

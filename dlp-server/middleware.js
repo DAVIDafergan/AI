@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { jwtVerify } from "jose";
 
+/** Maximum allowed request body size for API routes (bytes). */
+const MAX_BODY_BYTES = 500 * 1024; // 500 KB
+
 /**
  * Returns the set of allowed origins from the environment variable.
  * @returns {Set<string>}
@@ -33,10 +36,21 @@ export async function middleware(request) {
           "Access-Control-Allow-Origin": origin,
           "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
           "Access-Control-Allow-Headers":
-            "Content-Type, x-api-key, x-dlp-extension",
+            "Content-Type, x-api-key, x-dlp-extension, x-super-admin-key",
           Vary: "Origin",
         },
       });
+    }
+
+    // ── Body size limit for mutating requests ──
+    if (["POST", "PUT", "PATCH"].includes(request.method)) {
+      const contentLength = parseInt(request.headers.get("content-length") || "0", 10);
+      if (contentLength > MAX_BODY_BYTES) {
+        return NextResponse.json(
+          { error: "Request body too large. Maximum allowed size is 500 KB." },
+          { status: 413 }
+        );
+      }
     }
 
     // For non-preflight requests, add CORS headers when origin is allowed

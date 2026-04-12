@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireSuperAdmin } from "../../../lib/superAdminAuth.js";
-import { connectMongo, Tenant, TenantEvent } from "../../../lib/db.js";
+import { connectMongo, Tenant, TenantEvent, hashApiKey } from "../../../lib/db.js";
 
 export const dynamic = "force-dynamic";
 
@@ -34,9 +34,9 @@ export async function GET(request) {
       TenantEvent.countDocuments(filter),
     ]);
 
-    return NextResponse.json({ events, total, page, pages: Math.ceil(total / limit) }, { headers: CORS_HEADERS });
+    return NextResponse.json({ events, total, page, pages: Math.ceil(total / limit) });
   } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: err.status || 500, headers: CORS_HEADERS });
+    return NextResponse.json({ error: err.message }, { status: err.status || 500 });
   }
 }
 
@@ -78,9 +78,10 @@ export async function POST(request) {
 
     if (tenantApiKey) {
       // ── Auth path: validate tenantApiKey and resolve tenant ──────────────
-      const tenant = await Tenant.findOne({ apiKey: tenantApiKey }).lean();
+      // Hash the incoming key and compare against the stored SHA-256 digest.
+      const tenant = await Tenant.findOne({ apiKey: hashApiKey(tenantApiKey) }).lean();
       if (!tenant) {
-        return NextResponse.json({ error: "Invalid tenantApiKey" }, { status: 401, headers: CORS_HEADERS });
+        return NextResponse.json({ error: "Invalid tenantApiKey" }, { status: 401 });
       }
       resolvedTenantId   = tenant._id;
       resolvedWebhookUrl = tenant.settings?.webhookUrl || null;
@@ -107,7 +108,7 @@ export async function POST(request) {
       // ── Auth path: require super-admin ───────────────────────────────────
       await requireSuperAdmin(request);
       if (!bodyTenantId || !bodyEventType) {
-        return NextResponse.json({ error: "tenantId and eventType are required" }, { status: 400, headers: CORS_HEADERS });
+        return NextResponse.json({ error: "tenantId and eventType are required" }, { status: 400 });
       }
       resolvedTenantId  = bodyTenantId;
       resolvedEventType = bodyEventType;
@@ -171,12 +172,14 @@ export async function POST(request) {
       });
     }
 
+    return NextResponse.json({ event }, { status: 201 });
     return NextResponse.json({ event }, { status: 201, headers: CORS_HEADERS });
   } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: err.status || 500, headers: CORS_HEADERS });
+    return NextResponse.json({ error: err.message }, { status: err.status || 500 });
   }
 }
 
 export async function OPTIONS() {
-  return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
+  // OPTIONS preflight is handled centrally by middleware.js.
+  return new NextResponse(null, { status: 204 });
 }

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireSuperAdmin } from "../../../lib/superAdminAuth.js";
+import { connectMongo, Tenant, Agent, hashApiKey } from "../../../lib/db.js";
 import { connectMongo, Tenant, Agent } from "../../../lib/db.js";
 import { recordAuditLog, getClientIp } from "../../../lib/auditLog.js";
 import { randomUUID } from "crypto";
@@ -60,7 +61,7 @@ export async function POST(request) {
       return NextResponse.json({ error: "name and contactEmail are required" }, { status: 400 });
     }
 
-    const apiKey = randomUUID();
+    const rawApiKey = randomUUID();
     const { randomBytes } = await import("crypto");
     const apiSecret = randomBytes(32).toString("hex");
     const slug = slugify(name) || `tenant-${randomUUID()}`;
@@ -68,7 +69,7 @@ export async function POST(request) {
     const tenant = await Tenant.create({
       name,
       slug,
-      apiKey,
+      apiKey: hashApiKey(rawApiKey),
       apiSecret,
       contactEmail,
       contactName,
@@ -85,9 +86,11 @@ export async function POST(request) {
       metadata:  { name, plan: plan || "starter" },
     });
 
+    // Return the raw API key only once – the caller must store it securely.
+    // The database stores only its HMAC-SHA256 keyed hash; the raw key cannot be recovered.
     return NextResponse.json({
       tenant,
-      credentials: { apiKey, apiSecret },
+      credentials: { apiKey: rawApiKey, apiSecret },
     }, { status: 201 });
   } catch (err) {
     if (err.code === 11000) {
@@ -98,11 +101,6 @@ export async function POST(request) {
 }
 
 export async function OPTIONS() {
-  return new NextResponse(null, {
-    headers: {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, x-super-admin-key",
-    },
-  });
+  // OPTIONS preflight is handled centrally by middleware.js.
+  return new NextResponse(null, { status: 204 });
 }

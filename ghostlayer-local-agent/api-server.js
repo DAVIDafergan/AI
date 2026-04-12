@@ -771,7 +771,7 @@ export async function startApiServer(options = {}) {
   const app = express();
 
   app.use(cors());
-  app.use(express.json({ limit: "2mb" }));
+  app.use(express.json({ limit: "500kb" }));
 
   // ── Health check ─────────────────────────────────────────────────────────
   app.get("/api/health", (_req, res) => {

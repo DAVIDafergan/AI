@@ -555,6 +555,20 @@ export async function updateUserProfile(userEmail, text, evasionTechniques = [])
     severity = "Info";
   }
 
+  // ── Severity classification ──────────────────────────────────────────────
+  let severity;
+  if (anomalyFlags.includes("STATISTICAL_ANOMALY_3SIGMA")) {
+    severity = "Critical";
+  } else if (riskScore >= 70) {
+    severity = "High";
+  } else if (riskScore >= 40) {
+    severity = "Medium";
+  } else if (riskScore >= 10) {
+    severity = "Low";
+  } else {
+    severity = "Info";
+  }
+
   // MFA required for high-risk anomalies or statistical outliers
   const requiresMFA = severity === "Critical" ||
     riskScore >= 50 ||

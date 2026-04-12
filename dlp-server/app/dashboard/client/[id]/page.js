@@ -3,10 +3,11 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
-  ArrowRight, Shield, Building2, Cpu, Activity, Users,
+  ArrowRight, Building2, Cpu, Activity, Users,
   Copy, CheckCheck, RefreshCw, AlertTriangle, Circle,
   BookOpen, X, Terminal, AlertOctagon, ShieldAlert,
 } from "lucide-react";
+import GhostLogo from "../../../../components/GhostLogo";
 
 // ── Helpers ────────────────────────────────────────────────────
 const STATUS_COLORS = {
@@ -402,8 +403,8 @@ export default function ClientDetailPage() {
           </button>
           <span className="text-slate-700">/</span>
           <div className="flex items-center gap-2">
-            <Shield className="text-cyan-500" size={16} />
-            <span className="text-sm font-bold text-cyan-300 tracking-widest">GhostLayer</span>
+            <GhostLogo size={16} className="text-cyan-500" />
+            <span className="text-sm font-bold text-cyan-300 tracking-widest">GHOST</span>
           </div>
           <span className="text-slate-700">/</span>
           <span className="text-sm text-slate-300 font-medium">{client.name}</span>

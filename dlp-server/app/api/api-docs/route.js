@@ -33,7 +33,7 @@ const SWAGGER_HTML = (yamlUrl) => `<!DOCTYPE html>
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>GhostLayer DLP – API Reference</title>
+  <title>GHOST DLP – API Reference</title>
   <link rel="icon" type="image/svg+xml"
         href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>👻</text></svg>" />
   <link rel="stylesheet"
@@ -43,7 +43,7 @@ const SWAGGER_HTML = (yamlUrl) => `<!DOCTYPE html>
     #swagger-ui .topbar { background: #0f172a; padding: 8px 0; }
     #swagger-ui .topbar a { display: none; }
     #swagger-ui .topbar::before {
-      content: '👻 GhostLayer DLP – API Reference';
+      content: '👻 GHOST DLP – API Reference';
       color: #e2e8f0;
       font-size: 1.1rem;
       font-weight: 700;

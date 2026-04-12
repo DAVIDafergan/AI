@@ -168,7 +168,7 @@ function ConnectionInstructions({ tenant, superAdminKey, onAgentProvisioned }) {
             <div className="bg-slate-900/40 border border-slate-700/30 rounded-lg p-3 space-y-1.5 text-[10px]">
               <div className="text-slate-400 font-medium mb-2">פירוט הפרמטרים:</div>
               {[
-                ["--server-url", "כתובת לוח הבקרה של GhostLayer (מוגדר אוטומטית)"],
+                ["--server-url", "כתובת לוח הבקרה של GHOST (מוגדר אוטומטית)"],
                 ["--api-key", "מפתח ה-API הייחודי לדייר זה"],
                 ['--dir', 'נתיב לכונן המשותף הארגוני (לדוגמה: C:\\Company_Shared_Drive)'],
                 ["--local-port", "פורט שרת ה-API המקומי שיאזין לבקשות מתוספי הדפדפן (ברירת מחדל: 4000)"],

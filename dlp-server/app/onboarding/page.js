@@ -2,7 +2,8 @@
 
 // דף Onboarding ציבורי – ללא צורך באימות
 import { useState } from "react";
-import { Shield, Key, Copy, Check, ChevronRight, Building2, Globe, Terminal, Code2, Bot } from "lucide-react";
+import { Key, Copy, Check, ChevronRight, Building2, Globe, Terminal, Code2, Bot } from "lucide-react";
+import GhostLogo from "../../components/GhostLogo";
 
 // כפתור העתקה
 function CopyButton({ text, label }) {
@@ -76,14 +77,14 @@ export default function OnboardingPage() {
       <header className="border-b border-slate-800 bg-slate-900/50 backdrop-blur-sm sticky top-0 z-10">
         <div className="max-w-5xl mx-auto px-4 sm:px-6 py-4 flex items-center gap-3">
           <div className="w-9 h-9 bg-blue-600/20 border border-blue-500/30 rounded-xl flex items-center justify-center">
-            <Shield className="w-5 h-5 text-blue-400" />
+            <GhostLogo size={20} className="text-blue-400" />
           </div>
           <div>
-            <span className="font-bold text-white text-lg">DLP Shield</span>
+            <span className="font-bold text-white text-lg">GHOST</span>
             <span className="text-slate-400 text-sm mr-2">Enterprise</span>
           </div>
           <span className="mr-auto text-xs bg-slate-800 border border-slate-700 text-slate-400 px-2 py-1 rounded-full">
-            GhostLayer v1.0
+            GHOST v1.0
           </span>
         </div>
       </header>
@@ -101,7 +102,7 @@ export default function OnboardingPage() {
               <h1 className="text-4xl sm:text-5xl font-bold text-white mb-4 leading-tight">
                 חבר את הארגון שלך<br />
                 <span className="text-transparent bg-clip-text bg-gradient-to-l from-blue-400 to-violet-400">
-                  ל-DLP Shield תוך דקות
+                  ל-GHOST תוך דקות
                 </span>
               </h1>
               <p className="text-slate-400 text-lg max-w-xl mx-auto leading-relaxed">
@@ -231,11 +232,11 @@ export default function OnboardingPage() {
                 </ol>
               </div>
 
-              {/* GhostLayer Local Agent */}
+              {/* GHOST Local Agent */}
               <div className="bg-slate-900 border border-blue-500/30 rounded-xl p-5">
                 <div className="flex items-center gap-2 mb-3">
                   <Bot className="w-4 h-4 text-blue-400" />
-                  <h4 className="text-sm font-semibold text-white">ב. GhostLayer Local Agent (סריקת תיקיות)</h4>
+                  <h4 className="text-sm font-semibold text-white">ב. GHOST Local Agent (סריקת תיקיות)</h4>
                 </div>
                 <p className="text-xs text-slate-400 mb-3">
                   הרץ את הסוכן המקומי על שרת הקבצים שלך. הוא סורק את הכוננים, בונה AI מקומי, ושולח סטטיסטיקות מצטברות בלבד לדשבורד.

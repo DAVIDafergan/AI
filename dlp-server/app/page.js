@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Shield, Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff } from "lucide-react";
 import { loginAction } from "./actions/auth";
+import GhostLogo from "../components/GhostLogo";
 
 export default function LoginPage() {
   const [error, setError] = useState("");
@@ -38,10 +39,10 @@ export default function LoginPage() {
           {/* Logo & Title */}
           <div className="flex flex-col items-center gap-3 mb-8">
             <div className="w-12 h-12 rounded-xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center">
-              <Shield className="text-cyan-400" size={24} />
+              <GhostLogo size={28} className="text-cyan-400" />
             </div>
             <div className="text-center">
-              <h1 className="text-lg font-bold text-cyan-300 tracking-widest">GHOSTLAYER</h1>
+              <h1 className="text-lg font-bold text-cyan-300 tracking-widest">GHOST</h1>
               <p className="text-slate-400 text-sm mt-1">פורטל ניהול מנהל-על</p>
             </div>
           </div>
@@ -118,7 +119,7 @@ export default function LoginPage() {
 
           {/* Footer */}
           <p className="text-center text-slate-600 text-xs mt-6">
-            GhostLayer DLP Shield &copy; {new Date().getFullYear()}
+            GHOST &copy; {new Date().getFullYear()}
           </p>
         </div>
       </div>

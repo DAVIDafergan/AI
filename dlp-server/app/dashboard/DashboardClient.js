@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Bell, Clock, Plus, Shield, Building2, Settings, LogOut, RefreshCw, Activity, Users, AlertTriangle, Wifi, WifiOff } from "lucide-react";
+import { Bell, Clock, Plus, Building2, Settings, LogOut, RefreshCw, Activity, Users, AlertTriangle, Wifi, WifiOff } from "lucide-react";
 import { logoutAction } from "../actions/auth";
 import TenantsTable from "../super-admin/components/TenantsTable";
 import AddTenantModal from "../super-admin/components/AddTenantModal";
@@ -11,6 +11,7 @@ import GlobalThreatMap from "../super-admin/components/GlobalThreatMap";
 import LiveEventsStream from "../super-admin/components/LiveEventsStream";
 import AgentsGrid from "../super-admin/components/AgentsGrid";
 import AgentDetailPanel from "../super-admin/components/AgentDetailPanel";
+import GhostLogo from "../../components/GhostLogo";
 
 const REFRESH_INTERVAL_MS = 10000;
 
@@ -130,8 +131,8 @@ function Sidebar({ activeTab, onTabChange, onAddClient }) {
     <aside className="flex flex-col bg-[#0d0d14] border-l border-cyan-900/30 w-56 min-h-screen shrink-0">
       {/* Logo */}
       <div className="flex items-center gap-3 px-4 py-5 border-b border-cyan-900/30">
-        <Shield className="text-cyan-400 shrink-0" size={22} />
-        <span className="text-cyan-300 font-bold text-sm tracking-widest whitespace-nowrap">GhostLayer</span>
+        <GhostLogo size={22} className="text-cyan-400 shrink-0" />
+        <span className="text-cyan-300 font-bold text-sm tracking-widest whitespace-nowrap">GHOST</span>
       </div>
 
       {/* Nav */}
@@ -196,7 +197,7 @@ function SystemSettings() {
       <h2 className="text-sm font-semibold text-slate-200">הגדרות מערכת</h2>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {[
-          { label: "גרסת המערכת", value: "GhostLayer v3.0.0" },
+          { label: "גרסת המערכת", value: "GHOST v3.0.0" },
           { label: "מסד נתונים", value: "MongoDB Atlas" },
           { label: "ספק אימות", value: "Cookie-based (HTTP-only)" },
         ].map(({ label, value }) => (
@@ -477,8 +478,8 @@ export default function DashboardClient({ initialClients = [] }) {
         {/* Top bar */}
         <header className="flex items-center justify-between px-6 py-3.5 border-b border-slate-800/60 bg-[#0a0a0f]/80 backdrop-blur-sm shrink-0">
           <div className="flex items-center gap-3">
-            <Shield className="text-cyan-500" size={18} />
-            <span className="text-sm font-bold text-cyan-300 tracking-widest">GhostLayer – פורטל ניהול מנהל-על</span>
+            <GhostLogo size={18} className="text-cyan-500" />
+            <span className="text-sm font-bold text-cyan-300 tracking-widest">GHOST – פורטל ניהול מנהל-על</span>
           </div>
           <div className="flex items-center gap-4">
             <ConnectionStatus connected={true} streaming={sseConnected} />

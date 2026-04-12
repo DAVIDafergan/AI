@@ -55,11 +55,16 @@ const UEBA_REDIS_KEY    = (key) => `ueba:vol:${key}`;
 
 /**
  * Normalise a user email address to a stable, Redis-safe key.
+ * Strips characters outside the safe set [a-z0-9._@-] after lower-casing so
+ * the resulting string is always safe to use as a Redis key segment.
  * @param {string} email
  * @returns {string}
  */
 function userKey(email) {
-  return (email || "anonymous").toLowerCase().trim();
+  return (email || "anonymous")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9._@-]/g, "_");
 }
 
 // ── Redis client (optional – graceful fallback to in-memory) ─────────────────
@@ -95,6 +100,16 @@ async function getRedisClient() {
   }
 }
 
+/**
+ * Returns true when `redis` is a live, ready connection.
+ * Centralises the readiness guard used throughout this module.
+ * @param {import("ioredis").Redis | null} redis
+ * @returns {boolean}
+ */
+function isRedisReady(redis) {
+  return redis !== null && redis.status === "ready";
+}
+
 /** In-memory fallback: userKey → number[] (volume history) */
 const _memVolumeHistory = new Map();
 
@@ -107,7 +122,7 @@ const _memVolumeHistory = new Map();
 async function fetchVolumeHistory(key) {
   try {
     const redis = await getRedisClient();
-    if (redis && redis.status === "ready") {
+    if (isRedisReady(redis)) {
       const raw = await redis.lrange(UEBA_REDIS_KEY(key), 0, -1);
       return raw.map(Number);
     }
@@ -128,7 +143,7 @@ async function fetchVolumeHistory(key) {
 async function appendVolumeHistory(key, volume) {
   try {
     const redis = await getRedisClient();
-    if (redis && redis.status === "ready") {
+    if (isRedisReady(redis)) {
       const redisKey = UEBA_REDIS_KEY(key);
       await redis.rpush(redisKey, volume);
       await redis.ltrim(redisKey, -UEBA_HISTORY_MAX, -1);
@@ -235,7 +250,7 @@ function pruneFragments(frags, add) {
 async function loadFragments(key) {
   try {
     const redis = await getRedisClient();
-    if (!redis || redis.status !== "ready") return [];
+    if (!isRedisReady(redis)) return [];
     const raw = await redis.get(`frag:${key}`);
     return raw ? JSON.parse(raw) : [];
   } catch {
@@ -247,7 +262,7 @@ async function loadFragments(key) {
 async function saveFragments(key, frags) {
   try {
     const redis = await getRedisClient();
-    if (!redis || redis.status !== "ready") return;
+    if (!isRedisReady(redis)) return;
     await redis.setex(`frag:${key}`, FRAGMENT_TTL_SEC, JSON.stringify(frags));
   } catch {
     // Non-fatal – worst case the fragment window is lost on the next read.
@@ -307,7 +322,7 @@ export async function clearFragments(userEmail) {
   const key = userKey(userEmail);
   try {
     const redis = await getRedisClient();
-    if (redis && redis.status === "ready") await redis.del(`frag:${key}`);
+    if (isRedisReady(redis)) await redis.del(`frag:${key}`);
   } catch {
     // Non-fatal
   }
@@ -347,7 +362,7 @@ const PROFILE_WINDOW_MS = 30 * 60 * 1000; // 30 minutes for rate calculation
 async function loadProfile(key) {
   try {
     const redis = await getRedisClient();
-    if (!redis || redis.status !== "ready") return null;
+    if (!isRedisReady(redis)) return null;
     const raw = await redis.get(`profile:${key}`);
     return raw ? JSON.parse(raw) : null;
   } catch {
@@ -359,7 +374,7 @@ async function loadProfile(key) {
 async function saveProfile(key, profile) {
   try {
     const redis = await getRedisClient();
-    if (!redis || redis.status !== "ready") return;
+    if (!isRedisReady(redis)) return;
     await redis.set(`profile:${key}`, JSON.stringify(profile));
   } catch {
     // Non-fatal
@@ -558,7 +573,7 @@ export async function getUserProfile(userEmail) {
  */
 export async function getAllProfiles() {
   const redis = await getRedisClient();
-  if (!redis || redis.status !== "ready") return [];
+  if (!isRedisReady(redis)) return [];
   const keys  = [];
   let   cursor = "0";
 

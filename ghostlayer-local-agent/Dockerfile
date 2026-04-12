@@ -30,8 +30,10 @@ RUN apt-get update && \
 # Copy dependency manifests first so Docker can cache this layer
 COPY package.json package-lock.json ./
 
-# Install all dependencies (including devDeps needed by native compilers)
-RUN npm ci --omit=optional
+# Install all dependencies (including devDeps needed by native compilers).
+# Do NOT use --omit=optional here; optional native addons must compile in the
+# builder stage so that the compiled binaries are available in the runner stage.
+RUN npm ci
 
 # ── Stage 2: runner ──────────────────────────────────────────────────────────
 FROM node:20-slim AS runner

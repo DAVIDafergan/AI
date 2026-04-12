@@ -26,18 +26,17 @@ services:
     ports:
       - "${LOCAL_PORT:-4000}:${LOCAL_PORT:-4000}"
     environment:
-      API_KEY:        ${API_KEY}
-      SERVER_URL:     ${SERVER_URL:-}
-      SCAN_DIR:       /data
-      LOCAL_PORT:     ${LOCAL_PORT:-4000}
-      VERBOSE:        ${VERBOSE:-false}
-      REDIS_URL:      redis://redis:6379
-      QDRANT_URL:     http://qdrant:6333
+      API_KEY:    ${API_KEY}
+      SERVER_URL: ${SERVER_URL:-}
+      SCAN_DIR:   /data
+      LOCAL_PORT: ${LOCAL_PORT:-4000}
+      VERBOSE:    ${VERBOSE:-false}
+      REDIS_URL:  redis://redis:6379
+      QDRANT_URL: http://qdrant:6333
     volumes:
       # Mount your corporate documents as read-only inside the container
       - ./corporate_data:/data:ro
-      # Persist the AI brain, vector cache and Transformers.js model cache
-      - agent_brain:/app/.ghostlayer_brain.json
+      # Persist the Transformers.js model cache so models aren't re-downloaded on restart
       - agent_cache:/app/.cache
     depends_on:
       redis:
@@ -92,8 +91,6 @@ volumes:
     name: ghostlayer_qdrant_storage
   redis_data:
     name: ghostlayer_redis_data
-  agent_brain:
-    name: ghostlayer_agent_brain
   agent_cache:
     name: ghostlayer_agent_cache
 

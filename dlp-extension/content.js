@@ -594,6 +594,34 @@ function flashGreen(element) {
 /* ─────────────────────────────────────────────
    1D. Main Paste Handler
    ───────────────────────────────────────────── */
+/**
+ * Apply Tier 1 client-side masking when the worker returned checksum-validated
+ * exact matches.  Generates local vault tokens, updates the vault, and returns
+ * the masked text along with the replacement list – all without a server round-trip.
+ *
+ * @param {string} originalText
+ * @param {Array<{ type: string, value: string }>} tier1Matches
+ * @returns {{ maskedText: string, replacements: Array<{ original: string, synthetic: string }> }}
+ */
+function applyTier1Masking(originalText, tier1Matches) {
+  let maskedText = originalText;
+  const replacements = [];
+  const counters = {};
+
+  for (const { type, value } of tier1Matches) {
+    // Skip if this exact value was already replaced in a previous iteration
+    if (!maskedText.includes(value)) continue;
+    const count = (counters[type] = (counters[type] || 0) + 1);
+    const token = `[${type}_${count}]`;
+    // Replace all occurrences of this value
+    maskedText = maskedText.split(value).join(token);
+    _vault[token] = value;
+    replacements.push({ original: value, synthetic: token });
+  }
+
+  return { maskedText, replacements };
+}
+
 async function handlePaste(event) {
   const text = (event.clipboardData || window.clipboardData)?.getData("text");
   if (!text || text.trim().length === 0) return;
@@ -607,11 +635,33 @@ async function handlePaste(event) {
     // ── Fast pre-flight in the Web Worker (no network round-trip) ──────────
     // If no regex patterns match we skip the full API call entirely, keeping
     // the UI at 60 fps for the vast majority of "clean" paste events.
+    const t0Paste = performance.now();
     const preflight = await workerPreflight(text);
     if (!preflight?.error && !preflight?.hasSensitive) {
       // Nothing suspicious – paste immediately without going to the API
       insertTextIntoField(target, text);
       return;
+    }
+
+    // ── Tier 1 exact bypass: checksum-validated match – mask locally, skip AI ──
+    // When Tier 1 finds a credit card (Luhn) or Israeli ID (checksum) exact match,
+    // we can mask it immediately on the client without an API round-trip.
+    if (!preflight?.error && preflight?.tier1Exact && preflight?.tier1Matches?.length > 0) {
+      const { maskedText, replacements } = applyTier1Masking(text, preflight.tier1Matches);
+      if (replacements.length > 0) {
+        persistVault();
+        const elapsed = (performance.now() - t0Paste).toFixed(2);
+        console.log(`[GhostLayer] Tier 1 exact bypass: masked ${replacements.length} item(s) in ${elapsed}ms – API skipped`);
+
+        const overlayParts = buildOverlayDOM(replacements, maskedText);
+        document.body.appendChild(overlayParts.backdrop);
+        await runMorphAnimation(overlayParts);
+        insertTextIntoField(target, maskedText);
+        console.log(`${DLP_PREFIX} ✅ Tier 1 הודבק טקסט סינתטי (${replacements.length} החלפות)`);
+        await sleep(TIMING.closeDelay);
+        await closeOverlay(overlayParts);
+        return;
+      }
     }
 
     const { localAgentUrl: agentUrl, tenantApiKey: apiKey, userEmail: email } = await readSettings();
@@ -724,10 +774,38 @@ async function interceptInput(element) {
   // ── Fast pre-flight in the Web Worker (no network round-trip) ──────────────
   // If no regex patterns match we skip the full API call entirely, keeping
   // the UI responsive for the vast majority of "clean" typing events.
+  const t0Input = performance.now();
   const preflight = await workerPreflight(text);
   if (!preflight?.error && !preflight?.hasSensitive) {
     safeStateMap.set(element, text);
     return;
+  }
+
+  // ── Tier 1 exact bypass: checksum-validated match – mask locally, skip AI ──
+  if (!preflight?.error && preflight?.tier1Exact && preflight?.tier1Matches?.length > 0) {
+    const { maskedText, replacements } = applyTier1Masking(text, preflight.tier1Matches);
+    if (replacements.length > 0) {
+      persistVault();
+      const elapsed = (performance.now() - t0Input).toFixed(2);
+      console.log(`[GhostLayer] Tier 1 exact bypass (typing): masked ${replacements.length} item(s) in ${elapsed}ms`);
+
+      const cursorPos = element.isContentEditable ? null : element.selectionStart;
+      _inputMaskingActive = true;
+      try {
+        setReactInputValue(element, maskedText);
+        flashGreen(element);
+        safeStateMap.set(element, maskedText);
+        debouncedInterceptInput.cancel();
+      } finally {
+        _inputMaskingActive = false;
+      }
+      if (!element.isContentEditable && element.setSelectionRange) {
+        const newPos = Math.min(cursorPos ?? maskedText.length, maskedText.length);
+        try { element.setSelectionRange(newPos, newPos); } catch { /* ignore */ }
+      }
+      showFallbackToast(typingInterceptedToast(replacements.length), "warning");
+      return;
+    }
   }
 
   inputRequestPending = true;
@@ -1184,11 +1262,11 @@ function watchSendButtons() {
 
 // Synthetic data patterns to detect in AI output
 const SYNTHETIC_PATTERNS = [
-  /05\d-\d{7}/g,                              // Israeli mobile (synthetic format)
-  /0[2-9]-\d{7}/g,                            // Landline (synthetic format)
-  /\b3\d{8}\b/g,                              // ID (starts with 3, 9 digits)
-  /user_\d{3}@[a-z]+\.[a-z]{2,}/g,           // Synthetic email
-  /4\d{3}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}/g,  // Credit card (Visa synthetic)
+  /05\d[-\s]?\d{7}/g,                           // Israeli mobile (synthetic format) – optional dash or space
+  /0[2-9][-\s]?\d{7}/g,                         // Landline (synthetic format) – optional dash or space
+  /\b3\d{8}\b/g,                                // ID (starts with 3, 9 digits)
+  /user_\d{3}@[a-z]+\.[a-z]{2,}/g,             // Synthetic email
+  /4\d{3}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}/g,    // Credit card (Visa synthetic)
   /\[[A-Z][A-Z0-9_]*_\d+\]/gi,                  // Smart masking vault tokens: [PERSON_1], [ACCOUNT_1], … (case-insensitive)
 ];
 
@@ -1206,6 +1284,17 @@ const AI_RESPONSE_SELECTORS = [
   "[class*='response']",
 ];
 
+/**
+ * Normalise a synthetic value for fuzzy vault lookup.
+ * Collapses separator characters (dash, space, dot) into a single dash so that
+ * "1234-5678" and "1234 5678" resolve to the same canonical key.
+ * @param {string} key
+ * @returns {string}
+ */
+function normalizeSyntheticKey(key) {
+  return key.replace(/[-\s.]+/g, "-").trim().toLowerCase();
+}
+
 async function lookupSynthetic(syntheticValue) {
   // ── 1. Check local vault first (tokens from Smart Masking) ──
   // Build candidate keys: the value as-is, uppercased, with/without brackets.
@@ -1221,6 +1310,14 @@ async function lookupSynthetic(syntheticValue) {
   for (const key of candidates) {
     if (Object.prototype.hasOwnProperty.call(_vault, key)) {
       return _vault[key];
+    }
+  }
+
+  // ── 1b. Fuzzy fallback: normalise separators (handles '1234-5678' vs '1234 5678') ──
+  const normalizedQuery = normalizeSyntheticKey(syntheticValue);
+  for (const vaultKey of Object.keys(_vault)) {
+    if (normalizeSyntheticKey(vaultKey) === normalizedQuery) {
+      return _vault[vaultKey];
     }
   }
 
@@ -1258,6 +1355,8 @@ function createRestoredSpan(originalText, syntheticValue) {
   span.setAttribute("data-dlp-synthetic", syntheticValue);
   span.title = `🛡️ DLP Shield: מידע מוגן שוחזר (מקורי: ${originalText})`;
   span.textContent = originalText;
+  // Preserve whitespace, newlines, and extra spaces that may be in the original value
+  span.style.whiteSpace = "pre-wrap";
   return span;
 }
 
@@ -1293,6 +1392,11 @@ async function scanAndRestore(root) {
       nodesToProcess.push(node);
     }
   }
+
+  // ── Phase 1: collect all async lookups before touching the DOM ──────────────
+  // This avoids interleaving DOM writes with pending microtasks and gives us a
+  // clean snapshot of the work before we apply changes in a single RAF frame.
+  const pendingUpdates = []; // { textNode, parts, replaceCount }
 
   for (const textNode of nodesToProcess) {
     const text = textNode.nodeValue;
@@ -1339,19 +1443,13 @@ async function scanAndRestore(root) {
 
     if (replaceMap.size === 0) continue;
 
-    // Replace text node with fragment containing spans
-    const fragment = document.createDocumentFragment();
-    let lastIndex = 0;
-    const fullText = text;
-
-    // Re-scan in order using replaceMap
+    // Build the parts array (text / restored segments) for this node
     const sortedSynthetics = [...replaceMap.keys()].sort((a, b) => {
-      return fullText.indexOf(a) - fullText.indexOf(b);
+      return text.indexOf(a) - text.indexOf(b);
     });
 
-    let cursor = 0;
     const parts = [];
-    let remaining = fullText;
+    let remaining = text;
 
     while (remaining.length > 0) {
       let earliestIndex = Infinity;
@@ -1377,33 +1475,61 @@ async function scanAndRestore(root) {
       remaining = remaining.slice(earliestIndex + earliestSynthetic.length);
     }
 
-    for (const part of parts) {
-      if (part.type === "text") {
-        fragment.appendChild(document.createTextNode(part.value));
-      } else {
-        fragment.appendChild(createRestoredSpan(part.original, part.synthetic));
-      }
-    }
+    pendingUpdates.push({ textNode, parts, replaceCount: replaceMap.size });
+  }
 
-    try {
-      // Guard: suppress the MutationObserver from re-triggering a scan when we replace DOM nodes
+  if (pendingUpdates.length === 0) return;
+
+  // ── Phase 2: apply all DOM writes in a single requestAnimationFrame ─────────
+  // Batching writes into one RAF frame prevents layout thrashing and CPU spikes
+  // when multiple nodes need restoration simultaneously.
+  // CURSOR SAFETY: Skip any node that is currently inside the user's focused
+  // contentEditable element to avoid hijacking the active caret position.
+  await new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      // Identify the currently focused editable element (if any) to guard the cursor
+      const activeEl = document.activeElement;
+      const activeCE = (activeEl && activeEl.isContentEditable) ? activeEl : null;
+
       _dlpScanMutating = true;
+      let totalRestored = 0;
       try {
-        textNode.parentNode?.replaceChild(fragment, textNode);
+        for (const { textNode, parts, replaceCount } of pendingUpdates) {
+          // Skip nodes inside the user's active contentEditable to protect the caret
+          if (activeCE && activeCE.contains(textNode)) continue;
+          // Node may have been removed by React re-render since the lookup phase
+          if (!textNode.parentNode) continue;
+
+          const fragment = document.createDocumentFragment();
+          for (const part of parts) {
+            if (part.type === "text") {
+              fragment.appendChild(document.createTextNode(part.value));
+            } else {
+              fragment.appendChild(createRestoredSpan(part.original, part.synthetic));
+            }
+          }
+
+          try {
+            textNode.parentNode.replaceChild(fragment, textNode);
+            totalRestored += replaceCount;
+          } catch {
+            // DOM operation failed (node removed concurrently) – ignore
+          }
+        }
       } finally {
         _dlpScanMutating = false;
+        resolve();
       }
 
-      // Notify background
-      try {
-        chrome.runtime.sendMessage({ type: "ITEMS_RESTORED", count: replaceMap.size });
-      } catch { /* ignore */ }
+      if (totalRestored > 0) {
+        try {
+          chrome.runtime.sendMessage({ type: "ITEMS_RESTORED", count: totalRestored });
+        } catch { /* ignore */ }
+        console.log(`${DLP_PREFIX} שוחזרו ${totalRestored} ערכים בתשובת AI`);
+      }
+    });
+  });
 
-      console.log(`${DLP_PREFIX} שוחזרו ${replaceMap.size} ערכים בתשובת AI`);
-    } catch {
-      // DOM operation failed – ignore
-    }
-  }
   } finally {
     _activeScanRoots.delete(root);
   }

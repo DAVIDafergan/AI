@@ -17,7 +17,54 @@
 
 "use strict";
 
+// ── Tier 1 checksum validators ───────────────────────────────────────────────
+
+/**
+ * Luhn algorithm – validates credit/debit card numbers.
+ * Strips all non-digit characters before checking.
+ * @param {string} value  Raw number string (may contain spaces or dashes).
+ * @returns {boolean}
+ */
+function luhnCheck(value) {
+  const digits = value.replace(/\D/g, "");
+  if (digits.length < 13 || digits.length > 19) return false;
+  let sum = 0;
+  let alt = false;
+  for (let i = digits.length - 1; i >= 0; i--) {
+    let d = parseInt(digits[i], 10);
+    if (alt) {
+      d *= 2;
+      if (d > 9) d -= 9;
+    }
+    sum += d;
+    alt = !alt;
+  }
+  return sum % 10 === 0;
+}
+
+/**
+ * Israeli national ID checksum (Luhn-variant with alternating ×1/×2 weights).
+ * Left-pads to 9 digits before checking.
+ * @param {string} value  Raw ID string (digits only or with leading zeros omitted).
+ * @returns {boolean}
+ */
+function israeliIdCheck(value) {
+  const digits = value.replace(/\D/g, "");
+  if (digits.length < 5 || digits.length > 9) return false;
+  const padded = digits.padStart(9, "0");
+  let sum = 0;
+  for (let i = 0; i < 9; i++) {
+    let v = parseInt(padded[i], 10) * ((i % 2) + 1);
+    if (v > 9) v -= 9;
+    sum += v;
+  }
+  return sum % 10 === 0;
+}
+
 // ── Regex patterns mirrored from api-server.js ──────────────────────────────
+// Each entry stores both a non-global test regex and a pre-compiled global
+// version used for match extraction, avoiding repeated RegExp construction
+// inside the hot preflightScan path.
 const PREFLIGHT_PATTERNS = [
   { type: "EMAIL",       re: /\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b/ },
   { type: "PHONE",       re: /(?:\+?\d{1,3}[\s\-.]?)?\(?\d{2,4}\)?[\s\-.]?\d{3,4}[\s\-.]?\d{4}\b/ },
@@ -25,7 +72,12 @@ const PREFLIGHT_PATTERNS = [
   { type: "ID_NUMBER",   re: /\b\d{9}\b/ },
   { type: "CREDENTIALS", re: /\b(password|secret|token|api[_\-]?key|credentials)\s*[:=]/i },
   { type: "ACCOUNT",     re: /\b\d{2,4}[-\s]\d{3,4}[-\s]\d{4,10}\b/ },
-];
+].map((p) => ({
+  type: p.type,
+  re:   p.re,
+  // Pre-compiled global copy – reset lastIndex before each use
+  reG:  new RegExp(p.re.source, p.re.flags.includes("g") ? p.re.flags : p.re.flags + "g"),
+}));
 
 // ── Evasion detection helpers (mirrored from evasion-detector.js) ─────────────
 // These are intentionally self-contained (no imports in a Web Worker context).
@@ -126,30 +178,65 @@ function detectEvasionSignals(text) {
 
 /**
  * Quick pre-flight scan using only regex (no network, no AI).
- * Returns { hasSensitive: boolean, types: string[], evasionTypes: string[] }
+ *
+ * Returns:
+ *   hasSensitive  – true when any pattern or evasion signal matches
+ *   types         – list of matched pattern types
+ *   evasionTypes  – list of detected evasion techniques
+ *   tier1Exact    – true when at least one checksum-validated match was found
+ *   tier1Matches  – array of { type, value } for checksum-validated hits
  *
  * @param {string} text
- * @returns {{ hasSensitive: boolean, types: string[], evasionTypes: string[] }}
+ * @returns {{
+ *   hasSensitive: boolean,
+ *   types: string[],
+ *   evasionTypes: string[],
+ *   tier1Exact: boolean,
+ *   tier1Matches: Array<{ type: string, value: string }>,
+ * }}
  */
 function preflightScan(text) {
+  const t0 = performance.now();
+
   // Detect and report evasion signals on the raw text
   const { hasEvasion, evasionTypes } = detectEvasionSignals(text);
 
   // Normalise the text before pattern matching so evasion attempts are caught
   const normalized = lightNormalise(text);
 
-  const matchedTypes = [];
-  for (const { type, re } of PREFLIGHT_PATTERNS) {
-    if (re.test(normalized)) matchedTypes.push(type);
+  const matchedTypes  = [];
+  const tier1Matches  = [];   // checksum-validated exact hits
+
+  for (const { type, reG } of PREFLIGHT_PATTERNS) {
+    // Use the pre-compiled global regex; always reset lastIndex before each scan
+    reG.lastIndex = 0;
+    let m;
+    let typeMatched = false;
+    while ((m = reG.exec(normalized)) !== null) {
+      typeMatched = true;
+      const raw = m[0];
+
+      if (type === "CREDIT_CARD" && luhnCheck(raw)) {
+        tier1Matches.push({ type, value: raw });
+      } else if (type === "ID_NUMBER" && israeliIdCheck(raw)) {
+        tier1Matches.push({ type, value: raw });
+      }
+    }
+    if (typeMatched) matchedTypes.push(type);
   }
 
   // Roleplay injection is always flagged as sensitive
   if (evasionTypes.includes("ROLEPLAY")) matchedTypes.push("ROLEPLAY_INJECTION");
 
+  const elapsed = (performance.now() - t0).toFixed(2);
+  console.log(`[GhostLayer] Tier 1 took ${elapsed}ms – types: [${matchedTypes.join(", ")}]${tier1Matches.length ? `, exact: ${tier1Matches.length}` : ""}`);
+
   return {
     hasSensitive: matchedTypes.length > 0 || hasEvasion,
     types: matchedTypes,
     evasionTypes,
+    tier1Exact:   tier1Matches.length > 0,
+    tier1Matches,
   };
 }
 

@@ -22,6 +22,17 @@
 const DEFAULT_SIZE_BYTES = 60_000; // 480,000 bits
 const DEFAULT_NUM_HASHES = 7;
 
+/** Minimum token/word length to probe or insert into the filter. */
+const MIN_WORD_LENGTH = 4;
+
+/**
+ * Maximum number of characters hashed per string probe.
+ * Capping the input bounds the loop in the hash functions and prevents a
+ * potential DoS from very long strings while still capturing enough of the
+ * text for reliable detection (sensitive keywords are rarely > 64 chars).
+ */
+const MAX_STR_HASH_LEN = 256;
+
 // ── BloomFilter class ────────────────────────────────────────────────────────
 
 class BloomFilter {
@@ -36,21 +47,23 @@ class BloomFilter {
     this.itemsAdded = 0;
   }
 
-  /** FNV-1a 32-bit hash. */
+  /** FNV-1a 32-bit hash. Input is capped at MAX_STR_HASH_LEN characters. */
   _fnv1a(str) {
+    const s = str.length > MAX_STR_HASH_LEN ? str.slice(0, MAX_STR_HASH_LEN) : str;
     let h = 0x811c9dc5 >>> 0;
-    for (let i = 0; i < str.length; i++) {
-      h ^= str.charCodeAt(i);
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
       h  = Math.imul(h, 0x01000193) >>> 0;
     }
     return h;
   }
 
-  /** DJB2 32-bit hash. */
+  /** DJB2 32-bit hash. Input is capped at MAX_STR_HASH_LEN characters. */
   _djb2(str) {
+    const s = str.length > MAX_STR_HASH_LEN ? str.slice(0, MAX_STR_HASH_LEN) : str;
     let h = 5381 >>> 0;
-    for (let i = 0; i < str.length; i++) {
-      h = (Math.imul(h, 33) ^ str.charCodeAt(i)) >>> 0;
+    for (let i = 0; i < s.length; i++) {
+      h = (Math.imul(h, 33) ^ s.charCodeAt(i)) >>> 0;
     }
     return h;
   }
@@ -109,7 +122,10 @@ const SENSITIVE_KEYWORDS = [
   "credit card", "date of birth", "social security", "national id",
   // Sensitive document markers
   "internal only", "do not distribute", "draft",
-  // Hebrew sensitive terms (חשאי = secret, קנייני = proprietary, …)
+  // Hebrew sensitive terms:
+  //   הכנסה = revenue, רווח = profit, הפסד = loss, תקציב = budget,
+  //   תחזית = forecast, חשבונית = invoice, שכר = salary,
+  //   סודי = confidential/secret, קנייני = proprietary
   "הכנסה", "רווח", "הפסד", "תקציב", "תחזית", "חשבונית", "שכר", "סודי", "קנייני",
 ];
 
@@ -132,13 +148,15 @@ let _filter = null;
 
 /**
  * Insert a term AND every individual word within it (for multi-word phrases).
+ * Words shorter than MIN_WORD_LENGTH characters are skipped to avoid excessive
+ * false positives from common short words (e.g. "of", "the", "api").
  * @param {BloomFilter} filter
  * @param {string} term
  */
 function addTerm(filter, term) {
   filter.add(term);
   for (const word of term.split(/\s+/)) {
-    if (word.length >= 4) filter.add(word);
+    if (word.length >= MIN_WORD_LENGTH) filter.add(word);
   }
 }
 
@@ -228,10 +246,12 @@ export function bloomCheck(text) {
   // 1. Whole-text probe (catches @-containing emails, multi-word phrases)
   if (_filter.mightContain(lower)) return true;
 
-  // 2. Token-level probe
+  // 2. Token-level probe – checks individual words so that multi-word phrases
+  //    whose constituent words were loaded into the filter are also caught.
+  //    Tokens shorter than MIN_WORD_LENGTH are skipped (mirrors addTerm logic).
   const tokens = lower.split(/[\s\r\n\t,;:!?()\[\]{}<>"'`/\\|=+*&^%$#@~]+/);
   for (const token of tokens) {
-    if (token.length >= 4 && _filter.mightContain(token)) return true;
+    if (token.length >= MIN_WORD_LENGTH && _filter.mightContain(token)) return true;
   }
 
   // 3. Structural heuristics that the Bloom Filter cannot capture as keywords

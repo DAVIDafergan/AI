@@ -102,9 +102,9 @@ async function refreshCustomKeywords() {
 
     // Push any newly-fetched keywords into the live Bloom Filter so the
     // fast-path knows about them without requiring a full restart.
-    const added = newKeywords.filter(
-      (kw) => kw.word && !_customKeywords.some((k) => k.word === kw.word),
-    );
+    // Use a Set for O(n) lookups rather than repeated Array.some() scans.
+    const existingWords = new Set(_customKeywords.map((kw) => kw.word));
+    const added = newKeywords.filter((kw) => kw.word && !existingWords.has(kw.word));
     if (added.length > 0) {
       addTermsToFilter(added.map((kw) => kw.word));
     }

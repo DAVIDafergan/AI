@@ -38,10 +38,6 @@ function buildProviders() {
     return [];
   }
 
-  // Dynamically import to avoid crashing when the package is not present
-  // in environments that only use API-key auth.
-  const { default: OIDCProvider } = require("next-auth/providers/oauth");
-
   return [
     {
       id: "enterprise-oidc",

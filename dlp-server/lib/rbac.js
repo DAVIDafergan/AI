@@ -16,8 +16,12 @@
 
 import { connectMongo, TenantUser } from "./db.js";
 
-// Role hierarchy: higher index = more privileged
-const ROLE_HIERARCHY = ["auditor", "security_analyst", "tenant_admin"];
+// Role hierarchy: higher value = more privileged
+const ROLE_PRIORITY = {
+  auditor:          0,
+  security_analyst: 1,
+  tenant_admin:     2,
+};
 
 /**
  * Returns true if `userRole` satisfies the minimum required role.
@@ -27,7 +31,7 @@ const ROLE_HIERARCHY = ["auditor", "security_analyst", "tenant_admin"];
  * @returns {boolean}
  */
 export function hasMinimumRole(userRole, requiredRole) {
-  return ROLE_HIERARCHY.indexOf(userRole) >= ROLE_HIERARCHY.indexOf(requiredRole);
+  return (ROLE_PRIORITY[userRole] ?? -1) >= (ROLE_PRIORITY[requiredRole] ?? 0);
 }
 
 /**

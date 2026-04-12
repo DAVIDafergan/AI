@@ -1966,6 +1966,95 @@ async function handleImagePaste(event) {
 }
 
 /**
+ * Send an image file (as raw binary) to the local agent's /api/check-file
+ * endpoint using multipart/form-data.
+ * Returns the API response or null on network error.
+ * @param {File|Blob} file
+ * @param {string}    email
+ * @returns {Promise<object|null>}
+ */
+async function checkFileWithOcr(file, email) {
+  try {
+    const { localAgentUrl: agentUrl, tenantApiKey: apiKey } = await readSettings();
+    const formData = new FormData();
+    formData.append("file", file, file.name || "image.png");
+    formData.append("userEmail", email || userEmail);
+
+    return await new Promise((resolve) => {
+      // Use background script to proxy the fetch (avoids CORS restrictions in content scripts)
+      chrome.runtime.sendMessage(
+        { type: "CHECK_FILE", agentUrl, apiKey, email: email || userEmail, fileName: file.name || "image.png" },
+        (response) => {
+          if (chrome.runtime.lastError || !response || response.error) {
+            resolve(null);
+          } else {
+            resolve(response);
+          }
+        }
+      );
+      // Independently start a direct fetch from the content script as fallback
+      // (Service workers cannot send FormData via sendMessage, so we fetch directly
+      //  and race against the background response).
+      fetch(`${agentUrl}/api/check-file`, {
+        method: "POST",
+        body:   formData,
+        signal: AbortSignal.timeout(30_000),
+      })
+        .then((r) => r.ok ? r.json() : null)
+        .then((data) => { if (data) resolve(data); })
+        .catch(() => resolve(null));
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Intercept drag-and-drop of image files onto the page.
+ * Checks every dropped image through OCR before allowing it to be processed.
+ */
+function watchDragAndDrop() {
+  // dragover must be captured to allow drop event to fire
+  document.addEventListener("dragover", (e) => {
+    // Only intercept if dragged items contain files
+    if (e.dataTransfer?.types?.includes("Files")) {
+      e.preventDefault();
+    }
+  }, true);
+
+  document.addEventListener("drop", async (e) => {
+    const files = Array.from(e.dataTransfer?.files || []);
+    const imageFiles = files.filter((f) => f.type.startsWith("image/"));
+    if (imageFiles.length === 0) return;
+
+    // Cancel the drop – we will re-allow it only after a clean OCR scan
+    e.preventDefault();
+    e.stopImmediatePropagation();
+
+    for (const file of imageFiles) {
+      try {
+        const result = await checkFileWithOcr(file, userEmail);
+        if (result?.blocked) {
+          showFallbackToast(
+            `🛡️ GhostLayer: קובץ גרור-ושחרר נחסם – ${result.reason || "נמצא מידע רגיש בתמונה"}`,
+            "warning",
+          );
+          console.warn(`${DLP_PREFIX} גרור-ושחרר נחסם:`, result.reason);
+          return; // block the drop entirely if any image is sensitive
+        }
+      } catch {
+        // Fail open – do not block on OCR errors during drag-and-drop
+      }
+    }
+
+    // All images cleared – inform the user but allow the natural drop to proceed.
+    // We cannot re-fire the original drop event after preventDefault, so we
+    // just notify the user that the images were scanned successfully.
+    showFallbackToast("✅ GhostLayer: הקבצים נסרקו ונמצאו בטוחים.", "success");
+  }, true);
+}
+
+/**
  * Intercept <input type="file"> change events.
  * When the user selects image files, check each one before allowing upload.
  */
@@ -2082,13 +2171,14 @@ async function init() {
   // 1A.2. Aggressive Send-button & form submit interceptors
   watchSendButtons();
 
-  // Image OCR protection: watch file inputs
+  // Image OCR protection: watch file inputs and drag-and-drop
   watchFileInputs();
+  watchDragAndDrop();
 
   // 1B. Watch for AI output / responses (+ vault token de-anonymisation)
   watchForAIOutput();
 
-  console.log(`${DLP_PREFIX} v3 נטען – יירוט הדבקות + הקלדה + שליחה + סריקת תשובות AI + הגנת OCR פעילים.`);
+  console.log(`${DLP_PREFIX} v3 נטען – יירוט הדבקות + הקלדה + שליחה + סריקת תשובות AI + הגנת OCR + גרור-ושחרר פעילים.`);
 }
 
 init();

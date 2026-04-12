@@ -18,6 +18,8 @@
 
 import { program }           from "commander";
 import { resolve }           from "path";
+import { execSync }          from "child_process";
+import net                   from "net";
 import { scanDirectory }     from "./scanner.js";
 import {
   initNLP,
@@ -49,6 +51,116 @@ program
 
 const opts = program.opts();
 
+// ── Infrastructure helpers ────────────────────────────────────────────────────
+
+const PORT_CHECK_TIMEOUT_MS  = 30_000; // max time to wait for a service to be ready
+const PORT_CHECK_INTERVAL_MS =  2_000; // polling interval
+
+/** Returns true if the Docker daemon is reachable. */
+function isDockerRunning() {
+  try {
+    execSync("docker info", { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Probes a TCP port on 127.0.0.1. Resolves to true if the port is open. */
+function isPortOpen(port) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (open) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(open);
+    };
+    const socket = net.createConnection(port, "127.0.0.1");
+    socket.setTimeout(1000);
+    socket.on("connect", () => done(true));
+    socket.on("error",   () => done(false));
+    socket.on("timeout", () => done(false));
+  });
+}
+
+/**
+ * Polls a TCP port every PORT_CHECK_INTERVAL_MS until it is open or the
+ * timeout expires.  Throws if the service does not become ready in time.
+ */
+async function waitForPort(port, label) {
+  const start = Date.now();
+  while (Date.now() - start < PORT_CHECK_TIMEOUT_MS) {
+    if (await isPortOpen(port)) {
+      console.log(`   ✅ ${label} is ready on port ${port}.`);
+      return;
+    }
+    await new Promise((r) => setTimeout(r, PORT_CHECK_INTERVAL_MS));
+  }
+  throw new Error(`${label} did not become ready on port ${port} within ${PORT_CHECK_TIMEOUT_MS / 1000}s.`);
+}
+
+/**
+ * Ensures Docker is running and that the Redis and Qdrant containers are up.
+ * If a container is missing it is started automatically; the function then
+ * waits until the service is accepting connections before returning.
+ */
+async function ensureInfrastructure() {
+  console.log("🐳 Infrastructure Check…");
+
+  if (!isDockerRunning()) {
+    throw new Error("Docker is not running. Please start Docker Desktop (or the Docker daemon) and try again.");
+  }
+  console.log("   ✅ Docker is running.");
+
+  // ── Redis (port 6379) ────────────────────────────────────────────────────
+  if (await isPortOpen(6379)) {
+    console.log("   ✅ Redis is already running on port 6379.");
+  } else {
+    console.log("   🔄 Redis not detected on port 6379 – starting container…");
+    try {
+      execSync(
+        "docker run -d --name ghostlayer-redis --restart unless-stopped -p 6379:6379 redis",
+        { stdio: "ignore" }
+      );
+    } catch {
+      // Container may already exist but be stopped – attempt to restart it.
+      try {
+        execSync("docker start ghostlayer-redis", { stdio: "ignore" });
+      } catch (startErr) {
+        throw new Error(`Could not start Redis container: ${startErr.message}`);
+      }
+    }
+    console.log("   ⏳ Waiting for Redis to be ready…");
+    await waitForPort(6379, "Redis");
+  }
+
+  // ── Qdrant (port 6333) ───────────────────────────────────────────────────
+  if (await isPortOpen(6333)) {
+    console.log("   ✅ Qdrant is already running on port 6333.");
+  } else {
+    console.log("   🔄 Qdrant not detected on port 6333 – starting container…");
+    try {
+      execSync(
+        "docker run -d --name ghostlayer-qdrant --restart unless-stopped" +
+        " -p 6333:6333 -v ghostlayer-qdrant-data:/qdrant/storage qdrant/qdrant",
+        { stdio: "ignore" }
+      );
+    } catch {
+      // Container may already exist but be stopped – attempt to restart it.
+      try {
+        execSync("docker start ghostlayer-qdrant", { stdio: "ignore" });
+      } catch (startErr) {
+        throw new Error(`Could not start Qdrant container: ${startErr.message}`);
+      }
+    }
+    console.log("   ⏳ Waiting for Qdrant to be ready…");
+    await waitForPort(6333, "Qdrant");
+  }
+
+  console.log();
+}
+
 // ── Main flow ─────────────────────────────────────────────────────────────────
 
 async function run() {
@@ -65,6 +177,8 @@ async function run() {
   console.log("🛡  Detection pipeline : Bloom Filter → Redis Cache → Regex → AST → Intent → Deny-list → Vector → Fragments → UEBA");
   if (dryRun) console.log("⚠️  Dry-run mode: cloud sync and API server will be skipped.");
   console.log();
+
+  await ensureInfrastructure();
 
   if (dryRun) {
     // In dry-run mode, run the full sequential pipeline before exiting

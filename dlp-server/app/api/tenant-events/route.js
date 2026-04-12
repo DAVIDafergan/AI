@@ -71,6 +71,7 @@ export async function POST(request) {
     let resolvedEventType;
     let resolvedSeverity;
     let resolvedDetails;
+    let resolvedExpireAt;
 
     if (tenantApiKey) {
       // ── Auth path: validate tenantApiKey and resolve tenant ──────────────
@@ -92,6 +93,12 @@ export async function POST(request) {
         context:          eventContext      || {},
         source:           "local-agent",
       };
+
+      // Compute per-tenant expiry for GDPR/SOC2 data minimisation.
+      // Falls back to 30 days if retentionDays is not configured.
+      const retentionDays = tenant.settings?.retentionDays ?? 30;
+      const eventTs       = timestamp ? new Date(timestamp) : new Date();
+      resolvedExpireAt    = new Date(eventTs.getTime() + retentionDays * 24 * 60 * 60 * 1000);
     } else {
       // ── Auth path: require super-admin ───────────────────────────────────
       await requireSuperAdmin(request);
@@ -113,7 +120,8 @@ export async function POST(request) {
       details:   resolvedDetails,
       userEmail,
       ip,
-      ...(timestamp ? { timestamp: new Date(timestamp) } : {}),
+      ...(timestamp    ? { timestamp: new Date(timestamp) } : {}),
+      ...(resolvedExpireAt ? { expireAt: resolvedExpireAt }   : {}),
     });
 
     // Update tenant usage counters in a single operation

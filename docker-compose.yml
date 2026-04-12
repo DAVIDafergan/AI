@@ -20,6 +20,8 @@ services:
       DLP_ADMIN_SECRET: ${DLP_ADMIN_SECRET:-change-me-in-production}
       DLP_API_KEY: ${DLP_API_KEY:-dev-api-key-12345}
       DLP_VERBOSE: ${DLP_VERBOSE:-false}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
     depends_on:
       - mongo
       - redis

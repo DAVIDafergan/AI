@@ -4,6 +4,14 @@ import { connectMongo, Tenant, TenantEvent, hashApiKey } from "../../../lib/db.j
 
 export const dynamic = "force-dynamic";
 
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin":  "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, x-super-admin-key",
+};
+
 // GET /api/tenant-events – list events with filters + pagination (super-admin only)
 export async function GET(request) {
   try {
@@ -90,6 +98,12 @@ export async function POST(request) {
         context:          eventContext      || {},
         source:           "local-agent",
       };
+
+      // Compute per-tenant expiry for GDPR/SOC2 data minimisation.
+      // Falls back to 30 days if retentionDays is not configured.
+      const retentionDays = tenant.settings?.retentionDays ?? 30;
+      const eventTs       = timestamp ? new Date(timestamp) : new Date();
+      resolvedExpireAt    = new Date(eventTs.getTime() + retentionDays * MS_PER_DAY);
     } else {
       // ── Auth path: require super-admin ───────────────────────────────────
       await requireSuperAdmin(request);
@@ -114,7 +128,8 @@ export async function POST(request) {
       details:   resolvedDetails,
       userEmail,
       ip,
-      ...(timestamp ? { timestamp: new Date(timestamp) } : {}),
+      ...(timestamp      ? { timestamp: new Date(timestamp) } : {}),
+      ...(resolvedExpireAt ? { expireAt: resolvedExpireAt }   : {}),
     });
 
     // Update tenant usage counters in a single operation
@@ -158,6 +173,7 @@ export async function POST(request) {
     }
 
     return NextResponse.json({ event }, { status: 201 });
+    return NextResponse.json({ event }, { status: 201, headers: CORS_HEADERS });
   } catch (err) {
     return NextResponse.json({ error: err.message }, { status: err.status || 500 });
   }

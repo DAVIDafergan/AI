@@ -114,17 +114,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
     return true; // async
   }
-  // ── Proxy file upload OCR check (/api/check-file, multipart/form-data) ──────
-  // NOTE: Service workers cannot send FormData binary payloads via sendMessage.
-  // Content scripts that have direct fetch access will call /api/check-file
-  // themselves; this handler acts as a fallback notification path.
-  if (message.type === "CHECK_FILE") {
-    // The content script races a direct fetch against this message.
-    // Signal that the background received the message; the actual HTTP call
-    // is made by the content script because FormData binary blobs cannot be
-    // serialised through the Chrome message-passing channel.
-    sendResponse({ pending: true });
-  }
   // ── Proxy lookup for synthetic vault tokens ──
   if (message.type === "LOOKUP_SYNTHETIC") {
     const { syntheticValue, apiUrl } = message;

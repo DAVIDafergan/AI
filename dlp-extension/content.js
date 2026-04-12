@@ -1975,35 +1975,20 @@ async function handleImagePaste(event) {
  */
 async function checkFileWithOcr(file, email) {
   try {
-    const { localAgentUrl: agentUrl, tenantApiKey: apiKey } = await readSettings();
+    const { localAgentUrl: agentUrl } = await readSettings();
     const formData = new FormData();
     formData.append("file", file, file.name || "image.png");
     formData.append("userEmail", email || userEmail);
 
-    return await new Promise((resolve) => {
-      // Use background script to proxy the fetch (avoids CORS restrictions in content scripts)
-      chrome.runtime.sendMessage(
-        { type: "CHECK_FILE", agentUrl, apiKey, email: email || userEmail, fileName: file.name || "image.png" },
-        (response) => {
-          if (chrome.runtime.lastError || !response || response.error) {
-            resolve(null);
-          } else {
-            resolve(response);
-          }
-        }
-      );
-      // Independently start a direct fetch from the content script as fallback
-      // (Service workers cannot send FormData via sendMessage, so we fetch directly
-      //  and race against the background response).
-      fetch(`${agentUrl}/api/check-file`, {
-        method: "POST",
-        body:   formData,
-        signal: AbortSignal.timeout(30_000),
-      })
-        .then((r) => r.ok ? r.json() : null)
-        .then((data) => { if (data) resolve(data); })
-        .catch(() => resolve(null));
+    // Direct fetch from the content script (no background proxy needed since
+    // the local agent runs on the same machine, so no CORS headers are required).
+    const res = await fetch(`${agentUrl}/api/check-file`, {
+      method: "POST",
+      body:   formData,
+      signal: AbortSignal.timeout(30_000),
     });
+    if (!res.ok) return null;
+    return await res.json();
   } catch {
     return null;
   }
@@ -2047,10 +2032,10 @@ function watchDragAndDrop() {
       }
     }
 
-    // All images cleared – inform the user but allow the natural drop to proceed.
-    // We cannot re-fire the original drop event after preventDefault, so we
-    // just notify the user that the images were scanned successfully.
-    showFallbackToast("✅ GhostLayer: הקבצים נסרקו ונמצאו בטוחים.", "success");
+    // All images cleared – inform the user that they must drop the files again.
+    // Re-firing a prevented drop event is not possible in browsers; the user
+    // performs the drop a second time, which then proceeds unimpeded.
+    showFallbackToast("✅ GhostLayer: הקבצים נסרקו ונמצאו בטוחים. אנא גרור ושחרר שנית להמשך.", "success");
   }, true);
 }
 

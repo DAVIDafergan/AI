@@ -45,7 +45,7 @@ const KEY_LEN         = 32; // bytes (256-bit)
 const INITIAL_DELAY_MS  = 1_000;   // 1 second
 const MAX_DELAY_MS       = 300_000; // 5 minutes
 const BACKOFF_FACTOR     = 2;
-const MAX_ATTEMPTS       = 20;      // drop event after 20 consecutive failures (~48 h at max backoff)
+const MAX_ATTEMPTS       = 20;      // drop event after 20 consecutive failures (~1 h total with exponential back-off)
 const FLUSH_BATCH_SIZE   = 50;      // events per flush cycle
 
 // ── Module-level state ────────────────────────────────────────────────────────
@@ -70,13 +70,22 @@ let _stmtPruneExpired = null;
  * Derive a 256-bit AES key from the tenant API key and the machine hostname.
  * Uses PBKDF2-SHA256 with a fixed public salt.  Running on the same machine
  * with the same API key always yields the same key, so the DB is portable
- * only to hosts that know the key material.
+ * only to hosts that share both the API key and the hostname.
+ *
+ * When no API key is provided (edge case during initial setup), we fall back
+ * to a hostname-only secret so data always remains machine-specific even
+ * without a configured key.
  *
  * @param {string} tenantApiKey
  * @returns {Buffer}
  */
 function deriveKey(tenantApiKey) {
-  const secret = `${tenantApiKey || "anonymous"}:${hostname()}`;
+  // Use a non-empty secret regardless of API key presence so encrypted data
+  // cannot be trivially decrypted by guessing an empty passphrase.
+  const keyMaterial = tenantApiKey && tenantApiKey.length > 0
+    ? tenantApiKey
+    : `no-key-${hostname()}`;
+  const secret = `${keyMaterial}:${hostname()}`;
   return pbkdf2Sync(secret, PBKDF2_SALT, PBKDF2_ITER, KEY_LEN, "sha256");
 }
 

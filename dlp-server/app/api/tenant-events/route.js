@@ -154,8 +154,10 @@ export async function POST(request) {
         headers: { "Content-Type": "application/json" },
         body:    siemPayload,
         signal:  AbortSignal.timeout(10000),
-      }).catch(() => {
-        // SIEM webhook failures are silently ignored to avoid disrupting the API
+      }).catch((err) => {
+        // SIEM webhook failures are non-critical and must not disrupt the API,
+        // but log a warning so operators can diagnose integration issues.
+        console.warn(`[SIEM] Webhook delivery failed (${resolvedWebhookUrl}):`, err?.message || err);
       });
     }
 

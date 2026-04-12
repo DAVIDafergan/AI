@@ -101,8 +101,17 @@ async function run() {
   process.on("SIGINT",  () => { server.close(); process.exit(0); });
   process.on("SIGTERM", () => { server.close(); process.exit(0); });
 
+  // Start periodic telemetry immediately with live counters so every tick
+  // reflects actual scan/block activity from the already-running API server.
+  startPeriodicTelemetry({
+    apiKey:    opts.apiKey,
+    serverUrl: opts.serverUrl,
+    getMetrics: () => ({ totalScans, totalBlocks }),
+    verbose,
+  });
+
   // Run the indexing pipeline asynchronously so it doesn't block the server
-  runIndexingPipeline({ targetDir, verbose, opts, dryRun, server, getTotals: () => ({ totalScans, totalBlocks }) })
+  runIndexingPipeline({ targetDir, verbose, opts, dryRun })
     .catch((err) => {
       console.error("💥 Background indexing error:", err.message);
       if (verbose) console.error(err.stack);
@@ -257,13 +266,6 @@ async function runIndexingPipeline({ targetDir, verbose, opts, dryRun }) {
   } catch (err) {
     console.error(`   ❌ Network error while sending telemetry: ${err.message}`);
   }
-
-  startPeriodicTelemetry({
-    apiKey:    opts.apiKey,
-    serverUrl: opts.serverUrl,
-    getMetrics: () => ({ totalScans: files.length, totalBlocks: 0 }),
-    verbose,
-  });
 
   console.log();
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");

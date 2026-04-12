@@ -4,9 +4,15 @@
  * CRITICAL: Only aggregate metadata counts and event metadata are transmitted.
  *           Sensitive content, entity names, file paths, embeddings, or any
  *           file content NEVER leave this machine.
+ *
+ * Offline resilience: When the Central Server is unreachable, TenantEvent
+ * payloads are handed off to the offline spooler (offline-spooler.js) which
+ * persists them in an encrypted local SQLite database and retries delivery
+ * with exponential backoff once connectivity is restored.
  */
 
 // Use the built-in fetch available in Node ≥ 18.
+import { enqueue } from "./offline-spooler.js";
 
 const DEFAULT_SERVER_URL = "https://ghostlayer.up.railway.app";
 
@@ -119,13 +125,19 @@ export async function sendTenantEvent({
   };
 
   try {
-    await fetch(url, {
+    const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(8_000),
     });
+    // On delivery success nothing more to do.
+    if (res.ok) return;
+    // Non-2xx response (server error, rate-limit, etc.) – spool for retry.
+    enqueue(payload);
   } catch {
-    // Network errors are non-critical – do not block local operation
+    // Network error (offline, DNS failure, timeout) – spool for retry.
+    enqueue(payload);
   }
 }
 

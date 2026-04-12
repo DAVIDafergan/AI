@@ -1995,6 +1995,80 @@ async function handleImagePaste(event) {
 }
 
 /**
+ * Send an image file (as raw binary) to the local agent's /api/check-file
+ * endpoint using multipart/form-data.
+ * Returns the API response or null on network error.
+ * @param {File|Blob} file
+ * @param {string}    email
+ * @returns {Promise<object|null>}
+ */
+async function checkFileWithOcr(file, email) {
+  try {
+    const { localAgentUrl: agentUrl } = await readSettings();
+    const formData = new FormData();
+    formData.append("file", file, file.name || "image.png");
+    formData.append("userEmail", email || userEmail);
+
+    // Direct fetch from the content script (no background proxy needed since
+    // the local agent runs on the same machine, so no CORS headers are required).
+    const res = await fetch(`${agentUrl}/api/check-file`, {
+      method: "POST",
+      body:   formData,
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Intercept drag-and-drop of image files onto the page.
+ * Checks every dropped image through OCR before allowing it to be processed.
+ */
+function watchDragAndDrop() {
+  // dragover must be captured to allow drop event to fire
+  document.addEventListener("dragover", (e) => {
+    // Only intercept if dragged items contain files
+    if (e.dataTransfer?.types?.includes("Files")) {
+      e.preventDefault();
+    }
+  }, true);
+
+  document.addEventListener("drop", async (e) => {
+    const files = Array.from(e.dataTransfer?.files || []);
+    const imageFiles = files.filter((f) => f.type.startsWith("image/"));
+    if (imageFiles.length === 0) return;
+
+    // Cancel the drop – we will re-allow it only after a clean OCR scan
+    e.preventDefault();
+    e.stopImmediatePropagation();
+
+    for (const file of imageFiles) {
+      try {
+        const result = await checkFileWithOcr(file, userEmail);
+        if (result?.blocked) {
+          showFallbackToast(
+            `🛡️ GhostLayer: קובץ גרור-ושחרר נחסם – ${result.reason || "נמצא מידע רגיש בתמונה"}`,
+            "warning",
+          );
+          console.warn(`${DLP_PREFIX} גרור-ושחרר נחסם:`, result.reason);
+          return; // block the drop entirely if any image is sensitive
+        }
+      } catch {
+        // Fail open – do not block on OCR errors during drag-and-drop
+      }
+    }
+
+    // All images cleared – inform the user that they must drop the files again.
+    // Re-firing a prevented drop event is not possible in browsers; the user
+    // performs the drop a second time, which then proceeds unimpeded.
+    showFallbackToast("✅ GhostLayer: הקבצים נסרקו ונמצאו בטוחים. אנא גרור ושחרר שנית להמשך.", "success");
+  }, true);
+}
+
+/**
  * Intercept <input type="file"> change events.
  * When the user selects image files, check each one before allowing upload.
  */
@@ -2111,13 +2185,14 @@ async function init() {
   // 1A.2. Aggressive Send-button & form submit interceptors
   watchSendButtons();
 
-  // Image OCR protection: watch file inputs
+  // Image OCR protection: watch file inputs and drag-and-drop
   watchFileInputs();
+  watchDragAndDrop();
 
   // 1B. Watch for AI output / responses (+ vault token de-anonymisation)
   watchForAIOutput();
 
-  console.log(`${DLP_PREFIX} v3 נטען – יירוט הדבקות + הקלדה + שליחה + סריקת תשובות AI + הגנת OCR פעילים.`);
+  console.log(`${DLP_PREFIX} v3 נטען – יירוט הדבקות + הקלדה + שליחה + סריקת תשובות AI + הגנת OCR + גרור-ושחרר פעילים.`);
 }
 
 init();

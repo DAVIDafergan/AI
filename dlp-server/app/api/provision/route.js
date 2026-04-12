@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireSuperAdmin } from "../../../lib/superAdminAuth.js";
 import { connectMongo, Tenant, Agent } from "../../../lib/db.js";
+import { recordAuditLog, getClientIp } from "../../../lib/auditLog.js";
 import { randomUUID } from "crypto";
 
 export const dynamic = "force-dynamic";
@@ -44,6 +45,15 @@ export async function POST(request) {
       `  -e DLP_ENVIRONMENT=${environment} \\`,
       "  ghostlayer/agent:latest",
     ].join("\n");
+
+    await recordAuditLog({
+      tenantId:  tenantId,
+      actorId:   "super_admin",
+      action:    "PROVISION_AGENT",
+      resource:  `agent:${agent._id}`,
+      ipAddress: getClientIp(request),
+      metadata:  { agentName: name, environment },
+    });
 
     return NextResponse.json({
       agent,

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireSuperAdmin } from "../../../lib/superAdminAuth.js";
 import { connectMongo, Tenant, Agent, hashApiKey } from "../../../lib/db.js";
+import { recordAuditLog, getClientIp } from "../../../lib/auditLog.js";
 import { randomUUID } from "crypto";
 
 export const dynamic = "force-dynamic";
@@ -75,8 +76,17 @@ export async function POST(request) {
       domain,
     });
 
+    await recordAuditLog({
+      tenantId:  tenant._id,
+      actorId:   "super_admin",
+      action:    "CREATE_TENANT",
+      resource:  `tenant:${tenant._id}`,
+      ipAddress: getClientIp(request),
+      metadata:  { name, plan: plan || "starter" },
+    });
+
     // Return the raw API key only once – the caller must store it securely.
-    // The database stores only its SHA-256 hash; the raw key cannot be recovered.
+    // The database stores only its HMAC-SHA256 keyed hash; the raw key cannot be recovered.
     return NextResponse.json({
       tenant,
       credentials: { apiKey: rawApiKey, apiSecret },

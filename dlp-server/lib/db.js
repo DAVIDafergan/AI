@@ -194,6 +194,67 @@ const ApiKeySchema = new mongoose.Schema(
 export const VaultMapping = mongoose.models.VaultMapping || mongoose.model("VaultMapping", VaultMappingSchema);
 export const ApiKey = mongoose.models.ApiKey || mongoose.model("ApiKey", ApiKeySchema);
 
+// ── TenantUser Schema (RBAC / SSO identity) ──
+const TenantUserSchema = new mongoose.Schema(
+  {
+    tenantId:    { type: mongoose.Schema.Types.ObjectId, ref: "Tenant", required: true, index: true },
+    email:       { type: String, required: true },
+    role:        {
+      type: String,
+      enum: ["tenant_admin", "security_analyst", "auditor"],
+      default: "auditor",
+      required: true,
+    },
+    // Subject identifier from the SSO identity provider (OIDC `sub` claim)
+    ssoSubjectId: { type: String, index: true },
+  },
+  { timestamps: true }
+);
+TenantUserSchema.index({ tenantId: 1, email: 1 }, { unique: true });
+
+export const TenantUser = mongoose.models.TenantUser || mongoose.model("TenantUser", TenantUserSchema);
+
+// ── AuditLog Schema (immutable "black box") ──
+const AuditLogSchema = new mongoose.Schema(
+  {
+    tenantId:  { type: mongoose.Schema.Types.ObjectId, ref: "Tenant", required: true, index: true },
+    actorId:   { type: String, required: true },          // email of the acting user
+    action:    {
+      type: String,
+      enum: [
+        "GENERATE_API_KEY",
+        "VIEW_API_KEY",
+        "ROTATE_API_KEY",
+        "CHANGE_POLICY",
+        "CREATE_POLICY",
+        "DELETE_POLICY",
+        "CREATE_TENANT",
+        "UPDATE_TENANT",
+        "DELETE_TENANT",
+        "PROVISION_AGENT",
+        "LOGIN",
+      ],
+      required: true,
+    },
+    resource:  { type: String, required: true },          // e.g. "tenant:<id>" or "policy:<id>"
+    ipAddress: { type: String },
+    timestamp: { type: Date, default: Date.now, index: true },
+    metadata:  { type: mongoose.Schema.Types.Mixed },     // optional extra context
+  }
+);
+
+// Prevent modification after creation via pre-save hook
+AuditLogSchema.pre("save", function (next) {
+  if (!this.isNew) {
+    return next(new Error("AuditLog records are immutable and cannot be modified."));
+  }
+  next();
+});
+
+AuditLogSchema.index({ tenantId: 1, timestamp: -1 });
+
+export const AuditLog = mongoose.models.AuditLog || mongoose.model("AuditLog", AuditLogSchema);
+
 // ── In-memory stores for non-migrated data ──
 const alerts = new Map();        // alertId → alertData
 const users = new Map();         // email → userStatsObject

@@ -16,6 +16,7 @@
     "lucide-react": "^0.400.0",
     "mongoose": "^9.3.3",
     "next": "^14.2.0",
+    "next-auth": "^4.24.13",
     "node-notifier": "^10.0.1",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",

@@ -203,8 +203,13 @@ export async function querySimilarity(queryText, opts = {}) {
       with_payload:    true,
     });
   } catch (err) {
-    // Qdrant unavailable (e.g. collection empty or service down) – return no matches.
-    if (err.message?.includes("Not found")) return [];
+    // Qdrant may throw a 404-style error when the collection has never been
+    // populated (e.g. agent started without running ingestDocuments first).
+    // Treat that as "no matches" rather than a hard failure.
+    const status = err?.status ?? err?.response?.status;
+    if (status === 404 || err?.message?.toLowerCase().includes("not found")) {
+      return [];
+    }
     throw err;
   }
 

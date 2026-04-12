@@ -4,6 +4,8 @@ import { connectMongo, Tenant, TenantEvent } from "../../../lib/db.js";
 
 export const dynamic = "force-dynamic";
 
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin":  "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
@@ -38,7 +40,7 @@ export async function POST(request) {
 
     for (const tenant of tenants) {
       const retentionDays = tenant.settings?.retentionDays ?? 30;
-      const cutoff        = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+      const cutoff        = new Date(Date.now() - retentionDays * MS_PER_DAY);
 
       const result = await TenantEvent.deleteMany({
         tenantId:  tenant._id,

@@ -3,6 +3,9 @@ import { requireSuperAdmin } from "../../../lib/superAdminAuth.js";
 import { connectMongo, Tenant, TenantEvent } from "../../../lib/db.js";
 
 export const dynamic = "force-dynamic";
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin":  "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -98,7 +101,7 @@ export async function POST(request) {
       // Falls back to 30 days if retentionDays is not configured.
       const retentionDays = tenant.settings?.retentionDays ?? 30;
       const eventTs       = timestamp ? new Date(timestamp) : new Date();
-      resolvedExpireAt    = new Date(eventTs.getTime() + retentionDays * 24 * 60 * 60 * 1000);
+      resolvedExpireAt    = new Date(eventTs.getTime() + retentionDays * MS_PER_DAY);
     } else {
       // ── Auth path: require super-admin ───────────────────────────────────
       await requireSuperAdmin(request);

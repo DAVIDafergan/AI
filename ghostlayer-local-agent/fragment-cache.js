@@ -67,10 +67,10 @@ function pruneFragments(frags, add) {
   }
 
   // Enforce byte budget
-  let totalBytes = updated.reduce((acc, f) => acc + f.text.length, 0);
+  let totalBytes = updated.reduce((acc, f) => acc + (f?.text?.length || 0), 0);
   while (totalBytes > MAX_CACHE_BYTES && updated.length > 1) {
     const removed = updated.shift();
-    totalBytes -= removed.text.length;
+    totalBytes -= removed?.text?.length || 0;
     changed = true;
   }
 

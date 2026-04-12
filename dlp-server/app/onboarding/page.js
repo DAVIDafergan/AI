@@ -2,7 +2,7 @@
 
 // דף Onboarding ציבורי – ללא צורך באימות
 import { useState } from "react";
-import { Key, Copy, Check, ChevronRight, Building2, Globe, Terminal, Code2, Bot } from "lucide-react";
+import { Key, Copy, Check, ChevronRight, Building2, Globe, Terminal, Code2, Bot, Shield } from "lucide-react";
 import GhostLogo from "../../components/GhostLogo";
 
 // כפתור העתקה

@@ -141,7 +141,7 @@ async function run() {
   const embedMs = Date.now() - startEmbed;
 
   console.log(`   ✅ ${files.length} document(s) embedded in ${(embedMs / 1000).toFixed(1)}s`);
-  console.log(`      Vector index saved to .ghostlayer_vectors.json (never uploaded)`);
+  console.log(`      Vector index stored in Qdrant (local instance – never uploaded)`);
   console.log();
 
   // ── Step 4/5: AI-Powered Sensitivity Analysis ──────────────────────────────
@@ -195,7 +195,7 @@ function printDryRunSummary(files, scanResults) {
   console.log(`  🟡  Sensitive files         : ${scanResults.sensitiveFiles}`);
   console.log(`  📈  Avg sensitivity score   : ${scanResults.averageSensitivityScore}/100`);
   console.log(`  🧠  Brain file              : .ghostlayer_brain.json`);
-  console.log(`  🔢  Vector index            : .ghostlayer_vectors.json`);
+  console.log(`  🔢  Vector index            : Qdrant (ghostlayer_documents collection)`);
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 }
 

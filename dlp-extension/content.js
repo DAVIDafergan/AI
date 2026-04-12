@@ -653,18 +653,13 @@ async function handlePaste(event) {
         const elapsed = (performance.now() - t0Paste).toFixed(2);
         console.log(`[GhostLayer] Tier 1 exact bypass: masked ${replacements.length} item(s) in ${elapsed}ms – API skipped`);
 
-        if (replacements.length > 0) {
-          const overlayParts = buildOverlayDOM(replacements, maskedText);
-          document.body.appendChild(overlayParts.backdrop);
-          await runMorphAnimation(overlayParts);
-          insertTextIntoField(target, maskedText);
-          console.log(`${DLP_PREFIX} ✅ Tier 1 הודבק טקסט סינתטי (${replacements.length} החלפות)`);
-          await sleep(TIMING.closeDelay);
-          await closeOverlay(overlayParts);
-        } else {
-          insertTextIntoField(target, maskedText);
-          showFallbackToast(`🛡️ Tier 1: ${preflight.tier1Matches.length} פריטים מוסווים (מקומי)`, "warning");
-        }
+        const overlayParts = buildOverlayDOM(replacements, maskedText);
+        document.body.appendChild(overlayParts.backdrop);
+        await runMorphAnimation(overlayParts);
+        insertTextIntoField(target, maskedText);
+        console.log(`${DLP_PREFIX} ✅ Tier 1 הודבק טקסט סינתטי (${replacements.length} החלפות)`);
+        await sleep(TIMING.closeDelay);
+        await closeOverlay(overlayParts);
         return;
       }
     }
@@ -1267,8 +1262,8 @@ function watchSendButtons() {
 
 // Synthetic data patterns to detect in AI output
 const SYNTHETIC_PATTERNS = [
-  /05\d[-\s]\d{7}/g,                            // Israeli mobile (synthetic format) – accept dash or space
-  /0[2-9][-\s]\d{7}/g,                          // Landline (synthetic format) – accept dash or space
+  /05\d[-\s]?\d{7}/g,                           // Israeli mobile (synthetic format) – optional dash or space
+  /0[2-9][-\s]?\d{7}/g,                         // Landline (synthetic format) – optional dash or space
   /\b3\d{8}\b/g,                                // ID (starts with 3, 9 digits)
   /user_\d{3}@[a-z]+\.[a-z]{2,}/g,             // Synthetic email
   /4\d{3}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}/g,    // Credit card (Visa synthetic)

@@ -62,6 +62,9 @@ function israeliIdCheck(value) {
 }
 
 // ── Regex patterns mirrored from api-server.js ──────────────────────────────
+// Each entry stores both a non-global test regex and a pre-compiled global
+// version used for match extraction, avoiding repeated RegExp construction
+// inside the hot preflightScan path.
 const PREFLIGHT_PATTERNS = [
   { type: "EMAIL",       re: /\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b/ },
   { type: "PHONE",       re: /(?:\+?\d{1,3}[\s\-.]?)?\(?\d{2,4}\)?[\s\-.]?\d{3,4}[\s\-.]?\d{4}\b/ },
@@ -69,7 +72,12 @@ const PREFLIGHT_PATTERNS = [
   { type: "ID_NUMBER",   re: /\b\d{9}\b/ },
   { type: "CREDENTIALS", re: /\b(password|secret|token|api[_\-]?key|credentials)\s*[:=]/i },
   { type: "ACCOUNT",     re: /\b\d{2,4}[-\s]\d{3,4}[-\s]\d{4,10}\b/ },
-];
+].map((p) => ({
+  type: p.type,
+  re:   p.re,
+  // Pre-compiled global copy – reset lastIndex before each use
+  reG:  new RegExp(p.re.source, p.re.flags.includes("g") ? p.re.flags : p.re.flags + "g"),
+}));
 
 // ── Evasion detection helpers (mirrored from evasion-detector.js) ─────────────
 // These are intentionally self-contained (no imports in a Web Worker context).
@@ -199,12 +207,12 @@ function preflightScan(text) {
   const matchedTypes  = [];
   const tier1Matches  = [];   // checksum-validated exact hits
 
-  for (const { type, re } of PREFLIGHT_PATTERNS) {
-    // Use exec loop to capture actual matched values for checksum types
-    const gRe = new RegExp(re.source, re.flags.includes("g") ? re.flags : re.flags + "g");
+  for (const { type, reG } of PREFLIGHT_PATTERNS) {
+    // Use the pre-compiled global regex; always reset lastIndex before each scan
+    reG.lastIndex = 0;
     let m;
     let typeMatched = false;
-    while ((m = gRe.exec(normalized)) !== null) {
+    while ((m = reG.exec(normalized)) !== null) {
       typeMatched = true;
       const raw = m[0];
 

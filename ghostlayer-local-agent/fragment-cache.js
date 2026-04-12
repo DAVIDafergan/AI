@@ -63,12 +63,31 @@ async function getUebaRedis() {
 const _memVolumeHistory = new Map();
 
 /**
+ * Fetch the existing volume history for `userKey` without modifying it.
+ *
+ * @param {string} userKey
+ * @returns {Promise<number[]>}  History (oldest first), up to UEBA_HISTORY_MAX entries.
+ */
+async function fetchVolumeHistory(userKey) {
+  try {
+    const redis = await getUebaRedis();
+    if (redis && redis.status === "ready") {
+      const raw = await redis.lrange(UEBA_REDIS_KEY(userKey), 0, -1);
+      return raw.map(Number);
+    }
+  } catch (err) {
+    console.error("[ueba] Redis read failed, using in-memory fallback:", err.message);
+  }
+  return [...(_memVolumeHistory.get(userKey) || [])];
+}
+
+/**
  * Append a volume sample for `userKey` to the history store (Redis or memory).
  * Trims the list to UEBA_HISTORY_MAX entries.
  *
  * @param {string} userKey
  * @param {number} volume  Character count of the current sensitive payload.
- * @returns {Promise<number[]>}  Full history (newest last), up to UEBA_HISTORY_MAX.
+ * @returns {Promise<void>}
  */
 async function appendVolumeHistory(userKey, volume) {
   try {
@@ -77,8 +96,7 @@ async function appendVolumeHistory(userKey, volume) {
       const key = UEBA_REDIS_KEY(userKey);
       await redis.rpush(key, volume);
       await redis.ltrim(key, -UEBA_HISTORY_MAX, -1);
-      const raw = await redis.lrange(key, 0, -1);
-      return raw.map(Number);
+      return;
     }
   } catch (err) {
     console.error("[ueba] Redis write failed, using in-memory fallback:", err.message);
@@ -89,7 +107,6 @@ async function appendVolumeHistory(userKey, volume) {
   history.push(volume);
   if (history.length > UEBA_HISTORY_MAX) history.splice(0, history.length - UEBA_HISTORY_MAX);
   _memVolumeHistory.set(userKey, history);
-  return [...history];
 }
 
 // ── Statistical helpers ───────────────────────────────────────────────────────
@@ -368,18 +385,18 @@ export async function updateUserProfile(userEmail, text, evasionTechniques = [])
   }
 
   // ── Statistical Anomaly Detection (Z-score / 3σ) ─────────────────────────
-  // Fetch historical volume baseline BEFORE recording this sample so the current
-  // event is not included in the reference distribution.
-  const volumeHistoryBeforeThisEvent = await appendVolumeHistory(key, text.length)
-    .then((history) => history.slice(0, -1))  // exclude the just-appended value
-    .catch(() => []);
+  // Fetch the historical volume baseline BEFORE recording this sample so the
+  // current event is not included in the reference distribution.
+  const volumeHistory = await fetchVolumeHistory(key).catch(() => []);
+  const zScore = computeZScore(text.length, volumeHistory);
 
-  const zScore = computeZScore(text.length, volumeHistoryBeforeThisEvent);
+  // Record the new sample so it becomes part of the next event's baseline.
+  await appendVolumeHistory(key, text.length).catch(() => {});
 
   // Flag as Critical if the current volume is > 3 standard deviations above
   // the user's personal baseline.  We require at least 10 historical samples
   // before the rule fires to avoid false-positives during the warm-up period.
-  if (volumeHistoryBeforeThisEvent.length >= 10 && zScore > 3) {
+  if (volumeHistory.length >= 10 && zScore > 3) {
     anomalyFlags.push("STATISTICAL_ANOMALY_3SIGMA");
   }
 

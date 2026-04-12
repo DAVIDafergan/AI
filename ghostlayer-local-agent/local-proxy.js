@@ -51,11 +51,11 @@ import { URL }      from "url";
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
-const PROXY_PORT      = parseInt(process.env.PROXY_PORT  || "8877",                    10);
-const PROXY_BIND      = process.env.PROXY_BIND            || "127.0.0.1";
-const AGENT_URL       = process.env.AGENT_URL             || "http://127.0.0.1:3001";
-const FAIL_OPEN       = (process.env.PROXY_FAIL_OPEN      || "true") === "true";
-const LOG_LEVEL       = process.env.PROXY_LOG_LEVEL       || "info";
+const PROXY_PORT      = parseInt(process.env.PROXY_PORT || "8877", 10);
+const PROXY_BIND      = process.env.PROXY_BIND       || "127.0.0.1";
+const AGENT_URL       = process.env.AGENT_URL        || "http://127.0.0.1:3001";
+const FAIL_OPEN       = (process.env.PROXY_FAIL_OPEN || "true") === "true";
+const LOG_LEVEL       = process.env.PROXY_LOG_LEVEL  || "info";
 
 /**
  * Hostnames that are recognised as LLM / AI API endpoints.
@@ -228,7 +228,7 @@ function handleHttpRequest(clientReq, clientRes) {
     const upstreamOptions = {
       hostname: host,
       port:     target.port || 80,
-      path:     target.pathname + (target.search || ""),
+      path:     target.pathname + target.search,
       method:   clientReq.method,
       headers:  { ...clientReq.headers, host },
     };

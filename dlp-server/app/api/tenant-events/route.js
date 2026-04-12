@@ -74,6 +74,7 @@ export async function POST(request) {
     let resolvedEventType;
     let resolvedSeverity;
     let resolvedDetails;
+    let resolvedWebhookUrl;
     let resolvedExpireAt;
 
     if (tenantApiKey) {
@@ -82,7 +83,8 @@ export async function POST(request) {
       if (!tenant) {
         return NextResponse.json({ error: "Invalid tenantApiKey" }, { status: 401, headers: CORS_HEADERS });
       }
-      resolvedTenantId  = tenant._id;
+      resolvedTenantId   = tenant._id;
+      resolvedWebhookUrl = tenant.settings?.webhookUrl || null;
 
       // Map agent action → TenantEvent schema
       resolvedEventType = action === "BLOCKED" || action === "BEHAVIOR_BLOCK" ? "block" : "scan";
@@ -112,6 +114,9 @@ export async function POST(request) {
       resolvedEventType = bodyEventType;
       resolvedSeverity  = bodySeverity;
       resolvedDetails   = details;
+      // Look up the webhookUrl for super-admin-created events too
+      const tenantForWebhook = await Tenant.findById(bodyTenantId).select("settings.webhookUrl").lean();
+      resolvedWebhookUrl = tenantForWebhook?.settings?.webhookUrl || null;
     }
 
     const event = await TenantEvent.create({
@@ -123,7 +128,7 @@ export async function POST(request) {
       details:   resolvedDetails,
       userEmail,
       ip,
-      ...(timestamp    ? { timestamp: new Date(timestamp) } : {}),
+      ...(timestamp      ? { timestamp: new Date(timestamp) } : {}),
       ...(resolvedExpireAt ? { expireAt: resolvedExpireAt }   : {}),
     });
 
@@ -137,6 +142,35 @@ export async function POST(request) {
       $inc: usageIncrement,
       $set: { "usage.lastActivity": new Date() },
     });
+
+    // ── SIEM Webhook Forwarding ───────────────────────────────────────────────
+    // Fire-and-forget: POST the event to the tenant's SIEM webhook (e.g. Splunk
+    // HEC or Microsoft Sentinel). Failures are silently ignored so a broken SIEM
+    // endpoint never disrupts the inbound event pipeline.
+    if (resolvedWebhookUrl) {
+      const siemPayload = JSON.stringify({
+        source:    "ghostlayer-dlp",
+        tenantId:  resolvedTenantId,
+        eventId:   event._id,
+        eventType: resolvedEventType,
+        severity:  resolvedSeverity,
+        category,
+        details:   resolvedDetails,
+        userEmail,
+        ip,
+        timestamp: event.timestamp,
+      });
+      fetch(resolvedWebhookUrl, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    siemPayload,
+        signal:  AbortSignal.timeout(10000),
+      }).catch((err) => {
+        // SIEM webhook failures are non-critical and must not disrupt the API,
+        // but log a warning so operators can diagnose integration issues.
+        console.warn(`[SIEM] Webhook delivery failed (${resolvedWebhookUrl}):`, err?.message || err);
+      });
+    }
 
     return NextResponse.json({ event }, { status: 201, headers: CORS_HEADERS });
   } catch (err) {

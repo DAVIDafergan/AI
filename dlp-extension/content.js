@@ -261,6 +261,7 @@ function readSettings() {
     const buildResult = (managed, local) => {
       // Managed values (IT policy) override user-set local values
       const apiKey   = managed?.tenantApiKey  || local.tenantApiKey  || "";
+      // localAgentUrl is the explicit per-device runtime endpoint and should override popup serverUrl.
       const finalUrl = managed?.localAgentUrl || local.localAgentUrl || local.serverUrl || DEFAULT_LOCAL_AGENT_URL;
       resolve({
         localAgentUrl: finalUrl,

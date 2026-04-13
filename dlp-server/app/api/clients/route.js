@@ -37,10 +37,16 @@ export async function POST(request) {
     });
 
     // בניית הוראות חיבור מפורטות
+    let requestOrigin = "http://localhost:3000";
+    try {
+      requestOrigin = new URL(request.url).origin;
+    } catch {
+      // keep localhost fallback for malformed request URLs
+    }
     const serverUrl =
       process.env.DLP_SERVER_URL ||
       process.env.NEXT_PUBLIC_SERVER_URL ||
-      new URL(request.url).origin;
+      requestOrigin;
     const instructions = buildConnectionInstructions(serverUrl, org.apiKey);
 
     return NextResponse.json(

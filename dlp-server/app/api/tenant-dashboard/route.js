@@ -127,7 +127,7 @@ export async function GET(request) {
     // בנה פקודת התקנת סוכן שרת (אם יש סוכן ראשון)
     const primaryAgent = enrichedAgents[0] || null;
     const deploymentConfig = primaryAgent
-      ? buildDeploymentConfig(serverUrl, tenant.apiKey, primaryAgent.agentKey)
+      ? buildDeploymentConfig(serverUrl, tenant.apiKey)
       : null;
 
     return NextResponse.json(
@@ -170,21 +170,23 @@ function sanitizeForShell(value) {
   return String(value).replace(/[^a-zA-Z0-9_\-:.\/]/g, "");
 }
 
-function buildDeploymentConfig(serverUrl, apiKey, agentKey) {
+function buildDeploymentConfig(serverUrl, apiKey) {
   const safeServer = sanitizeForShell(serverUrl);
   const safeApiKey = sanitizeForShell(apiKey);
-  const safeAgentKey = sanitizeForShell(agentKey);
 
-  const serverCommand = `npx ghostlayer-agent \\\n  --server-url=${safeServer} \\\n  --api-key=${safeApiKey} \\\n  --agent-key=${safeAgentKey} \\\n  --dir=/company/docs \\\n  --verbose`;
+  const serverCommand = [
+    "cd ghostlayer-local-agent || exit 1; npm install && node index.js \\",
+    `  --api-key=${safeApiKey} \\`,
+    `  --server-url=${safeServer} \\`,
+    "  --dir=/company/docs \\",
+    "  --local-port=4000 \\",
+    "  --verbose",
+  ].join("\n");
 
   const dockerCommand = [
-    "docker run -d \\",
-    "  --name ghostlayer-agent \\",
-    `  -e DLP_SERVER_URL=${safeServer} \\`,
-    `  -e DLP_TENANT_API_KEY=${safeApiKey} \\`,
-    `  -e DLP_AGENT_KEY=${safeAgentKey} \\`,
-    "  -e DLP_ENVIRONMENT=production \\",
-    "  ghostlayer/agent:latest",
+    "cd ghostlayer-local-agent || exit 1; cp -n .env.template .env && \\",
+    `printf "API_KEY=${safeApiKey}\\nSERVER_URL=${safeServer}\\nLOCAL_PORT=4000\\nVERBOSE=true\\n" > .env && \\`,
+    "mkdir -p corporate_data && docker compose up -d --build",
   ].join("\n");
 
   const windowsShield = `# Windows (PowerShell / Intune)\n$GL_KEY = "${safeApiKey}"\n$GL_SERVER = "${safeServer}"\nInvoke-WebRequest -Uri "$GL_SERVER/downloads/GhostLayerShield.exe" -OutFile "$env:TEMP\\GhostLayerShield.exe"\nStart-Process "$env:TEMP\\GhostLayerShield.exe" -ArgumentList "/S /KEY=$GL_KEY /SERVER=$GL_SERVER" -Wait`;
@@ -192,10 +194,11 @@ function buildDeploymentConfig(serverUrl, apiKey, agentKey) {
   const macShield = `# macOS (Jamf / Terminal)\nexport GL_KEY="${safeApiKey}"\nexport GL_SERVER="${safeServer}"\ncurl -fsSL "$GL_SERVER/downloads/GhostLayerShield.dmg" -o /tmp/GhostLayerShield.dmg\nhdiutil attach /tmp/GhostLayerShield.dmg -nobrowse -quiet\nsudo installer -pkg /Volumes/GhostLayerShield/GhostLayerShield.pkg -target / \nhdiutil detach /Volumes/GhostLayerShield -quiet`;
 
   const extensionInstructions = [
-    `הורד את תוסף Chrome מ: ${safeServer}/extension/ghostlayer.crx`,
-    `בשדה "כתובת שרת DLP" הכנס: ${safeServer}`,
-    `בשדה "מפתח API" הכנס: ${safeApiKey}`,
-    `לחץ "שמור והפעל" – הגנה תתחיל מיד`,
+    "טען את dlp-extension כתוסף Unpacked דרך chrome://extensions (מצב מפתח)",
+    `ב-Popup של התוסף הגדר "כתובת שרת DLP" ל: ${safeServer}`,
+    'ב-Options של התוסף הגדר "Local Agent URL" ל: http://localhost:4000',
+    `ב-Options הזן "Tenant API Key": ${safeApiKey} ושמור`,
+    "לחץ על כפתור בדיקת חיבור וודא שמתקבל סטטוס ירוק",
   ];
 
   return { serverCommand, dockerCommand, windowsShield, macShield, extensionInstructions };

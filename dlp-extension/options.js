@@ -1,7 +1,7 @@
 // DLP Shield – Options Script
 // Loads and saves localAgentUrl, tenantApiKey, and employeeEmail to chrome.storage.local
 
-const DEFAULT_LOCAL_AGENT_URL = "https://ai-production-ffa9.up.railway.app";
+const DEFAULT_LOCAL_AGENT_URL = "http://localhost:4000";
 
 const employeeEmailInput = document.getElementById("employee-email");
 const localAgentUrlInput = document.getElementById("local-agent-url");

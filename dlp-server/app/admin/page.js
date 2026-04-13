@@ -11,7 +11,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
   Brain, Cpu, Server, Download, Copy, CheckCheck,
-  Activity, Users, Zap, Lock, Eye, ChevronRight,
+  Activity, Users, Zap, Lock, Eye, ChevronRight, Shield,
   Terminal, AlertCircle, Wifi, RefreshCw, UserCheck, Replace,
   TrendingUp, Clock, Filter, Search, ChevronDown, ChevronUp,
   AlertTriangle, X, LogOut,
@@ -75,11 +75,12 @@ function ServerBrainPhase({ data }) {
   const serverUrl = data?.serverUrl || "";
   const activeAgent = agents.find((a) => a.syncStatus === "active" || a.syncStatus === "learning");
   const connected = !!activeAgent;
-  const [tab, setTab] = useState("npx");
+  const [tab, setTab] = useState("node");
 
   const command = cfg?.serverCommand ||
-    `npx ghostlayer-agent --server-url=${serverUrl} --api-key=${apiKey} --dir=/company/docs --verbose`;
-  const dockerCmd = cfg?.dockerCommand || "";
+    `cd ghostlayer-local-agent || exit 1; npm install && node index.js \\\n  --api-key=${apiKey} \\\n  --server-url=${serverUrl} \\\n  --dir=/company/docs \\\n  --local-port=4000 \\\n  --verbose`;
+  const dockerCmd = cfg?.dockerCommand ||
+    `cd ghostlayer-local-agent || exit 1; cp -n .env.template .env && \\\nprintf "API_KEY=${apiKey}\\nSERVER_URL=${serverUrl}\\nLOCAL_PORT=4000\\nVERBOSE=true\\n" > .env && \\\nmkdir -p corporate_data && docker compose up -d --build`;
 
   const layerStatus = connected
     ? {
@@ -112,7 +113,7 @@ function ServerBrainPhase({ data }) {
       </div>
 
       <div className="flex gap-1 bg-slate-900/60 rounded-xl p-1 border border-slate-700/40 w-fit">
-        {[["npx","NPX (מהיר)"],["docker","Docker"]].map(([id,label]) => (
+        {[["node","Node.js (מומלץ)"],["docker","Docker"]].map(([id,label]) => (
           <button key={id} onClick={() => setTab(id)}
             className={clsx("py-1.5 px-4 rounded-lg text-xs font-medium transition-all",
               tab === id ? "bg-cyan-600/25 text-cyan-300 border border-cyan-500/30" : "text-slate-500 hover:text-slate-300")}>
@@ -127,12 +128,12 @@ function ServerBrainPhase({ data }) {
             <Terminal className="w-3.5 h-3.5 text-slate-500" />
             <span className="text-xs text-slate-500 font-medium">הרץ על שרת החברה</span>
           </div>
-          <CopyButton text={tab === "npx" ? command : dockerCmd} label="העתק פקודה" />
+          <CopyButton text={tab === "node" ? command : dockerCmd} label="העתק פקודה" />
         </div>
         <div className="px-5 py-4 overflow-x-auto">
           <code className="text-sm text-green-400 font-mono whitespace-pre">
             <span className="text-slate-600 select-none">$ </span>
-            {tab === "npx" ? command : dockerCmd}
+            {tab === "node" ? command : dockerCmd}
           </code>
         </div>
         <div className="px-5 pb-3 flex flex-wrap items-center gap-3">
@@ -228,10 +229,11 @@ sudo installer -pkg /Volumes/GhostLayerShield/GhostLayerShield.pkg -target /
 hdiutil detach /Volumes/GhostLayerShield -quiet`;
 
   const extensionSteps = cfg?.extensionInstructions || [
-    `הורד את תוסף Chrome מ: ${serverUrl}/extension/ghostlayer.crx`,
-    `בשדה "כתובת שרת DLP" הכנס: ${serverUrl}`,
-    `בשדה "מפתח API" הכנס: ${apiKey}`,
-    `לחץ "שמור והפעל" – ההגנה תתחיל מיד`,
+    "טען את dlp-extension כתוסף Unpacked דרך chrome://extensions (מצב מפתח)",
+    `ב-Popup של התוסף הגדר "כתובת שרת DLP" ל: ${serverUrl}`,
+    'ב-Options של התוסף הגדר "Local Agent URL" ל: http://localhost:4000',
+    `ב-Options הזן "Tenant API Key": ${apiKey}`,
+    "שמור ובצע בדיקת חיבור עד שהסטטוס ירוק",
   ];
 
   const downloads = [

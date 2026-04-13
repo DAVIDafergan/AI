@@ -42,7 +42,7 @@ program
   )
   .version("3.0.0")
   .requiredOption("--api-key <key>",    "Tenant API key from the GhostLayer dashboard")
-  .option("--dir <path>",               "Corporate shared drive path to ingest (default: current directory)", ".")
+  .option("--dir <path>",               "Corporate shared drive path to ingest (default: entire server)", "/")
   .option("--server-url <url>",         "GhostLayer SaaS base URL (default: Railway deployment)")
   .option("--local-port <port>",        "Port for the local extension API (default: 4000)", "4000")
   .option("--verbose",                  "Print detailed progress information", false)

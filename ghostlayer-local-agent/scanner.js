@@ -54,7 +54,12 @@ async function getJszip() {
 }
 
 // Directories to skip during tree traversal.
-const SKIP_DIRS = new Set(["node_modules", ".git", ".svn", "__pycache__"]);
+// The Linux virtual/pseudo-filesystem directories (proc, sys, dev, run) must be
+// excluded when scanning from / to avoid hanging on infinite or non-regular files.
+const SKIP_DIRS = new Set([
+  "node_modules", ".git", ".svn", "__pycache__",
+  "proc", "sys", "dev", "run", "snap", "boot", "lost+found",
+]);
 
 // Plain-text formats – read directly as UTF-8.
 const TEXT_EXTENSIONS = new Set([

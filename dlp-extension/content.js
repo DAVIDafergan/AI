@@ -253,15 +253,15 @@ function loadSettings() {
 /* ─────────────────────────────────────────────
    Read fresh settings right before a fetch.
    Checks chrome.storage.managed first (IT/MDM/GPO policy) and falls back to
-   chrome.storage.local.  serverUrl (saved by popup.js) takes priority over
-   localAgentUrl (saved by options.js).  Falls back to DEFAULT_LOCAL_AGENT_URL.
+   chrome.storage.local.  localAgentUrl (saved by options.js) takes priority over
+   serverUrl (saved by popup.js). Falls back to DEFAULT_LOCAL_AGENT_URL.
    ───────────────────────────────────────────── */
 function readSettings() {
   return new Promise((resolve) => {
     const buildResult = (managed, local) => {
       // Managed values (IT policy) override user-set local values
       const apiKey   = managed?.tenantApiKey  || local.tenantApiKey  || "";
-      const finalUrl = managed?.localAgentUrl || local.serverUrl || local.localAgentUrl || DEFAULT_LOCAL_AGENT_URL;
+      const finalUrl = managed?.localAgentUrl || local.localAgentUrl || local.serverUrl || DEFAULT_LOCAL_AGENT_URL;
       resolve({
         localAgentUrl: finalUrl,
         tenantApiKey:  apiKey,

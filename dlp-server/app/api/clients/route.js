@@ -37,7 +37,10 @@ export async function POST(request) {
     });
 
     // בניית הוראות חיבור מפורטות
-    const serverUrl = process.env.NEXT_PUBLIC_SERVER_URL || "http://localhost:3000";
+    const serverUrl =
+      process.env.DLP_SERVER_URL ||
+      process.env.NEXT_PUBLIC_SERVER_URL ||
+      new URL(request.url).origin;
     const instructions = buildConnectionInstructions(serverUrl, org.apiKey);
 
     return NextResponse.json(
@@ -85,11 +88,12 @@ export async function OPTIONS() {
 // ── בניית הוראות חיבור ──
 function buildConnectionInstructions(serverUrl, apiKey) {
   const agentCommand =
-    `npx ghostlayer-agent \\\n` +
+    `cd ghostlayer-local-agent && npm install && node index.js \\\n` +
     `  --api-key="${apiKey}" \\\n` +
     `  --server-url="${serverUrl}" \\\n` +
     `  --dir="/path/to/your/shared/drive" \\\n` +
-    `  --local-port=4000`;
+    `  --local-port=4000 \\\n` +
+    `  --verbose`;
 
   // Pre-configured extension bundle: a JSON object that employees can
   // import directly via chrome.storage.local or the extension Options page.
@@ -119,16 +123,17 @@ function buildConnectionInstructions(serverUrl, apiKey) {
 
   return {
     browserExtension: [
-      "התקן את תוסף ה-GHOST מ-Chrome Web Store",
-      `לחץ על אייקון המגן בסרגל הכלים`,
-      `בשדה "כתובת שרת DLP" הכנס: ${serverUrl}`,
-      "מפתח ה-API יוזן אוטומטית דרך מנהל המערכת",
+      "טען את dlp-extension כתוסף Unpacked דרך chrome://extensions (מצב מפתח)",
+      `ב-Popup של התוסף הגדר "כתובת שרת DLP" ל: ${serverUrl}`,
+      "פתח את Options של התוסף והגדר Local Agent URL ל-http://localhost:4000",
+      `ב-Options הזן Tenant API Key: ${apiKey} ושמור`,
+      "לחץ על בדיקת חיבור וודא שהסטטוס ירוק",
     ],
     // Pre-configured bundle: import this JSON via the extension Options page
     // or push via Chrome Enterprise Managed Storage to skip manual setup.
     extensionBundle,
     managedStoragePolicy,
-    desktopShield: `# התקנה:\ncd dlp-server && npm install\n\n# הגדרת משתני סביבה:\nexport DLP_SERVER_URL="${serverUrl}"\nexport DLP_API_KEY="${apiKey}"\n\n# הפעלה:\nnpm run shield`,
+    desktopShield: `# התקנה:\ncd dlp-server && npm install\n\n# הגדרת משתני סביבה:\nexport DLP_SERVER_URL="${serverUrl}"\nexport DLP_API_KEY="${apiKey}"\n\n# בדיקת חיבור שרת:\ncurl -s "${serverUrl}/api/health"\n\n# הפעלה:\nnpm run shield`,
     localAgent: agentCommand,
     curlExample: `curl -X POST ${serverUrl}/api/check-text \\\n  -H "Content-Type: application/json" \\\n  -H "x-api-key: ${apiKey}" \\\n  -d '{"text": "הטקסט לבדיקה", "source": "api"}'`,
     sdkExample: `const response = await fetch('${serverUrl}/api/check-text', {\n  method: 'POST',\n  headers: {\n    'Content-Type': 'application/json',\n    'x-api-key': '${apiKey}'\n  },\n  body: JSON.stringify({ text: 'הטקסט לבדיקה', source: 'sdk' })\n});\nconst result = await response.json();\n// result.safe → boolean\n// result.redactedText → טקסט מנוקה`,

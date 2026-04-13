@@ -175,7 +175,7 @@ function buildDeploymentConfig(serverUrl, apiKey) {
   const safeApiKey = sanitizeForShell(apiKey);
 
   const serverCommand = [
-    "cd ghostlayer-local-agent && npm install && node index.js \\",
+    "cd ghostlayer-local-agent || exit 1; npm install && node index.js \\",
     `  --api-key=${safeApiKey} \\`,
     `  --server-url=${safeServer} \\`,
     "  --dir=/company/docs \\",
@@ -184,7 +184,7 @@ function buildDeploymentConfig(serverUrl, apiKey) {
   ].join("\n");
 
   const dockerCommand = [
-    "cd ghostlayer-local-agent && cp -n .env.template .env && \\",
+    "cd ghostlayer-local-agent || exit 1; cp -n .env.template .env && \\",
     `printf "API_KEY=${safeApiKey}\\nSERVER_URL=${safeServer}\\nLOCAL_PORT=4000\\nVERBOSE=true\\n" > .env && \\`,
     "mkdir -p corporate_data && docker compose up -d --build",
   ].join("\n");

@@ -88,7 +88,7 @@ export async function OPTIONS() {
 // ── בניית הוראות חיבור ──
 function buildConnectionInstructions(serverUrl, apiKey) {
   const agentCommand =
-    `cd ghostlayer-local-agent && npm install && node index.js \\\n` +
+    `cd ghostlayer-local-agent || exit 1; npm install && node index.js \\\n` +
     `  --api-key="${apiKey}" \\\n` +
     `  --server-url="${serverUrl}" \\\n` +
     `  --dir="/path/to/your/shared/drive" \\\n` +

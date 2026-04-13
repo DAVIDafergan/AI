@@ -78,9 +78,9 @@ function ServerBrainPhase({ data }) {
   const [tab, setTab] = useState("node");
 
   const command = cfg?.serverCommand ||
-    `cd ghostlayer-local-agent && npm install && node index.js \\\n  --api-key=${apiKey} \\\n  --server-url=${serverUrl} \\\n  --dir=/company/docs \\\n  --local-port=4000 \\\n  --verbose`;
+    `cd ghostlayer-local-agent || exit 1; npm install && node index.js \\\n  --api-key=${apiKey} \\\n  --server-url=${serverUrl} \\\n  --dir=/company/docs \\\n  --local-port=4000 \\\n  --verbose`;
   const dockerCmd = cfg?.dockerCommand ||
-    `cd ghostlayer-local-agent && cp -n .env.template .env && \\\nprintf "API_KEY=${apiKey}\\nSERVER_URL=${serverUrl}\\nLOCAL_PORT=4000\\nVERBOSE=true\\n" > .env && \\\nmkdir -p corporate_data && docker compose up -d --build`;
+    `cd ghostlayer-local-agent || exit 1; cp -n .env.template .env && \\\nprintf "API_KEY=${apiKey}\\nSERVER_URL=${serverUrl}\\nLOCAL_PORT=4000\\nVERBOSE=true\\n" > .env && \\\nmkdir -p corporate_data && docker compose up -d --build`;
 
   const layerStatus = connected
     ? {

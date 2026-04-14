@@ -803,37 +803,8 @@ async function handlePaste(event) {
   const target = event.target;
 
   try {
-    // ── Fast pre-flight in the Web Worker (no network round-trip) ──────────
-    // If no regex patterns match we skip the full API call entirely, keeping
-    // the UI at 60 fps for the vast majority of "clean" paste events.
-    const t0Paste = performance.now();
-    const preflight = await workerPreflight(text);
-    if (!preflight?.error && !preflight?.hasSensitive) {
-      // Nothing suspicious – paste immediately without going to the API
-      insertTextIntoField(target, text);
-      return;
-    }
-
-    // ── Tier 1 exact bypass: checksum-validated match – mask locally, skip AI ──
-    // When Tier 1 finds a credit card (Luhn) or Israeli ID (checksum) exact match,
-    // we can mask it immediately on the client without an API round-trip.
-    if (!preflight?.error && preflight?.tier1Exact && preflight?.tier1Matches?.length > 0) {
-      const { maskedText, replacements } = applyTier1Masking(text, preflight.tier1Matches);
-      if (replacements.length > 0) {
-        persistVault();
-        const elapsed = (performance.now() - t0Paste).toFixed(2);
-        console.log(`[GhostLayer] Tier 1 exact bypass: masked ${replacements.length} item(s) in ${elapsed}ms – API skipped`);
-
-        const overlayParts = buildOverlayDOM(replacements, maskedText);
-        document.body.appendChild(overlayParts.backdrop);
-        await runMorphAnimation(overlayParts);
-        insertTextIntoField(target, maskedText);
-        console.log(`${DLP_PREFIX} ✅ Tier 1 הודבק טקסט סינתטי (${replacements.length} החלפות)`);
-        await sleep(TIMING.closeDelay);
-        await closeOverlay(overlayParts);
-        return;
-      }
-    }
+    // TODO(SEMANTIC-TEST-BYPASS): Remove after 2026-05-01 once remote semantic validation closes.
+    // always call the remote AI check API from paste flow.
 
     const { localAgentUrl: agentUrl, tenantApiKey: apiKey, userEmail: email } = await readSettings();
 
@@ -943,57 +914,8 @@ async function interceptInput(element) {
     return;
   }
 
-  // ── Fast pre-flight in the Web Worker (no network round-trip) ──────────────
-  // If no regex patterns match we skip the full API call entirely, keeping
-  // the UI responsive for the vast majority of "clean" typing events.
-  const t0Input = performance.now();
-  const preflight = await workerPreflight(text);
-  if (!preflight?.error && !preflight?.hasSensitive) {
-    safeStateMap.set(element, text);
-    return;
-  }
-
-  // ── Soft-only typing: phone/account numbers alone don't block typing ──────
-  // When the preflight detects only "soft" patterns (PHONE, ACCOUNT) with no
-  // evasion and no checksum-validated matches, let the user keep typing freely.
-  // These will still be checked by the server on paste/send (interceptSend),
-  // but we don't interrupt the typing flow for regular numbers.
-  // Note: `softOnly` already implies no evasion and no hard patterns; the
-  // `tier1Exact` guard is redundant but kept as a safety net since tier1
-  // matches (credit card/ID checksums) should always override soft-only.
-  if (!preflight?.error && preflight?.softOnly && !preflight?.tier1Exact) {
-    safeStateMap.set(element, text);
-    return;
-  }
-
-  // ── Tier 1 exact bypass: checksum-validated match – mask locally, skip AI ──
-  // Note: only CREDIT_CARD and ID_NUMBER have checksum validation.
-  // PHONE/ACCOUNT never reach here because they have no checksum validator.
-  if (!preflight?.error && preflight?.tier1Exact && preflight?.tier1Matches?.length > 0) {
-    const { maskedText, replacements } = applyTier1Masking(text, preflight.tier1Matches);
-    if (replacements.length > 0) {
-      persistVault();
-      const elapsed = (performance.now() - t0Input).toFixed(2);
-      console.log(`[GhostLayer] Tier 1 exact bypass (typing): masked ${replacements.length} item(s) in ${elapsed}ms`);
-
-      const cursorPos = element.isContentEditable ? null : element.selectionStart;
-      _inputMaskingActive = true;
-      try {
-        setReactInputValue(element, maskedText);
-        flashGreen(element);
-        safeStateMap.set(element, maskedText);
-        debouncedInterceptInput.cancel();
-      } finally {
-        _inputMaskingActive = false;
-      }
-      if (!element.isContentEditable && element.setSelectionRange) {
-        const newPos = Math.min(cursorPos ?? maskedText.length, maskedText.length);
-        try { element.setSelectionRange(newPos, newPos); } catch { /* ignore */ }
-      }
-      showFallbackToast(typingInterceptedToast(replacements.length), "warning");
-      return;
-    }
-  }
+  // TODO(SEMANTIC-TEST-BYPASS): Remove after 2026-05-01 once remote semantic validation closes.
+  // always call the remote AI check API from typing flow.
 
   inputRequestPending = true;
   try {

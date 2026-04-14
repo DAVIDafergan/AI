@@ -57,6 +57,7 @@ const ACTION_LABELS = {
   config_change:    "CONFIG",
   user_action:      "USER",
 };
+const IPV4_REGEX = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
 
 /**
  * Extracts a host from a URL-like value.
@@ -79,7 +80,7 @@ function getHostFromUrl(url = "") {
  * @returns {boolean}
  */
 function isValidIpv4(host = "") {
-  return /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/.test(host);
+  return IPV4_REGEX.test(host);
 }
 
 function ClientSidebar({ clientName, onBack }) {
@@ -736,11 +737,12 @@ export default function ClientDetailPage() {
                         className="inline-flex"
                       >
                         <HelpCircle size={12} className="text-red-400" />
+                        <span className="sr-only">Use valid IPv4 format, for example 192.168.1.20</span>
                       </button>
-                      Help
                       <span
                         id="ip-help-tooltip"
                         role="tooltip"
+                        aria-hidden="true"
                         className="pointer-events-none absolute top-full mt-1 right-0 w-52 rounded-md border border-red-500/40 bg-slate-950 px-2 py-1 text-[10px] text-red-200 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100"
                       >
                         Use valid IPv4 format (example: 192.168.1.20)

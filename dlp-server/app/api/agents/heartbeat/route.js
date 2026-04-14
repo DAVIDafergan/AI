@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { connectMongo, Tenant, Agent, TenantEvent } from "../../../../lib/db.js";
+import { connectMongo, Tenant, Agent, TenantEvent, hashApiKey } from "../../../../lib/db.js";
 
 export const dynamic = "force-dynamic";
 /**
@@ -34,7 +34,7 @@ export async function POST(request) {
       );
     }
 
-    const tenant = await Tenant.findOne({ apiKey }).lean();
+    const tenant = await Tenant.findOne({ apiKey: hashApiKey(apiKey) }).lean();
     if (!tenant) {
       return NextResponse.json({ error: "Invalid API key" }, { status: 403 });
     }

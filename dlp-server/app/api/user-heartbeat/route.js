@@ -41,7 +41,9 @@ async function resolveOrgId(request) {
   try {
     const Tenant = mongoose.models.Tenant;
     if (Tenant) {
-      const tenant = await Tenant.findOne({ apiKey }).lean();
+      // Import hashApiKey to compare against the stored SHA-256 digest
+      const { hashApiKey } = await import("../../../lib/db.js");
+      const tenant = await Tenant.findOne({ apiKey: hashApiKey(apiKey) }).lean();
       if (tenant) return String(tenant._id);
     }
   } catch {

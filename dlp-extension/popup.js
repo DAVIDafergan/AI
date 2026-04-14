@@ -1,7 +1,8 @@
 // DLP Shield - Popup Script v3
 // Manages settings, personal stats display, and server connectivity check
 
-const DEFAULT_SERVER = "https://localhost:3000";
+// Development-only fallback; production should be supplied via dashboard/managed config.
+const DEFAULT_SERVER = "http://localhost:3000";
 
 const userEmailEl       = document.getElementById("user-email");
 const serverDisplayEl   = document.getElementById("server-display");

@@ -3,7 +3,8 @@
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const HEALTH_CHECK_TIMEOUT_MS = 8000;
-const DEFAULT_SERVER_URL = "https://localhost:3000";
+// Development-only fallback; production should be supplied via dashboard/managed config.
+const DEFAULT_SERVER_URL = "http://localhost:3000";
 
 /**
  * Read a setting from chrome.storage.managed first (IT/MDM/GPO), then fall back

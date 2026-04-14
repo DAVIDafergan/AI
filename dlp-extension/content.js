@@ -8,6 +8,8 @@
 
 
 const DEFAULT_LOCAL_AGENT_URL    = "https://ai-production-ffa9.up.railway.app";
+const AGENT_CONFIG_ENDPOINT      = "http://localhost:3000/api/agent-config";
+const CONFIG_SYNC_MIN_INTERVAL_MS = 30_000;
 const DLP_PREFIX                 = "🛡️ DLP Shield:";
 
 // ── User email (populated on init) ──
@@ -16,6 +18,8 @@ let userEmail = "anonymous@unknown.com";
 // ── Settings loaded from chrome.storage.local ──
 let localAgentUrl = DEFAULT_LOCAL_AGENT_URL;
 let tenantApiKey  = "";
+let configSyncInFlight = null;
+let lastConfigSyncAt = 0;
 
 // ── Loop-prevention & caching ──
 // WeakMap instead of WeakSet: maps each text node to the last string value that was
@@ -251,12 +255,63 @@ function loadSettings() {
 }
 
 /* ─────────────────────────────────────────────
+   Sync runtime configuration from dashboard
+   ───────────────────────────────────────────── */
+async function syncConfiguration({ force = false } = {}) {
+  const now = Date.now();
+  if (!force && now - lastConfigSyncAt < CONFIG_SYNC_MIN_INTERVAL_MS) {
+    return null;
+  }
+  if (configSyncInFlight) return configSyncInFlight;
+
+  configSyncInFlight = (async () => {
+    try {
+      const apiKey = await new Promise((resolve) => {
+        try {
+          chrome.storage.local.get(["tenantApiKey"], (local) => resolve(local?.tenantApiKey || ""));
+        } catch {
+          resolve("");
+        }
+      });
+
+      const res = await fetch(AGENT_CONFIG_ENDPOINT, {
+        cache: "no-store",
+        headers: apiKey ? { "x-api-key": apiKey } : undefined,
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      const agentUrl = typeof data?.agentUrl === "string" ? data.agentUrl.trim() : "";
+      if (!agentUrl) return null;
+
+      await new Promise((resolve) => {
+        try {
+          chrome.storage.local.set({ localAgentUrl: agentUrl }, resolve);
+        } catch {
+          resolve();
+        }
+      });
+
+      localAgentUrl = agentUrl;
+      return agentUrl;
+    } catch (err) {
+      console.debug(`${DLP_PREFIX} syncConfiguration failed:`, err?.message || err);
+      return null;
+    } finally {
+      lastConfigSyncAt = Date.now();
+      configSyncInFlight = null;
+    }
+  })();
+
+  return configSyncInFlight;
+}
+
+/* ─────────────────────────────────────────────
    Read fresh settings right before a fetch.
    Checks chrome.storage.managed first (IT/MDM/GPO policy) and falls back to
    chrome.storage.local.  localAgentUrl (saved by options.js) takes priority over
    serverUrl (saved by popup.js). Falls back to DEFAULT_LOCAL_AGENT_URL.
    ───────────────────────────────────────────── */
-function readSettings() {
+async function readSettings() {
   return new Promise((resolve) => {
     const buildResult = (managed, local) => {
       // Managed values (IT policy) override user-set local values
@@ -709,19 +764,20 @@ async function handlePaste(event) {
       return;
     }
 
-    // Support both local-agent format (blocked: true) and cloud-server format (safe: false)
-    const isBlocked = result.blocked === true || result.safe === false;
-    if (!isBlocked) {
+    const maskedText = result.maskedText || result.redactedText;
+    const hasReplacements = Array.isArray(result.replacements) && result.replacements.length > 0;
+    const hasMaskedDiff = typeof maskedText === "string" && maskedText !== text;
+    const shouldApplyMask = hasReplacements || hasMaskedDiff;
+    const isHardBlocked = result.blocked === true;
+
+    if (!isHardBlocked && !shouldApplyMask) {
       insertTextIntoField(target, text);
       showFallbackToast("✅ המידע בטוח – הודבק בהצלחה.", "success");
       return;
     }
 
-    // Support both maskedText (local agent) and redactedText (cloud server)
-    const maskedText = result.maskedText || result.redactedText;
-
     // Hard block (no masked replacement available) – reject the paste
-    if (maskedText == null) {
+    if (isHardBlocked && maskedText == null) {
       showFallbackToast("⚠️ חומת אש AI: תוכן רגיש זוהה. ההדבקה נחסמה.", "warning");
       return;
     }
@@ -958,7 +1014,7 @@ async function interceptInput(element) {
   }
 }
 
-const debouncedInterceptInput = debounce(interceptInput, 600);
+const debouncedInterceptInput = debounce(interceptInput, 500);
 
 /* ─────────────────────────────────────────────
    Pre-Send Interception (Failsafe)
@@ -2131,6 +2187,8 @@ function watchFileInputs() {
    Initialisation
    ───────────────────────────────────────────── */
 async function init() {
+  await syncConfiguration({ force: true });
+
   // Load settings (localAgentUrl, tenantApiKey) from storage
   await loadSettings();
 
@@ -2162,6 +2220,10 @@ async function init() {
   } catch {
     // extension context may be invalidated – ignore
   }
+
+  setInterval(() => {
+    syncConfiguration();
+  }, CONFIG_SYNC_MIN_INTERVAL_MS);
 
   // 1C. Get user email from background
   initUserEmail();

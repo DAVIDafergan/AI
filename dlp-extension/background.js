@@ -38,13 +38,23 @@ function readManagedThenLocal(keys) {
 }
 
 function resolveRuntimeScanConfig() {
-  return readManagedThenLocal(["serverUrl", "localAgentUrl", "tenantApiKey"]).then((data) => {
+  return readManagedThenLocal([
+    "serverUrl",
+    "localAgentUrl",
+    "tenantApiKey",
+    "dlp_lastKnownGoodAgentUrl",
+    "dlp_lastKnownGoodApiKey",
+  ]).then((data) => {
     const localAgentUrl = typeof data?.localAgentUrl === "string" ? data.localAgentUrl.trim() : "";
     const serverUrl = typeof data?.serverUrl === "string" ? data.serverUrl.trim() : "";
     const tenantApiKey = typeof data?.tenantApiKey === "string" ? data.tenantApiKey.trim() : "";
+    const lastKnownGoodAgentUrl =
+      typeof data?.dlp_lastKnownGoodAgentUrl === "string" ? data.dlp_lastKnownGoodAgentUrl.trim() : "";
+    const lastKnownGoodApiKey =
+      typeof data?.dlp_lastKnownGoodApiKey === "string" ? data.dlp_lastKnownGoodApiKey.trim() : "";
     return {
-      agentUrl: localAgentUrl || serverUrl || DEFAULT_SERVER_URL,
-      apiKey: tenantApiKey,
+      agentUrl: localAgentUrl || lastKnownGoodAgentUrl || serverUrl || DEFAULT_SERVER_URL,
+      apiKey: tenantApiKey || lastKnownGoodApiKey,
     };
   });
 }

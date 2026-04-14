@@ -34,7 +34,7 @@ function resolveFallbackUrl(request) {
   }
 }
 
-function normalizeApiKey(apiKey) {
+function trimApiKey(apiKey) {
   if (typeof apiKey !== "string") return "";
   return apiKey.trim();
 }
@@ -55,9 +55,9 @@ async function resolveTenant({ rawApiKey, tenantId, tenantSlug }) {
 }
 
 function resolveApiKeyForResponse(tenant, rawApiKey) {
-  const persistedKey = normalizeApiKey(tenant?.settings?.extensionApiKey);
+  const persistedKey = trimApiKey(tenant?.settings?.extensionApiKey);
   if (persistedKey) return persistedKey;
-  return normalizeApiKey(rawApiKey);
+  return trimApiKey(rawApiKey);
 }
 
 export async function OPTIONS() {
@@ -72,7 +72,7 @@ export async function GET(request) {
     const { searchParams } = new URL(request.url);
     const tenantId = searchParams.get("tenantId");
     const tenantSlug = searchParams.get("tenantSlug");
-    const rawApiKey = normalizeApiKey(request.headers.get("x-api-key"));
+    const rawApiKey = trimApiKey(request.headers.get("x-api-key"));
 
     const tenant = await resolveTenant({ rawApiKey, tenantId, tenantSlug });
 
@@ -93,11 +93,11 @@ async function upsertConfig(request) {
     const { searchParams } = new URL(request.url);
     const tenantId = searchParams.get("tenantId");
     const tenantSlug = searchParams.get("tenantSlug");
-    const rawApiKey = normalizeApiKey(request.headers.get("x-api-key"));
+    const rawApiKey = trimApiKey(request.headers.get("x-api-key"));
 
     const payload = await request.json().catch(() => ({}));
     const requestedAgentUrl = normalizeUrl(payload?.agentUrl);
-    const requestedApiKey = normalizeApiKey(payload?.apiKey);
+    const requestedApiKey = trimApiKey(payload?.apiKey);
 
     if (!requestedAgentUrl && !requestedApiKey) {
       return NextResponse.json(

@@ -68,8 +68,7 @@ function getHostFromUrl(url = "") {
 }
 
 function isValidIpv4(host = "") {
-  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return false;
-  return host.split(".").every((part) => Number(part) >= 0 && Number(part) <= 255);
+  return /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/.test(host);
 }
 
 function ClientSidebar({ clientName, onBack }) {
@@ -719,7 +718,7 @@ export default function ClientDetailPage() {
                   {invalidIpFormat && (
                     <span
                       className="inline-flex items-center gap-1 text-[10px] text-red-300"
-                      title="Help: השתמש בפורמט IPv4 תקין (לדוגמה: 192.168.1.20)"
+                      title="Help: השתמש בפורמט IPv4 תקין (לדוגמא: 192.168.1.20)"
                     >
                       <HelpCircle size={12} className="text-red-400" />
                       Help
@@ -732,7 +731,7 @@ export default function ClientDetailPage() {
                     : "bg-slate-950/60 border-slate-700/70"
                 }`}>
                   <code className={`text-xs font-mono truncate ${invalidIpFormat ? "text-red-300" : "text-slate-300"}`} dir="ltr">
-                    {agentHost || "—"}
+                    {agentHost || "לא הוגדר"}
                   </code>
                 </div>
               </div>

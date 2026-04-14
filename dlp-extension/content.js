@@ -8,7 +8,7 @@
 
 
 const DEFAULT_LOCAL_AGENT_URL    = "https://ai-production-ffa9.up.railway.app";
-const AGENT_CONFIG_ENDPOINT      = "http://localhost:3000/api/agent-config";
+const AGENT_CONFIG_PATH          = "/api/agent-config";
 const CONFIG_SYNC_MIN_INTERVAL_MS = 30_000;
 const DLP_PREFIX                 = "🛡️ DLP Shield:";
 
@@ -20,6 +20,8 @@ let localAgentUrl = DEFAULT_LOCAL_AGENT_URL;
 let tenantApiKey  = "";
 let configSyncInFlight = null;
 let lastConfigSyncAt = 0;
+const LAST_KNOWN_GOOD_AGENT_URL_KEY = "dlp_lastKnownGoodAgentUrl";
+const LAST_KNOWN_GOOD_API_KEY_KEY   = "dlp_lastKnownGoodApiKey";
 
 // ── Loop-prevention & caching ──
 // WeakMap instead of WeakSet: maps each text node to the last string value that was
@@ -254,10 +256,49 @@ function loadSettings() {
   });
 }
 
+function normalizeUrlValue(value) {
+  if (typeof value !== "string") return "";
+  return value.trim().replace(/\/+$/, "");
+}
+
+function buildAgentConfigEndpoint(serverUrl) {
+  const base = normalizeUrlValue(serverUrl) || DEFAULT_LOCAL_AGENT_URL;
+  return `${base}${AGENT_CONFIG_PATH}`;
+}
+
+function readLocalConfigSnapshot() {
+  return new Promise((resolve) => {
+    try {
+      chrome.storage.local.get(
+        ["serverUrl", "localAgentUrl", "tenantApiKey", LAST_KNOWN_GOOD_AGENT_URL_KEY, LAST_KNOWN_GOOD_API_KEY_KEY],
+        (local) => {
+          resolve({
+            serverUrl: normalizeUrlValue(local?.serverUrl),
+            localAgentUrl: normalizeUrlValue(local?.localAgentUrl),
+            tenantApiKey: typeof local?.tenantApiKey === "string" ? local.tenantApiKey.trim() : "",
+            lastKnownGoodAgentUrl: normalizeUrlValue(local?.[LAST_KNOWN_GOOD_AGENT_URL_KEY]),
+            lastKnownGoodApiKey: typeof local?.[LAST_KNOWN_GOOD_API_KEY_KEY] === "string"
+              ? local[LAST_KNOWN_GOOD_API_KEY_KEY].trim()
+              : "",
+          });
+        }
+      );
+    } catch {
+      resolve({
+        serverUrl: "",
+        localAgentUrl: "",
+        tenantApiKey: "",
+        lastKnownGoodAgentUrl: "",
+        lastKnownGoodApiKey: "",
+      });
+    }
+  });
+}
+
 /* ─────────────────────────────────────────────
-   Sync runtime configuration from dashboard
+   Robust runtime configuration sync from dashboard
    ───────────────────────────────────────────── */
-async function syncConfiguration({ force = false } = {}) {
+async function fetchConfig({ force = false } = {}) {
   const now = Date.now();
   if (!force && now - lastConfigSyncAt < CONFIG_SYNC_MIN_INTERVAL_MS) {
     return null;
@@ -266,36 +307,79 @@ async function syncConfiguration({ force = false } = {}) {
 
   configSyncInFlight = (async () => {
     try {
-      const apiKey = await new Promise((resolve) => {
-        try {
-          chrome.storage.local.get(["tenantApiKey"], (local) => resolve(local?.tenantApiKey || ""));
-        } catch {
-          resolve("");
-        }
-      });
+      const snapshot = await readLocalConfigSnapshot();
+      const requestApiKey = snapshot.tenantApiKey || snapshot.lastKnownGoodApiKey || "";
+      const endpoint = buildAgentConfigEndpoint(snapshot.serverUrl);
 
-      const res = await fetch(AGENT_CONFIG_ENDPOINT, {
+      const res = await fetch(endpoint, {
         cache: "no-store",
-        headers: apiKey ? { "x-api-key": apiKey } : undefined,
+        headers: requestApiKey ? { "x-api-key": requestApiKey } : undefined,
       });
-      if (!res.ok) return null;
+      if (!res.ok) throw new Error(`agent-config HTTP ${res.status}`);
+
       const data = await res.json();
-      const agentUrl = typeof data?.agentUrl === "string" ? data.agentUrl.trim() : "";
-      if (!agentUrl) return null;
+      const agentUrlFromApi = normalizeUrlValue(data?.agentUrl);
+      const apiKeyFromApi = typeof data?.apiKey === "string" ? data.apiKey.trim() : "";
+
+      const nextAgentUrl =
+        agentUrlFromApi ||
+        snapshot.localAgentUrl ||
+        snapshot.lastKnownGoodAgentUrl ||
+        DEFAULT_LOCAL_AGENT_URL;
+      const nextApiKey =
+        apiKeyFromApi ||
+        snapshot.tenantApiKey ||
+        snapshot.lastKnownGoodApiKey ||
+        "";
 
       await new Promise((resolve) => {
         try {
-          chrome.storage.local.set({ localAgentUrl: agentUrl }, resolve);
+          chrome.storage.local.set(
+            {
+              localAgentUrl: nextAgentUrl,
+              tenantApiKey: nextApiKey,
+              [LAST_KNOWN_GOOD_AGENT_URL_KEY]: nextAgentUrl,
+              [LAST_KNOWN_GOOD_API_KEY_KEY]: nextApiKey,
+            },
+            resolve
+          );
         } catch {
           resolve();
         }
       });
 
-      localAgentUrl = agentUrl;
-      return agentUrl;
+      localAgentUrl = nextAgentUrl;
+      tenantApiKey = nextApiKey;
+      return { agentUrl: nextAgentUrl, apiKey: nextApiKey, source: "dashboard" };
     } catch (err) {
-      console.debug(`${DLP_PREFIX} syncConfiguration failed:`, err?.message || err);
-      return null;
+      const snapshot = await readLocalConfigSnapshot();
+      const fallbackAgentUrl =
+        snapshot.localAgentUrl ||
+        snapshot.lastKnownGoodAgentUrl ||
+        DEFAULT_LOCAL_AGENT_URL;
+      const fallbackApiKey =
+        snapshot.tenantApiKey ||
+        snapshot.lastKnownGoodApiKey ||
+        "";
+
+      await new Promise((resolve) => {
+        try {
+          chrome.storage.local.set(
+            {
+              localAgentUrl: fallbackAgentUrl,
+              tenantApiKey: fallbackApiKey,
+            },
+            resolve
+          );
+        } catch {
+          resolve();
+        }
+      });
+
+      localAgentUrl = fallbackAgentUrl;
+      tenantApiKey = fallbackApiKey;
+      console.debug(`${DLP_PREFIX} fetchConfig fallback to Last Known Good:`, err?.message || err);
+      return { agentUrl: fallbackAgentUrl, apiKey: fallbackApiKey, source: "last-known-good" };
     } finally {
       lastConfigSyncAt = Date.now();
       configSyncInFlight = null;
@@ -2187,7 +2271,7 @@ function watchFileInputs() {
    Initialisation
    ───────────────────────────────────────────── */
 async function init() {
-  await syncConfiguration({ force: true });
+  await fetchConfig({ force: true });
 
   // Load settings (localAgentUrl, tenantApiKey) from storage
   await loadSettings();
@@ -2222,7 +2306,7 @@ async function init() {
   }
 
   setInterval(() => {
-    syncConfiguration();
+    fetchConfig();
   }, CONFIG_SYNC_MIN_INTERVAL_MS);
 
   // 1C. Get user email from background

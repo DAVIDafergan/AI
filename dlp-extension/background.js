@@ -3,6 +3,7 @@
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const HEALTH_CHECK_TIMEOUT_MS = 8000;
+const DEFAULT_SERVER_URL = "https://ai-production-ffa9.up.railway.app";
 
 /**
  * Read a setting from chrome.storage.managed first (IT/MDM/GPO), then fall back
@@ -33,6 +34,18 @@ function readManagedThenLocal(keys) {
         mergeAndResolve(null, local || {});
       }
     });
+  });
+}
+
+function resolveRuntimeScanConfig() {
+  return readManagedThenLocal(["serverUrl", "localAgentUrl", "tenantApiKey"]).then((data) => {
+    const localAgentUrl = typeof data?.localAgentUrl === "string" ? data.localAgentUrl.trim() : "";
+    const serverUrl = typeof data?.serverUrl === "string" ? data.serverUrl.trim() : "";
+    const tenantApiKey = typeof data?.tenantApiKey === "string" ? data.tenantApiKey.trim() : "";
+    return {
+      agentUrl: localAgentUrl || serverUrl || DEFAULT_SERVER_URL,
+      apiKey: tenantApiKey,
+    };
   });
 }
 
@@ -82,67 +95,79 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   // ── Proxy fetch to /api/check (avoids CORS in content scripts) ──
   if (message.type === "CHECK_TEXT") {
-    const { text, userEmail, source, mode, apiKey, agentUrl } = message;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
-    fetch(`${agentUrl}/api/check-text`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(apiKey ? { "x-api-key": apiKey } : {}),
-      },
-      body: JSON.stringify({ text, userEmail, source, mode }),
-      signal: controller.signal,
-    })
-      .then((res) => {
-        clearTimeout(timeout);
-        if (!res.ok) {
-          // Surface specific HTTP error codes so the content script can react appropriately
-          const errorMap = {
-            401: { error: true, errorCode: 401, message: "Unauthorized: API key missing or invalid" },
-            413: { error: true, errorCode: 413, message: "Payload Too Large: text exceeds the size limit" },
-            429: { error: true, errorCode: 429, message: "Rate limit exceeded: please slow down" },
-          };
-          sendResponse(errorMap[res.status] || { error: true, errorCode: res.status, message: `HTTP ${res.status}` });
-          return;
-        }
-        res.json().then(sendResponse).catch((err) => {
-          sendResponse({ error: true, errorCode: 0, message: err.message || "JSON parse failed" });
-        });
+    const { text, userEmail, source, mode } = message;
+    resolveRuntimeScanConfig()
+      .then(({ agentUrl, apiKey }) => {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 8000);
+        fetch(`${agentUrl}/api/check-text`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(apiKey ? { "x-api-key": apiKey } : {}),
+          },
+          body: JSON.stringify({ text, userEmail, source, mode }),
+          signal: controller.signal,
+        })
+          .then((res) => {
+            clearTimeout(timeout);
+            if (!res.ok) {
+              // Surface specific HTTP error codes so the content script can react appropriately
+              const errorMap = {
+                401: { error: true, errorCode: 401, message: "Unauthorized: API key missing or invalid" },
+                413: { error: true, errorCode: 413, message: "Payload Too Large: text exceeds the size limit" },
+                429: { error: true, errorCode: 429, message: "Rate limit exceeded: please slow down" },
+              };
+              sendResponse(errorMap[res.status] || { error: true, errorCode: res.status, message: `HTTP ${res.status}` });
+              return;
+            }
+            res.json().then(sendResponse).catch((err) => {
+              sendResponse({ error: true, errorCode: 0, message: err.message || "JSON parse failed" });
+            });
+          })
+          .catch((err) => {
+            clearTimeout(timeout);
+            sendResponse({ error: true, errorCode: 0, message: err.message || "fetch failed" });
+          });
       })
       .catch((err) => {
-        clearTimeout(timeout);
-        sendResponse({ error: true, errorCode: 0, message: err.message || "fetch failed" });
+        sendResponse({ error: true, errorCode: 0, message: err.message || "config resolve failed" });
       });
     return true; // async
   }
   // ── Proxy image OCR check ──────────────────────────────────────────────────
   if (message.type === "CHECK_IMAGE") {
-    const { imageData, userEmail, apiKey, agentUrl } = message;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30000); // OCR may take up to 30s
-    fetch(`${agentUrl}/api/check-image`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(apiKey ? { "x-api-key": apiKey } : {}),
-      },
-      body: JSON.stringify({ imageData, userEmail }),
-      signal: controller.signal,
-    })
-      .then((res) => {
-        clearTimeout(timeout);
-        if (!res.ok) {
-          sendResponse({ error: true, message: `HTTP ${res.status}` });
-          return;
-        }
-        res.json().then(sendResponse).catch((err) => {
-          sendResponse({ error: true, message: err.message || "JSON parse failed" });
-        });
+    const { imageData, userEmail } = message;
+    resolveRuntimeScanConfig()
+      .then(({ agentUrl, apiKey }) => {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 30000); // OCR may take up to 30s
+        fetch(`${agentUrl}/api/check-image`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(apiKey ? { "x-api-key": apiKey } : {}),
+          },
+          body: JSON.stringify({ imageData, userEmail }),
+          signal: controller.signal,
+        })
+          .then((res) => {
+            clearTimeout(timeout);
+            if (!res.ok) {
+              sendResponse({ error: true, message: `HTTP ${res.status}` });
+              return;
+            }
+            res.json().then(sendResponse).catch((err) => {
+              sendResponse({ error: true, message: err.message || "JSON parse failed" });
+            });
+          })
+          .catch((err) => {
+            clearTimeout(timeout);
+            sendResponse({ error: true, message: err.message || "image check failed" });
+          });
       })
       .catch((err) => {
-        clearTimeout(timeout);
-        sendResponse({ error: true, message: err.message || "image check failed" });
+        sendResponse({ error: true, message: err.message || "config resolve failed" });
       });
     return true; // async
   }

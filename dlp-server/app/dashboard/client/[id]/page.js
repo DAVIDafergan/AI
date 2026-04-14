@@ -701,7 +701,7 @@ export default function ClientDetailPage() {
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
               <div className="flex items-center justify-between gap-3">
                 <h3 className="text-xs text-slate-400 uppercase tracking-wider">Connectivity</h3>
-                <div className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[10px] font-semibold ${
+                <div aria-label={`Connection status: ${isConnected ? "Active" : "Disconnected"}`} className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[10px] font-semibold ${
                   isConnected
                     ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
                     : "border-slate-700 bg-slate-800/70 text-slate-400"
@@ -742,7 +742,6 @@ export default function ClientDetailPage() {
                       <span
                         id="ip-help-tooltip"
                         role="tooltip"
-                        aria-hidden="true"
                         className="pointer-events-none absolute top-full mt-1 right-0 w-52 rounded-md border border-red-500/40 bg-slate-950 px-2 py-1 text-[10px] text-red-200 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100"
                       >
                         Use valid IPv4 format (example: 192.168.1.20)

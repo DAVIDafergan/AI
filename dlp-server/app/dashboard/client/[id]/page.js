@@ -57,7 +57,8 @@ const ACTION_LABELS = {
   config_change:    "CONFIG",
   user_action:      "USER",
 };
-const IPV4_REGEX = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
+const ipv4Regex = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
+const ipLikePattern = /^[\d.]+$/;
 
 /**
  * Extracts a host from a URL-like value.
@@ -80,7 +81,7 @@ function getHostFromUrl(url = "") {
  * @returns {boolean}
  */
 function isValidIpv4(host = "") {
-  return IPV4_REGEX.test(host);
+  return ipv4Regex.test(host);
 }
 
 function ClientSidebar({ clientName, onBack }) {
@@ -444,7 +445,7 @@ export default function ClientDetailPage() {
     .slice(0, 5);
   const agentEndpoint = client.serverUrl || "לא הוגדר";
   const agentHost = client.serverUrl ? getHostFromUrl(client.serverUrl) : "";
-  const looksLikeIPv4 = /^[\d.]+$/.test(agentHost);
+  const looksLikeIPv4 = ipLikePattern.test(agentHost);
   const invalidIpFormat = Boolean(agentHost) && looksLikeIPv4 && !isValidIpv4(agentHost);
 
   return (
@@ -707,8 +708,8 @@ export default function ClientDetailPage() {
                 }`}>
                   {isConnected ? (
                     <span className="relative flex h-2.5 w-2.5">
-                      <span className="animate-ping motion-reduce:animate-none absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-400" />
+                      <span aria-hidden="true" className="animate-ping motion-reduce:animate-none absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                      <span aria-hidden="true" className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-400" />
                     </span>
                   ) : (
                     <span className="w-2.5 h-2.5 rounded-full bg-slate-600" />
@@ -737,7 +738,6 @@ export default function ClientDetailPage() {
                         className="inline-flex"
                       >
                         <HelpCircle size={12} className="text-red-400" />
-                        <span className="sr-only">Use valid IPv4 format, for example 192.168.1.20</span>
                       </button>
                       <span
                         id="ip-help-tooltip"

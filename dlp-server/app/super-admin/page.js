@@ -83,7 +83,7 @@ function AuthGate({ onAuth }) {
       });
       if (res.ok) { onAuth(requestKey); }
       else {
-        let msg = "מפתח ניהול-על שגוי";
+        let msg = "מפתח ניהול על שגוי";
         try {
           const d = await res.json();
           msg = d.error || msg;
@@ -118,7 +118,7 @@ function AuthGate({ onAuth }) {
             placeholder="SUPER_ADMIN_KEY"
           />
           <p className="mt-2 text-[11px] text-slate-500 leading-relaxed">
-            הזן את מפתח ניהול-העל (SUPER_ADMIN_KEY) שמוגדר בשרת.
+            הזן את מפתח ניהול העל (SUPER_ADMIN_KEY) שמוגדר בשרת.
           </p>
         </div>
         {err && <p className="text-xs text-red-400">{err}</p>}

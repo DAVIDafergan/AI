@@ -3,7 +3,8 @@
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const HEALTH_CHECK_TIMEOUT_MS = 8000;
-const DEFAULT_SERVER_URL = "https://ai-production-ffa9.up.railway.app";
+// Development-only fallback; production should be supplied via dashboard/managed config.
+const DEFAULT_SERVER_URL = "http://localhost:3000";
 
 /**
  * Read a setting from chrome.storage.managed first (IT/MDM/GPO), then fall back
@@ -186,7 +187,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const { syntheticValue, apiUrl } = message;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
-    fetch(`${apiUrl}?tag=${encodeURIComponent(syntheticValue)}`, { signal: controller.signal })
+    resolveRuntimeScanConfig()
+      .then(({ apiKey }) =>
+        fetch(`${apiUrl}?tag=${encodeURIComponent(syntheticValue)}`, {
+          headers: apiKey ? { "x-api-key": apiKey } : undefined,
+          signal: controller.signal,
+        })
+      )
       .then((res) => {
         clearTimeout(timeout);
         if (!res.ok) {
@@ -246,7 +253,7 @@ async function getStats() {
           restoredCount: data.restoredCount || 0,
           interceptedCount: data.interceptedCount || 0,
           sessionStart: data.sessionStart || Date.now(),
-          serverUrl: data.serverUrl || "https://ai-production-ffa9.up.railway.app",
+          serverUrl: data.serverUrl || DEFAULT_SERVER_URL,
           enabled: data.enabled !== false,
           userEmail: data.userEmail || null,
           employeeEmail: data.employeeEmail || null,
@@ -272,7 +279,7 @@ chrome.runtime.onInstalled.addListener(() => {
       restoredCount: 0,
       interceptedCount: 0,
       sessionStart: Date.now(),
-      serverUrl: existing.serverUrl || "https://ai-production-ffa9.up.railway.app",
+      serverUrl: existing.serverUrl || DEFAULT_SERVER_URL,
       enabled: existing.enabled !== undefined ? existing.enabled : true,
     });
   });
@@ -337,7 +344,7 @@ async function syncLivePolicy() {
     const data = await readManagedThenLocal(["serverUrl", "tenantApiKey", "enabled"]);
     if (!data.enabled) return;
 
-    const serverUrl = data.serverUrl || "https://ai-production-ffa9.up.railway.app";
+    const serverUrl = data.serverUrl || DEFAULT_SERVER_URL;
     const apiKey    = data.tenantApiKey || "";
     if (!apiKey) return; // cannot fetch without an API key
 
@@ -365,15 +372,17 @@ async function syncLivePolicy() {
 
 async function performHealthCheck() {
   try {
-    const data = await new Promise((resolve) => {
-      chrome.storage.local.get(["serverUrl", "enabled"], resolve);
-    });
+    const data = await readManagedThenLocal(["serverUrl", "tenantApiKey", "enabled"]);
     if (!data.enabled) return;
 
-    const serverUrl = data.serverUrl || "https://ai-production-ffa9.up.railway.app";
+    const serverUrl = data.serverUrl || DEFAULT_SERVER_URL;
+    const apiKey = typeof data.tenantApiKey === "string" ? data.tenantApiKey.trim() : "";
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), HEALTH_CHECK_TIMEOUT_MS);
-    const res = await fetch(`${serverUrl}/api/health`, { signal: controller.signal });
+    const res = await fetch(`${serverUrl}/api/health`, {
+      headers: apiKey ? { "x-api-key": apiKey } : undefined,
+      signal: controller.signal,
+    });
     clearTimeout(timeout);
 
     if (res.ok) {
@@ -398,7 +407,7 @@ async function sendUserHeartbeat() {
     );
     if (!data.enabled) return;
 
-    const serverUrl = data.serverUrl || "https://ai-production-ffa9.up.railway.app";
+    const serverUrl = data.serverUrl || DEFAULT_SERVER_URL;
     const apiKey    = data.tenantApiKey || "";
     const email     = data.employeeEmail || data.userEmail || null;
     if (!email) return; // Skip heartbeat if no email configured – avoids invalid telemetry

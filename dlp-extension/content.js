@@ -7,7 +7,9 @@
    ═══════════════════════════════════════════════════════════════ */
 
 
-const DEFAULT_LOCAL_AGENT_URL    = "https://ai-production-ffa9.up.railway.app";
+// Development-only fallback; production should be supplied by dashboard settings.
+const DEFAULT_CONFIG_SERVER_URL  = "http://localhost:3000";
+const DEFAULT_LOCAL_AGENT_URL    = "http://localhost:4000";
 const AGENT_CONFIG_PATH          = "/api/agent-config";
 const CONFIG_SYNC_MIN_INTERVAL_MS = 30_000;
 const DLP_PREFIX                 = "🛡️ DLP Shield:";
@@ -262,7 +264,7 @@ function normalizeUrlValue(value) {
 }
 
 function buildAgentConfigEndpoint(serverUrl) {
-  const base = normalizeUrlValue(serverUrl) || DEFAULT_LOCAL_AGENT_URL;
+  const base = normalizeUrlValue(serverUrl) || DEFAULT_CONFIG_SERVER_URL;
   return `${base}${AGENT_CONFIG_PATH}`;
 }
 
@@ -2160,7 +2162,7 @@ async function handleImagePaste(event) {
  */
 async function checkFileWithOcr(file, email) {
   try {
-    const { localAgentUrl: agentUrl } = await readSettings();
+    const { localAgentUrl: agentUrl, tenantApiKey: apiKey } = await readSettings();
     const formData = new FormData();
     formData.append("file", file, file.name || "image.png");
     formData.append("userEmail", email || userEmail);
@@ -2169,6 +2171,7 @@ async function checkFileWithOcr(file, email) {
     // the local agent runs on the same machine, so no CORS headers are required).
     const res = await fetch(`${agentUrl}/api/check-file`, {
       method: "POST",
+      headers: apiKey ? { "x-api-key": apiKey } : undefined,
       body:   formData,
       signal: AbortSignal.timeout(30_000),
     });

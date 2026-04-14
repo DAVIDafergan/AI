@@ -9,6 +9,7 @@ import {
   Shield, LayoutDashboard, Network, HelpCircle,
 } from "lucide-react";
 import GhostLogo from "../../../../components/GhostLogo";
+import { withApiKey } from "../../apiKey";
 
 // ── Helpers ────────────────────────────────────────────────────
 const STATUS_COLORS = {
@@ -356,7 +357,7 @@ export default function ClientDetailPage() {
 
   const loadClient = useCallback(async () => {
     try {
-      const res = await fetch(`/api/tenants/${id}`, { cache: "no-store" });
+      const res = await fetch(`/api/tenants/${id}`, { cache: "no-store", headers: withApiKey() });
       if (res.ok) {
         const data = await res.json();
         setClient(data.tenant || data);
@@ -367,7 +368,7 @@ export default function ClientDetailPage() {
 
   const loadEvents = useCallback(async () => {
     try {
-      const res = await fetch(`/api/tenant-events?tenantId=${id}&limit=50`, { cache: "no-store" });
+      const res = await fetch(`/api/tenant-events?tenantId=${id}&limit=50`, { cache: "no-store", headers: withApiKey() });
       if (res.ok) {
         const data = await res.json();
         if (data.events?.length) { setEvents(data.events); return; }
@@ -391,7 +392,7 @@ export default function ClientDetailPage() {
 
   if (loading) {
     return (
-      <div dir="rtl" className="min-h-screen bg-slate-900 flex items-center justify-center">
+      <div dir="rtl" className="min-h-screen bg-slate-950 flex items-center justify-center">
         <div className="flex items-center gap-3 text-slate-400">
           <RefreshCw size={18} className="animate-spin text-cyan-400" />
           <span className="text-sm">טוען נתוני לקוח...</span>
@@ -402,7 +403,7 @@ export default function ClientDetailPage() {
 
   if (!client) {
     return (
-      <div dir="rtl" className="min-h-screen bg-slate-900 flex items-center justify-center">
+      <div dir="rtl" className="min-h-screen bg-slate-950 flex items-center justify-center">
         <div className="text-center space-y-4">
           <AlertTriangle size={40} className="text-yellow-400 mx-auto" />
           <p className="text-slate-300 text-sm">לקוח לא נמצא</p>
@@ -449,7 +450,7 @@ export default function ClientDetailPage() {
   const invalidIpFormat = Boolean(agentHost) && looksLikeIPv4 && !isValidIpv4(agentHost);
 
   return (
-    <div dir="rtl" className="min-h-screen bg-slate-900 text-white">
+    <div dir="rtl" className="min-h-screen bg-slate-950 text-slate-100">
       {/* Connection Guide Modal */}
       {showGuide && <ConnectionModal client={client} onClose={() => setShowGuide(false)} />}
 

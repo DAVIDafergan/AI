@@ -803,7 +803,7 @@ async function handlePaste(event) {
   const target = event.target;
 
   try {
-    // Temporary semantic-testing bypass:
+    // TODO(SEMANTIC-TEST-BYPASS): Remove after 2026-05-01 once remote semantic validation closes.
     // always call the remote AI check API from paste flow.
 
     const { localAgentUrl: agentUrl, tenantApiKey: apiKey, userEmail: email } = await readSettings();
@@ -914,7 +914,7 @@ async function interceptInput(element) {
     return;
   }
 
-  // Temporary semantic-testing bypass:
+  // TODO(SEMANTIC-TEST-BYPASS): Remove after 2026-05-01 once remote semantic validation closes.
   // always call the remote AI check API from typing flow.
 
   inputRequestPending = true;

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Bell, Clock, Plus } from "lucide-react";
+import { Bell, Clock, LogOut, Plus } from "lucide-react";
 import GhostLogo from "../../components/GhostLogo";
 import SuperAdminSidebar from "./components/SuperAdminSidebar";
 import GlobalKpiBar      from "./components/GlobalKpiBar";
@@ -12,6 +12,47 @@ import GlobalThreatMap   from "./components/GlobalThreatMap";
 import LiveEventsStream  from "./components/LiveEventsStream";
 import AgentDetailPanel  from "./components/AgentDetailPanel";
 import TenantDetailView  from "./components/TenantDetailView";
+
+const SUPER_ADMIN_API_PATH = "/api/super-admin-stats";
+const SUPER_ADMIN_KEY_STORAGE_KEYS = ["ghostlayer_super_admin_key", "superAdminKey"];
+
+function readStoredSuperAdminKey() {
+  if (typeof window === "undefined") return "";
+  for (const key of SUPER_ADMIN_KEY_STORAGE_KEYS) {
+    const fromLocal = localStorage.getItem(key)?.trim();
+    if (fromLocal) return fromLocal;
+    const fromSession = sessionStorage.getItem(key)?.trim();
+    if (fromSession) return fromSession;
+  }
+  return "";
+}
+
+function readEnvSuperAdminKey() {
+  return (
+    process.env.NEXT_PUBLIC_SUPER_ADMIN_KEY ||
+    ""
+  ).trim();
+}
+
+function resolveSuperAdminKey(preferred = "") {
+  return preferred?.trim() || readStoredSuperAdminKey() || readEnvSuperAdminKey();
+}
+
+function persistSuperAdminKey(key) {
+  if (typeof window === "undefined") return;
+  const clean = key?.trim();
+  if (!clean) return;
+  try { localStorage.setItem("ghostlayer_super_admin_key", clean); } catch {}
+  try { sessionStorage.setItem("ghostlayer_super_admin_key", clean); } catch {}
+}
+
+function clearPersistedSuperAdminKey() {
+  if (typeof window === "undefined") return;
+  for (const key of SUPER_ADMIN_KEY_STORAGE_KEYS) {
+    try { localStorage.removeItem(key); } catch {}
+    try { sessionStorage.removeItem(key); } catch {}
+  }
+}
 
 // ── System clock ──────────────────────────────────────────────
 function SystemClock() {
@@ -27,19 +68,28 @@ function SystemClock() {
 
 // ── Auth gate ──────────────────────────────────────────────────
 function AuthGate({ onAuth }) {
-  const [key, setKey]   = useState("");
+  const [key, setKey]   = useState(resolveSuperAdminKey());
   const [err, setErr]   = useState("");
   const [loading, setLoading] = useState(false);
 
   const submit = async () => {
+    const requestKey = resolveSuperAdminKey(key);
+    if (!requestKey) return;
     setErr("");
     setLoading(true);
     try {
-      const res = await fetch("/api/super-admin-stats", {
-        headers: { "x-super-admin-key": key },
+      const res = await fetch(SUPER_ADMIN_API_PATH, {
+        headers: { "x-super-admin-key": requestKey },
       });
-      if (res.ok) { onAuth(key); }
-      else        { setErr("מפתח שגוי – אינך מורשה"); }
+      if (res.ok) { onAuth(requestKey); }
+      else {
+        let msg = "מפתח ניהול-על שגוי";
+        try {
+          const d = await res.json();
+          msg = d.error || msg;
+        } catch {}
+        setErr(msg);
+      }
     } catch {
       setErr("שגיאת רשת");
     } finally {
@@ -67,11 +117,14 @@ function AuthGate({ onAuth }) {
             className="w-full bg-slate-900/60 border border-slate-700/60 rounded-lg px-3 py-2.5 text-sm text-slate-200 font-mono outline-none focus:border-cyan-600/60"
             placeholder="SUPER_ADMIN_KEY"
           />
+          <p className="mt-2 text-[11px] text-slate-500 leading-relaxed">
+            הזן את מפתח ניהול-העל (SUPER_ADMIN_KEY) שמוגדר בשרת.
+          </p>
         </div>
         {err && <p className="text-xs text-red-400">{err}</p>}
         <button
           onClick={submit}
-          disabled={!key || loading}
+          disabled={!resolveSuperAdminKey(key) || loading}
           className="w-full py-2.5 bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-600/40 rounded-lg text-sm text-cyan-300 font-medium transition-colors disabled:opacity-40"
         >
           {loading ? "מאמת..." : "כניסה"}
@@ -92,19 +145,35 @@ export default function SuperAdminPage() {
   const [selectedTenant, setSelectedTenant] = useState(null);
   const [notifCount, setNotifCount]     = useState(0);
 
+  useEffect(() => {
+    const saved = resolveSuperAdminKey();
+    if (saved) setAdminKey(saved);
+  }, []);
+
+  const logout = useCallback(() => {
+    clearPersistedSuperAdminKey();
+    setAdminKey(null);
+    setStats(null);
+    setTenants([]);
+    setSelectedAgent(null);
+    setSelectedTenant(null);
+  }, []);
+
   const fetchStats = useCallback(async () => {
     if (!adminKey) return;
     try {
-      const res = await fetch("/api/super-admin-stats", {
+      const res = await fetch(SUPER_ADMIN_API_PATH, {
         headers: { "x-super-admin-key": adminKey },
       });
       if (res.ok) {
         const data = await res.json();
         setStats(data);
         setNotifCount(data.recentCriticalEvents?.length || 0);
+      } else if (res.status === 401 || res.status === 403) {
+        logout();
       }
     } catch {}
-  }, [adminKey]);
+  }, [adminKey, logout]);
 
   const fetchTenants = useCallback(async () => {
     if (!adminKey) return;
@@ -113,8 +182,9 @@ export default function SuperAdminPage() {
         headers: { "x-super-admin-key": adminKey },
       });
       if (res.ok) setTenants((await res.json()).tenants || []);
+      else if (res.status === 401 || res.status === 403) logout();
     } catch {}
-  }, [adminKey]);
+  }, [adminKey, logout]);
 
   useEffect(() => {
     if (!adminKey) return;
@@ -127,28 +197,30 @@ export default function SuperAdminPage() {
   const handleSuspend = async (tenant) => {
     const newStatus = tenant.status === "suspended" ? "active" : "suspended";
     try {
-      await fetch(`/api/tenants/${tenant._id}`, {
+      const res = await fetch(`/api/tenants/${tenant._id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", "x-super-admin-key": adminKey },
         body: JSON.stringify({ status: newStatus }),
       });
-      fetchTenants();
+      if (res.ok) fetchTenants();
+      else if (res.status === 401 || res.status === 403) logout();
     } catch {}
   };
 
   const handleDelete = async (tenant) => {
     if (!confirm(`האם למחוק את "${tenant.name}"?`)) return;
     try {
-      await fetch(`/api/tenants/${tenant._id}`, {
+      const res = await fetch(`/api/tenants/${tenant._id}`, {
         method: "DELETE",
         headers: { "x-super-admin-key": adminKey },
       });
-      fetchTenants();
+      if (res.ok) fetchTenants();
+      else if (res.status === 401 || res.status === 403) logout();
     } catch {}
   };
 
   if (!adminKey) {
-    return <AuthGate onAuth={setAdminKey} />;
+    return <AuthGate onAuth={(key) => { persistSuperAdminKey(key); setAdminKey(key); }} />;
   }
 
   const renderContent = () => {
@@ -256,6 +328,13 @@ export default function SuperAdminPage() {
                 </span>
               )}
             </div>
+            <button
+              onClick={logout}
+              className="p-1.5 rounded-lg hover:bg-red-900/30 transition-colors text-slate-500 hover:text-red-400"
+              title="יציאה"
+            >
+              <LogOut size={15} />
+            </button>
           </div>
         </header>
 

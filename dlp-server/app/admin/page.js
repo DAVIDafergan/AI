@@ -957,6 +957,9 @@ function AuthGate({ onAuth }) {
       } else {
         let msg = "מפתח שגוי";
         try { const d = await res.json(); msg = d.error || msg; } catch {}
+        if (msg.includes("מפתח API אינו תקין") || msg.toLowerCase().includes("invalid api")) {
+          msg = "מפתח API אינו תקין. יש להזין מפתח דייר (Tenant API Key) מתוך Super Admin > Tenant Details.";
+        }
         setErr(msg);
       }
     } catch { setErr("שגיאת רשת — אנא נסה שוב"); }
@@ -979,6 +982,9 @@ function AuthGate({ onAuth }) {
             onKeyDown={(e) => e.key === "Enter" && submit()}
             className="w-full bg-slate-900/60 border border-slate-700/60 rounded-lg px-3 py-2.5 text-sm text-slate-200 font-mono outline-none focus:border-cyan-600/60"
             placeholder="הכנס מפתח API..." dir="ltr" />
+          <p className="mt-2 text-[11px] text-slate-500 leading-relaxed">
+            אם מתקבלת שגיאת "API לא תקין", קח את המפתח מתוך מסך ניהול-העל של הדייר.
+          </p>
         </div>
         {err && <p className="text-xs text-red-400">{err}</p>}
         <button onClick={submit} disabled={!key || loading}

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { connectMongo, Tenant, hashApiKey } from "../../../lib/db.js";
+import { connectMongo, Tenant, validateApiKey } from "../../../lib/db.js";
 
 export const dynamic = "force-dynamic";
 
@@ -41,11 +41,9 @@ function normalizeApiKey(apiKey) {
 
 async function resolveTenant({ rawApiKey, tenantId, tenantSlug }) {
   if (rawApiKey) {
-    const hashedApiKey = hashApiKey(rawApiKey);
-    return Tenant.findOne(
-      { $or: [{ apiKey: hashedApiKey }, { apiKey: rawApiKey }] },
-      { serverUrl: 1, settings: 1, apiKey: 1 }
-    ).lean();
+    const validated = await validateApiKey(rawApiKey);
+    if (!validated?.organizationId) return null;
+    return Tenant.findById(validated.organizationId, { serverUrl: 1, settings: 1, apiKey: 1 }).lean();
   }
   if (tenantId) {
     return Tenant.findById(tenantId, { serverUrl: 1, settings: 1, apiKey: 1 }).lean();

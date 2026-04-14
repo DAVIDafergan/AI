@@ -956,6 +956,9 @@ async function interceptInput(element) {
   // evasion and no checksum-validated matches, let the user keep typing freely.
   // These will still be checked by the server on paste/send (interceptSend),
   // but we don't interrupt the typing flow for regular numbers.
+  // Note: `softOnly` already implies no evasion and no hard patterns; the
+  // `tier1Exact` guard is redundant but kept as a safety net since tier1
+  // matches (credit card/ID checksums) should always override soft-only.
   if (!preflight?.error && preflight?.softOnly && !preflight?.tier1Exact) {
     safeStateMap.set(element, text);
     return;

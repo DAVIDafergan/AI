@@ -140,7 +140,7 @@ export async function GET(request) {
           contactEmail: tenant.contactEmail,
           // Return the raw API key (from the request header) instead of the stored
           // hash so the dashboard can display it for copy-paste into agent configs.
-          apiKey: apiKey,
+          apiKey,
         },
         stats: {
           connectedAgents,

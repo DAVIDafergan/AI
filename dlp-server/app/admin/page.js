@@ -97,12 +97,14 @@ function ServerBrainPhase({ data }) {
       ? "bg-green-500/20 text-green-400 border-green-500/30"
       : "bg-slate-800/50 text-slate-600 border-slate-700/30";
 
+  const CONNECTION_TIMEOUT_MS = 6000;
+
   const testConnection = async () => {
     setConnTestState("testing");
     setConnTestMsg("בודק חיבור לשרת...");
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 6000);
+      const timeout = setTimeout(() => controller.abort(), CONNECTION_TIMEOUT_MS);
       const res = await fetch(`${serverUrl}/api/health`, { signal: controller.signal });
       clearTimeout(timeout);
       if (res.ok) {

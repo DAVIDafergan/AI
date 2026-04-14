@@ -24,7 +24,10 @@ export async function POST(request) {
     const agentKey = `agent-${randomUUID().replace(/-/g, "").slice(0, 24)}`;
     const agent = await Agent.create({ tenantId, name, agentKey, environment });
 
-    const serverUrl = process.env.DLP_SERVER_URL || "https://ai-production-ffa9.up.railway.app";
+    const serverUrl =
+      process.env.DLP_SERVER_URL ||
+      process.env.NEXT_PUBLIC_DLP_SERVER_URL ||
+      new URL(request.url).origin;
 
     const envConfig = [
       `DLP_SERVER_URL=${serverUrl}`,

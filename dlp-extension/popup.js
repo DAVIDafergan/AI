@@ -1,7 +1,7 @@
 // DLP Shield - Popup Script v3
 // Manages settings, personal stats display, and server connectivity check
 
-const DEFAULT_SERVER = "https://ai-production-ffa9.up.railway.app";
+const DEFAULT_SERVER = "http://localhost:3000";
 
 const userEmailEl       = document.getElementById("user-email");
 const serverDisplayEl   = document.getElementById("server-display");
@@ -46,7 +46,7 @@ chrome.runtime.sendMessage({ type: "GET_STATS" }, (data) => {
   chrome.storage.local.get(["localAgentUrl"], (localData) => {
     const activeServer = localData.localAgentUrl || data.serverUrl || DEFAULT_SERVER;
     if (serverDisplayEl) serverDisplayEl.textContent = activeServer;
-    checkConnection(activeServer);
+    checkConnection(activeServer, data.tenantApiKey || "");
   });
 
   // Resolve the best available email:
@@ -120,7 +120,9 @@ saveBtn.addEventListener("click", () => {
     saveMsg.textContent = "✅ הגדרות נשמרו";
     if (serverDisplayEl) serverDisplayEl.textContent = url;
     setTimeout(() => { saveMsg.textContent = ""; }, 2000);
-    checkConnection(url);
+    chrome.storage.local.get(["tenantApiKey"], ({ tenantApiKey }) => {
+      checkConnection(url, tenantApiKey || "");
+    });
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       if (tabs[0]) {
         chrome.tabs.sendMessage(tabs[0].id, { type: "SETTINGS_UPDATED", serverUrl: url, enabled }).catch(() => {});
@@ -147,17 +149,20 @@ clearBtn.addEventListener("click", () => {
 // ── Test Connection button ─────────────────────────────────────────────────────
 testBtn.addEventListener("click", () => {
   const url = serverUrlInput.value.trim() || DEFAULT_SERVER;
-  checkConnection(url);
+  chrome.storage.local.get(["tenantApiKey"], ({ tenantApiKey }) => {
+    checkConnection(url, tenantApiKey || "");
+  });
 });
 
 // ── Test server connection ────────────────────────────────────────────────────
-async function checkConnection(serverUrl) {
+async function checkConnection(serverUrl, tenantApiKey = "") {
   statusDot.className = "status-dot";
   statusText.textContent = "בודק חיבור...";
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 4000);
-    const res = await fetch(`${serverUrl}/api/health`, { signal: controller.signal });
+    const headers = tenantApiKey ? { "x-api-key": tenantApiKey } : undefined;
+    const res = await fetch(`${serverUrl}/api/health`, { headers, signal: controller.signal });
     clearTimeout(timeout);
     if (res.ok) {
       statusDot.className = "status-dot connected";

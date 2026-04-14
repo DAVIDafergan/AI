@@ -30,8 +30,12 @@ info:
     name: Proprietary
 
 servers:
-  - url: https://ai-production-ffa9.up.railway.app
-    description: Production
+  - url: "https://{serverUrl}"
+    description: Configurable server endpoint
+    variables:
+      serverUrl:
+        default: localhost:3000
+        description: API host and port (without protocol)
   - url: http://localhost:3000
     description: Local development
 
@@ -160,7 +164,7 @@ components:
             `.env` file or a systemd `EnvironmentFile=` directive.
           examples:
             - |
-              DLP_SERVER_URL=https://ai-production-ffa9.up.railway.app
+              DLP_SERVER_URL=https://your-dlp-server.example.com
               DLP_TENANT_API_KEY=<uuid>
               DLP_AGENT_KEY=agent-abc123
               DLP_ENVIRONMENT=production

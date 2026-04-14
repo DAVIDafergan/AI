@@ -14,6 +14,21 @@ import AgentDetailPanel from "../super-admin/components/AgentDetailPanel";
 import GhostLogo from "../../components/GhostLogo";
 
 const REFRESH_INTERVAL_MS = 10000;
+const DASHBOARD_API_KEY_STORAGE_KEYS = ["ghostlayer_admin_key", "tenantApiKey", "ghostlayer_api_key"];
+
+function getStoredApiKey() {
+  if (typeof window === "undefined") return "";
+  for (const key of DASHBOARD_API_KEY_STORAGE_KEYS) {
+    const value = window.localStorage.getItem(key);
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+}
+
+function withApiKey(headers = {}) {
+  const apiKey = getStoredApiKey();
+  return apiKey ? { ...headers, "x-api-key": apiKey } : headers;
+}
 
 // ── System clock ────────────────────────────────────────────────
 function SystemClock() {
@@ -128,22 +143,22 @@ const SIDEBAR_ITEMS = [
 
 function Sidebar({ activeTab, onTabChange, onAddClient }) {
   return (
-    <aside className="flex flex-col bg-[#0d0d14] border-l border-cyan-900/30 w-56 min-h-screen shrink-0">
+    <aside className="flex flex-col bg-slate-950 border-l border-slate-800 w-64 min-h-screen shrink-0">
       {/* Logo */}
-      <div className="flex items-center gap-3 px-4 py-5 border-b border-cyan-900/30">
+      <div className="flex items-center gap-3 px-6 py-6 border-b border-slate-800">
         <GhostLogo size={22} className="text-cyan-400 shrink-0" />
         <span className="text-cyan-300 font-bold text-sm tracking-widest whitespace-nowrap">GHOST</span>
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 py-4 space-y-1 px-2">
+      <nav className="flex-1 py-6 space-y-2 px-3">
         {SIDEBAR_ITEMS.map(({ id, label, icon: Icon }) => {
           const active = activeTab === id;
           return (
             <button
               key={id}
               onClick={() => (id === "add" ? onAddClient() : onTabChange(id))}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-150 text-right ${
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm transition-all duration-150 text-right ${
                 active
                   ? "bg-cyan-500/10 text-cyan-300 shadow-[0_0_8px_rgba(34,211,238,0.25)]"
                   : "text-slate-400 hover:bg-slate-800/50 hover:text-slate-200"
@@ -157,11 +172,11 @@ function Sidebar({ activeTab, onTabChange, onAddClient }) {
       </nav>
 
       {/* Logout */}
-      <div className="px-2 pb-4">
+      <div className="px-3 pb-6">
         <form action={logoutAction}>
           <button
             type="submit"
-            className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-900/20 transition-colors text-sm"
+            className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-slate-500 hover:text-red-400 hover:bg-red-900/20 transition-colors text-sm"
           >
             <LogOut size={16} />
             <span>יציאה</span>
@@ -175,7 +190,7 @@ function Sidebar({ activeTab, onTabChange, onAddClient }) {
 // ── Skeleton loader ───────────────────────────────────────────────
 function SkeletonCard() {
   return (
-    <div role="status" aria-label="Loading..." className="bg-[#0d0d14] border border-slate-700/40 rounded-xl p-5 animate-pulse">
+    <div role="status" aria-label="Loading..." className="bg-slate-950 border border-slate-800 rounded-xl p-5 animate-pulse">
       <div className="h-3 w-24 bg-slate-700/60 rounded mb-3" />
       <div className="h-8 w-16 bg-slate-700/60 rounded" />
     </div>
@@ -201,13 +216,13 @@ function SystemSettings() {
           { label: "מסד נתונים", value: "MongoDB Atlas" },
           { label: "ספק אימות", value: "Cookie-based (HTTP-only)" },
         ].map(({ label, value }) => (
-          <div key={label} className="bg-[#0d0d14] border border-slate-700/40 rounded-xl p-4">
+            <div key={label} className="bg-slate-950 border border-slate-800 rounded-xl p-4">
             <p className="text-xs text-slate-500 mb-1">{label}</p>
             <p className="text-sm text-slate-200 font-medium">{value}</p>
           </div>
         ))}
       </div>
-      <div className="bg-[#0d0d14] border border-slate-700/40 rounded-xl p-4">
+      <div className="bg-slate-950 border border-slate-800 rounded-xl p-4">
         <h3 className="text-xs text-slate-500 uppercase tracking-wider mb-3">מדיניות אבטחה</h3>
         <ul className="space-y-2 text-sm text-slate-300">
           <li className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-green-400" />הצפנת נתונים בהעברה (TLS 1.3)</li>
@@ -250,7 +265,10 @@ export default function DashboardClient({ initialClients = [] }) {
 
   const fetchClients = useCallback(async () => {
     try {
-      const res = await fetch("/api/tenants", { cache: "no-store" });
+      const res = await fetch("/api/tenants", {
+        cache: "no-store",
+        headers: withApiKey(),
+      });
       if (res.status === 401) { handleUnauthorized(); return; }
       if (res.ok) {
         const data = await res.json();
@@ -263,7 +281,10 @@ export default function DashboardClient({ initialClients = [] }) {
 
   const fetchStats = useCallback(async () => {
     try {
-      const res = await fetch("/api/super-admin-stats", { cache: "no-store" });
+      const res = await fetch("/api/super-admin-stats", {
+        cache: "no-store",
+        headers: withApiKey(),
+      });
       if (res.status === 401) { handleUnauthorized(); return; }
       if (res.ok) {
         const data = await res.json();
@@ -342,7 +363,7 @@ export default function DashboardClient({ initialClients = [] }) {
     try {
       await fetch(`/api/tenants/${client._id}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: withApiKey({ "Content-Type": "application/json" }),
         body: JSON.stringify({ status: newStatus }),
       });
       await fetchClients();
@@ -355,7 +376,7 @@ export default function DashboardClient({ initialClients = [] }) {
   const handleDelete = async (client) => {
     if (!confirm(`האם למחוק את "${client.name}"?`)) return;
     try {
-      await fetch(`/api/tenants/${client._id}`, { method: "DELETE" });
+      await fetch(`/api/tenants/${client._id}`, { method: "DELETE", headers: withApiKey() });
       await fetchClients();
       showToast(`"${client.name}" נמחק`, "success");
     } catch {
@@ -398,11 +419,11 @@ export default function DashboardClient({ initialClients = [] }) {
               {isLoading && clients.length === 0 ? (
                 <div className="space-y-2">
                   {[...Array(3)].map((_, i) => (
-                    <div key={i} className="h-14 bg-[#0d0d14] border border-slate-700/40 rounded-xl animate-pulse" />
+                    <div key={i} className="h-14 bg-slate-950 border border-slate-800 rounded-xl animate-pulse" />
                   ))}
                 </div>
               ) : clients.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-16 bg-[#0d0d14] border border-slate-700/40 rounded-xl text-center">
+                  <div className="flex flex-col items-center justify-center py-16 bg-slate-950 border border-slate-800 rounded-xl text-center">
                   <Building2 className="text-slate-600 mb-4" size={40} />
                   <p className="text-slate-400 text-sm font-medium">אין לקוחות פעילים עדיין</p>
                   <button
@@ -426,7 +447,7 @@ export default function DashboardClient({ initialClients = [] }) {
             {/* Live events & recent critical events */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <LiveEventsStream superAdminKey="" />
-              <div className="bg-[#0d0d14] border border-slate-700/40 rounded-xl p-4">
+              <div className="bg-slate-950 border border-slate-800 rounded-xl p-4">
                 <div className="flex items-center gap-2 mb-3">
                   <AlertTriangle size={14} className="text-red-400" />
                   <h3 className="text-xs text-slate-500 uppercase tracking-wider">אירועים קריטיים אחרונים</h3>
@@ -466,7 +487,7 @@ export default function DashboardClient({ initialClients = [] }) {
   };
 
   return (
-    <div className="flex min-h-screen bg-[#0a0a0f]" dir="rtl">
+    <div className="flex min-h-screen bg-slate-950 text-slate-100" dir="rtl">
       <Sidebar
         activeTab={selectedClient ? "clients" : activeTab}
         onTabChange={(t) => { setActiveTab(t); setSelectedClient(null); }}
@@ -476,13 +497,13 @@ export default function DashboardClient({ initialClients = [] }) {
       {/* Main area */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Top bar */}
-        <header className="flex items-center justify-between px-6 py-3.5 border-b border-slate-800/60 bg-[#0a0a0f]/80 backdrop-blur-sm shrink-0">
+        <header className="flex items-center justify-between px-8 py-5 border-b border-slate-800 bg-slate-950/90 backdrop-blur-sm shrink-0">
           <div className="flex items-center gap-3">
             <GhostLogo size={18} className="text-cyan-500" />
             <span className="text-sm font-bold text-cyan-300 tracking-widest">GHOST – פורטל ניהול מנהל-על</span>
           </div>
           <div className="flex items-center gap-4">
-            <ConnectionStatus connected={true} streaming={sseConnected} />
+            <ConnectionStatus connected={sseConnected} streaming={sseConnected} />
             <SystemClock />
             <RefreshCountdown onRefresh={() => refreshAll(true)} isLoading={isLoading} />
             <div className="relative">
@@ -499,7 +520,7 @@ export default function DashboardClient({ initialClients = [] }) {
         </header>
 
         {/* Page content */}
-        <main className="flex-1 overflow-y-auto p-6">
+        <main className="flex-1 overflow-y-auto p-8 lg:p-10">
           {renderContent()}
         </main>
       </div>
@@ -534,4 +555,3 @@ export default function DashboardClient({ initialClients = [] }) {
     </div>
   );
 }
-

@@ -43,13 +43,13 @@ async function resolveTenant({ rawApiKey, tenantId, tenantSlug }) {
   if (rawApiKey) {
     const validated = await validateApiKey(rawApiKey);
     if (!validated?.organizationId) return null;
-    return Tenant.findById(validated.organizationId, { serverUrl: 1, settings: 1, apiKey: 1 }).lean();
+    return Tenant.findById(validated.organizationId, { serverUrl: 1, settings: 1 }).lean();
   }
   if (tenantId) {
-    return Tenant.findById(tenantId, { serverUrl: 1, settings: 1, apiKey: 1 }).lean();
+    return Tenant.findById(tenantId, { serverUrl: 1, settings: 1 }).lean();
   }
   if (tenantSlug) {
-    return Tenant.findOne({ slug: tenantSlug }, { serverUrl: 1, settings: 1, apiKey: 1 }).lean();
+    return Tenant.findOne({ slug: tenantSlug }, { serverUrl: 1, settings: 1 }).lean();
   }
   return null;
 }

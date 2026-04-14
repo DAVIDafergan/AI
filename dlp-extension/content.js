@@ -308,7 +308,7 @@ async function fetchConfig({ force = false } = {}) {
   configSyncInFlight = (async () => {
     try {
       const snapshot = await readLocalConfigSnapshot();
-      const requestApiKey = snapshot.tenantApiKey || snapshot.lastKnownGoodApiKey || "";
+      const requestApiKey = snapshot.lastKnownGoodApiKey || snapshot.tenantApiKey || "";
       const endpoint = buildAgentConfigEndpoint(snapshot.serverUrl);
 
       const res = await fetch(endpoint, {
@@ -328,8 +328,8 @@ async function fetchConfig({ force = false } = {}) {
         DEFAULT_LOCAL_AGENT_URL;
       const nextApiKey =
         apiKeyFromApi ||
-        snapshot.tenantApiKey ||
         snapshot.lastKnownGoodApiKey ||
+        snapshot.tenantApiKey ||
         "";
 
       await new Promise((resolve) => {
@@ -358,8 +358,8 @@ async function fetchConfig({ force = false } = {}) {
         snapshot.lastKnownGoodAgentUrl ||
         DEFAULT_LOCAL_AGENT_URL;
       const fallbackApiKey =
-        snapshot.tenantApiKey ||
         snapshot.lastKnownGoodApiKey ||
+        snapshot.tenantApiKey ||
         "";
 
       await new Promise((resolve) => {

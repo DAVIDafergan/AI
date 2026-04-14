@@ -67,7 +67,7 @@ function getHostFromUrl(url = "") {
   }
 }
 
-function isValidIpv4(host = "") {
+function isValidIPv4(host = "") {
   return /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/.test(host);
 }
 
@@ -432,7 +432,7 @@ export default function ClientDetailPage() {
   const agentEndpoint = client.serverUrl || "לא הוגדר";
   const agentHost = client.serverUrl ? getHostFromUrl(client.serverUrl) : "";
   const ipv4Candidate = /^[\d.]+$/.test(agentHost);
-  const invalidIpFormat = Boolean(agentHost) && ipv4Candidate && !isValidIpv4(agentHost);
+  const invalidIpFormat = Boolean(agentHost) && ipv4Candidate && !isValidIPv4(agentHost);
 
   return (
     <div dir="rtl" className="min-h-screen bg-slate-900 text-white">
@@ -718,7 +718,7 @@ export default function ClientDetailPage() {
                   {invalidIpFormat && (
                     <span
                       className="inline-flex items-center gap-1 text-[10px] text-red-300"
-                      title="Help: השתמש בפורמט IPv4 תקין (לדוגמא: 192.168.1.20)"
+                      title="Help: Use valid IPv4 format (example: 192.168.1.20)"
                     >
                       <HelpCircle size={12} className="text-red-400" />
                       Help

@@ -7,7 +7,7 @@
    ═══════════════════════════════════════════════════════════════ */
 
 
-const DEFAULT_DASHBOARD_URL      = "http://localhost:3000";
+const DEFAULT_DASHBOARD_URL      = "https://localhost:3000";
 const DEFAULT_LOCAL_AGENT_URL    = "http://localhost:4000";
 const AGENT_CONFIG_PATH          = "/api/agent-config";
 const CONFIG_SYNC_MIN_INTERVAL_MS = 30_000;

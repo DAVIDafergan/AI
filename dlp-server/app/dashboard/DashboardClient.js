@@ -503,7 +503,7 @@ export default function DashboardClient({ initialClients = [] }) {
             <span className="text-sm font-bold text-cyan-300 tracking-widest">GHOST – פורטל ניהול מנהל-על</span>
           </div>
           <div className="flex items-center gap-4">
-            <ConnectionStatus connected={sseConnected} streaming={sseConnected} />
+            <ConnectionStatus connected={true} streaming={sseConnected} />
             <SystemClock />
             <RefreshCountdown onRefresh={() => refreshAll(true)} isLoading={isLoading} />
             <div className="relative">

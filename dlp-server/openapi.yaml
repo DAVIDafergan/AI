@@ -34,7 +34,7 @@ servers:
     description: Configurable server endpoint
     variables:
       serverUrl:
-        default: localhost:3000
+        default: api.example.com
         description: API host and port (without protocol)
   - url: http://localhost:3000
     description: Local development

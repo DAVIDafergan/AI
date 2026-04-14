@@ -126,9 +126,9 @@ export async function GET(request) {
 
     // בנה פקודת התקנת סוכן שרת (אם יש סוכן ראשון)
     const primaryAgent = enrichedAgents[0] || null;
-    const deploymentConfig = primaryAgent
-      ? buildDeploymentConfig(serverUrl, tenant.apiKey)
-      : null;
+    // Always build deployment config so the dashboard shows instructions
+    // even before the first agent connects.
+    const deploymentConfig = buildDeploymentConfig(serverUrl, apiKey);
 
     return NextResponse.json(
       {
@@ -138,7 +138,9 @@ export async function GET(request) {
           plan: tenant.plan,
           status: tenant.status,
           contactEmail: tenant.contactEmail,
-          apiKey: tenant.apiKey,
+          // Return the raw API key (from the request header) instead of the stored
+          // hash so the dashboard can display it for copy-paste into agent configs.
+          apiKey: apiKey,
         },
         stats: {
           connectedAgents,

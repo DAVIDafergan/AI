@@ -76,6 +76,8 @@ function ServerBrainPhase({ data }) {
   const activeAgent = agents.find((a) => a.syncStatus === "active" || a.syncStatus === "learning");
   const connected = !!activeAgent;
   const [tab, setTab] = useState("node");
+  const [connTestState, setConnTestState] = useState("idle"); // idle | testing | ok | error
+  const [connTestMsg, setConnTestMsg] = useState("");
 
   const command = cfg?.serverCommand ||
     `cd ghostlayer-local-agent || exit 1; npm install && node index.js \\\n  --api-key=${apiKey} \\\n  --server-url=${serverUrl} \\\n  --dir=/company/docs \\\n  --local-port=4000 \\\n  --verbose`;
@@ -95,8 +97,39 @@ function ServerBrainPhase({ data }) {
       ? "bg-green-500/20 text-green-400 border-green-500/30"
       : "bg-slate-800/50 text-slate-600 border-slate-700/30";
 
+  const testConnection = async () => {
+    setConnTestState("testing");
+    setConnTestMsg("בודק חיבור לשרת...");
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 6000);
+      const res = await fetch(`${serverUrl}/api/health`, { signal: controller.signal });
+      clearTimeout(timeout);
+      if (res.ok) {
+        const d = await res.json();
+        setConnTestState("ok");
+        setConnTestMsg(`✅ השרת פעיל (גרסה ${d.version || "?"}, ${d.uptime || 0}s uptime)`);
+      } else {
+        setConnTestState("error");
+        setConnTestMsg(`❌ השרת החזיר שגיאה (HTTP ${res.status})`);
+      }
+    } catch {
+      setConnTestState("error");
+      setConnTestMsg("❌ לא ניתן להתחבר לשרת – ודא שכתובת ה-URL נכונה");
+    }
+  };
+
+  // ── Step-by-step guide for connecting the agent ──
+  const steps = [
+    { num: 1, text: "שכפל את הריפו או העתק את תיקיית ghostlayer-local-agent לשרת החברה", icon: "📥" },
+    { num: 2, text: `העתק את מפתח ה-API: ${apiKey.slice(0, 12)}...`, icon: "🔑" },
+    { num: 3, text: "הרץ את הפקודה למטה על שרת החברה (Node.js או Docker)", icon: "▶️" },
+    { num: 4, text: "לחץ על \"בדוק חיבור\" לוודא שהסוכן מחובר לשרת", icon: "🔌" },
+  ];
+
   return (
     <section className="space-y-6">
+      {/* Header */}
       <div className="flex items-center gap-3">
         <div className="p-2.5 bg-cyan-500/10 rounded-xl border border-cyan-500/20">
           <Server className="w-6 h-6 text-cyan-400" />
@@ -112,6 +145,30 @@ function ServerBrainPhase({ data }) {
         </div>
       </div>
 
+      {/* Quick guide steps */}
+      <div className="bg-slate-900/60 border border-slate-700/40 rounded-xl p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <AlertCircle className="w-4 h-4 text-cyan-400" />
+          <span className="text-sm font-semibold text-white">מדריך חיבור מהיר</span>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {steps.map(({ num, text, icon }) => (
+            <div key={num} className={clsx(
+              "flex items-start gap-3 rounded-xl border px-4 py-3 transition-all",
+              num === 4 && connected ? "bg-green-500/10 border-green-500/30" : "bg-slate-800/40 border-slate-700/30"
+            )}>
+              <span className="flex-shrink-0 w-7 h-7 rounded-full bg-cyan-500/20 border border-cyan-500/40 text-cyan-400 text-xs font-bold flex items-center justify-center mt-0.5">
+                {num <= 3 || !connected ? num : "✓"}
+              </span>
+              <div>
+                <span className="text-xs text-slate-300 leading-relaxed">{text}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Tabs */}
       <div className="flex gap-1 bg-slate-900/60 rounded-xl p-1 border border-slate-700/40 w-fit">
         {[["node","Node.js (מומלץ)"],["docker","Docker"]].map(([id,label]) => (
           <button key={id} onClick={() => setTab(id)}
@@ -122,6 +179,7 @@ function ServerBrainPhase({ data }) {
         ))}
       </div>
 
+      {/* Command block */}
       <div className="bg-slate-950 border border-slate-700/50 rounded-xl overflow-hidden">
         <div className="flex items-center justify-between px-4 py-2.5 bg-slate-900/80 border-b border-slate-700/50">
           <div className="flex items-center gap-2">
@@ -143,6 +201,39 @@ function ServerBrainPhase({ data }) {
         </div>
       </div>
 
+      {/* Connection test */}
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          onClick={testConnection}
+          disabled={connTestState === "testing"}
+          className={clsx(
+            "flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 border",
+            connTestState === "testing"
+              ? "bg-slate-700 border-slate-600 text-slate-400 cursor-wait"
+              : connTestState === "ok"
+                ? "bg-green-500/15 border-green-500/40 text-green-400 hover:bg-green-500/25"
+                : connTestState === "error"
+                  ? "bg-red-500/15 border-red-500/40 text-red-400 hover:bg-red-500/25"
+                  : "bg-cyan-500/15 border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/25"
+          )}
+        >
+          {connTestState === "testing"
+            ? <RefreshCw className="w-4 h-4 animate-spin" />
+            : connTestState === "ok"
+              ? <CheckCheck className="w-4 h-4" />
+              : <Wifi className="w-4 h-4" />}
+          {connTestState === "testing" ? "בודק..." : "בדוק חיבור לשרת"}
+        </button>
+        {connTestMsg && (
+          <span className={clsx("text-xs font-medium",
+            connTestState === "ok" ? "text-green-400" : connTestState === "error" ? "text-red-400" : "text-slate-400"
+          )}>
+            {connTestMsg}
+          </span>
+        )}
+      </div>
+
+      {/* Detection layers */}
       <div className="grid grid-cols-3 gap-3">
         {[
           { id: "l1", label: "L1 – פילטר Bloom", sub: "< 1ms",        icon: Zap   },
@@ -159,6 +250,7 @@ function ServerBrainPhase({ data }) {
         ))}
       </div>
 
+      {/* Active agents */}
       {agents.length > 0 && (
         <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl p-5 space-y-4">
           <div className="flex items-center gap-2">
@@ -327,28 +419,53 @@ hdiutil detach /Volumes/GhostLayerShield -quiet`;
       )}
 
       {activeTab === "extension" && (
-        <div className="space-y-4">
+        <div className="space-y-5">
           <p className="text-sm text-slate-400">
-            התוסף מגן על פעילות הדפדפן — חוסם העתקה/הדבקה של מידע רגיש לאתרים חיצוניים.
+            התוסף מגן על פעילות הדפדפן — מזהה ומסווה מידע רגיש בזמן אמת בעת הדבקה והקלדה בצ'אטים ואתרי AI.
           </p>
-          <ol className="space-y-3">
-            {extensionSteps.map((step, i) => (
-              <li key={i} className="flex items-start gap-3">
-                <span className="flex-shrink-0 w-6 h-6 rounded-full bg-cyan-500/20 border border-cyan-500/40 text-cyan-400 text-xs font-bold flex items-center justify-center mt-0.5">{i + 1}</span>
-                <span className="text-sm text-slate-300">{step}</span>
-              </li>
-            ))}
-          </ol>
-          <div className="bg-slate-900/60 border border-slate-700/40 rounded-lg p-4 space-y-2">
-            <div className="text-xs text-slate-500">מפתח API (להכניס בתוסף):</div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <code className="text-sm text-cyan-400 font-mono bg-slate-800/60 px-3 py-1.5 rounded">{apiKey}</code>
-              <CopyButton text={apiKey} label="העתק" />
+
+          {/* Visual step-by-step cards */}
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 mb-2">
+              <AlertCircle className="w-4 h-4 text-purple-400" />
+              <span className="text-sm font-semibold text-white">שלבי הגדרה</span>
             </div>
-            <div className="text-xs text-slate-500 mt-2">כתובת שרת (להכניס בתוסף):</div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <code className="text-sm text-cyan-400 font-mono bg-slate-800/60 px-3 py-1.5 rounded">{serverUrl}</code>
-              <CopyButton text={serverUrl} label="העתק" />
+            {extensionSteps.map((step, i) => (
+              <div key={i} className="flex items-start gap-3 bg-slate-800/40 border border-slate-700/30 rounded-xl px-4 py-3">
+                <span className="flex-shrink-0 w-7 h-7 rounded-full bg-purple-500/20 border border-purple-500/40 text-purple-400 text-xs font-bold flex items-center justify-center mt-0.5">{i + 1}</span>
+                <span className="text-sm text-slate-300 leading-relaxed">{step}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Copy-ready credentials */}
+          <div className="bg-slate-900/60 border border-slate-700/40 rounded-xl p-5 space-y-4">
+            <div className="flex items-center gap-2 mb-1">
+              <Lock className="w-4 h-4 text-cyan-400" />
+              <span className="text-sm font-semibold text-white">פרטי חיבור (העתק והדבק בתוסף)</span>
+            </div>
+            <div className="space-y-3">
+              <div className="bg-slate-800/60 border border-slate-700/30 rounded-lg p-3">
+                <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-1.5">מפתח API</div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <code className="text-sm text-cyan-400 font-mono bg-slate-900/60 px-3 py-1.5 rounded border border-slate-700/40 flex-1 min-w-0 truncate">{apiKey}</code>
+                  <CopyButton text={apiKey} label="העתק" />
+                </div>
+              </div>
+              <div className="bg-slate-800/60 border border-slate-700/30 rounded-lg p-3">
+                <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-1.5">כתובת שרת</div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <code className="text-sm text-cyan-400 font-mono bg-slate-900/60 px-3 py-1.5 rounded border border-slate-700/40 flex-1 min-w-0 truncate">{serverUrl}</code>
+                  <CopyButton text={serverUrl} label="העתק" />
+                </div>
+              </div>
+              <div className="bg-slate-800/60 border border-slate-700/30 rounded-lg p-3">
+                <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-1.5">כתובת סוכן מקומי</div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <code className="text-sm text-cyan-400 font-mono bg-slate-900/60 px-3 py-1.5 rounded border border-slate-700/40 flex-1 min-w-0 truncate">http://localhost:4000</code>
+                  <CopyButton text="http://localhost:4000" label="העתק" />
+                </div>
+              </div>
             </div>
           </div>
         </div>

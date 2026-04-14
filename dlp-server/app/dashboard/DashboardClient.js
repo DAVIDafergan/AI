@@ -12,23 +12,9 @@ import LiveEventsStream from "../super-admin/components/LiveEventsStream";
 import AgentsGrid from "../super-admin/components/AgentsGrid";
 import AgentDetailPanel from "../super-admin/components/AgentDetailPanel";
 import GhostLogo from "../../components/GhostLogo";
+import { withApiKey } from "./apiKey";
 
 const REFRESH_INTERVAL_MS = 10000;
-const DASHBOARD_API_KEY_STORAGE_KEYS = ["ghostlayer_admin_key", "tenantApiKey", "ghostlayer_api_key"];
-
-function getStoredApiKey() {
-  if (typeof window === "undefined") return "";
-  for (const key of DASHBOARD_API_KEY_STORAGE_KEYS) {
-    const value = window.localStorage.getItem(key);
-    if (typeof value === "string" && value.trim()) return value.trim();
-  }
-  return "";
-}
-
-function withApiKey(headers = {}) {
-  const apiKey = getStoredApiKey();
-  return apiKey ? { ...headers, "x-api-key": apiKey } : headers;
-}
 
 // ── System clock ────────────────────────────────────────────────
 function SystemClock() {

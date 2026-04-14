@@ -9,22 +9,7 @@ import {
   Shield, LayoutDashboard, Network, HelpCircle,
 } from "lucide-react";
 import GhostLogo from "../../../../components/GhostLogo";
-
-const DASHBOARD_API_KEY_STORAGE_KEYS = ["ghostlayer_admin_key", "tenantApiKey", "ghostlayer_api_key"];
-
-function getStoredApiKey() {
-  if (typeof window === "undefined") return "";
-  for (const key of DASHBOARD_API_KEY_STORAGE_KEYS) {
-    const value = window.localStorage.getItem(key);
-    if (typeof value === "string" && value.trim()) return value.trim();
-  }
-  return "";
-}
-
-function withApiKey(headers = {}) {
-  const apiKey = getStoredApiKey();
-  return apiKey ? { ...headers, "x-api-key": apiKey } : headers;
-}
+import { withApiKey } from "../../apiKey";
 
 // ── Helpers ────────────────────────────────────────────────────
 const STATUS_COLORS = {

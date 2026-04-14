@@ -78,7 +78,7 @@ function getHostFromUrl(url = "") {
  * @param {string} host
  * @returns {boolean}
  */
-function isValidIPv4(host = "") {
+function isValidIpv4(host = "") {
   return /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/.test(host);
 }
 
@@ -102,6 +102,7 @@ function ClientSidebar({ clientName, onBack }) {
       <div className="px-3 pb-4">
         <button
           onClick={onBack}
+          aria-label="Back to main dashboard"
           className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors"
         >
           <ArrowRight size={16} />
@@ -443,7 +444,7 @@ export default function ClientDetailPage() {
   const agentEndpoint = client.serverUrl || "לא הוגדר";
   const agentHost = client.serverUrl ? getHostFromUrl(client.serverUrl) : "";
   const looksLikeIPv4 = /^[\d.]+$/.test(agentHost);
-  const invalidIpFormat = Boolean(agentHost) && looksLikeIPv4 && !isValidIPv4(agentHost);
+  const invalidIpFormat = Boolean(agentHost) && looksLikeIPv4 && !isValidIpv4(agentHost);
 
   return (
     <div dir="rtl" className="min-h-screen bg-slate-900 text-white">
@@ -705,7 +706,7 @@ export default function ClientDetailPage() {
                 }`}>
                   {isConnected ? (
                     <span className="relative flex h-2.5 w-2.5">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                      <span className="animate-ping motion-reduce:animate-none absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
                       <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-400" />
                     </span>
                   ) : (
@@ -727,12 +728,23 @@ export default function ClientDetailPage() {
                 <div className="flex items-center gap-1.5">
                   <p className="text-[11px] text-slate-500">Agent IP / Host</p>
                   {invalidIpFormat && (
-                    <span
-                      className="inline-flex items-center gap-1 text-[10px] text-red-300"
-                      title="Help: Use valid IPv4 format (example: 192.168.1.20)"
-                    >
-                      <HelpCircle size={12} className="text-red-400" />
+                    <span className="relative inline-flex items-center gap-1 text-[10px] text-red-300 group">
+                      <button
+                        type="button"
+                        aria-label="Help: Use valid IPv4 format (example: 192.168.1.20)"
+                        aria-describedby="ip-help-tooltip"
+                        className="inline-flex"
+                      >
+                        <HelpCircle size={12} className="text-red-400" />
+                      </button>
                       Help
+                      <span
+                        id="ip-help-tooltip"
+                        role="tooltip"
+                        className="pointer-events-none absolute top-full mt-1 right-0 w-52 rounded-md border border-red-500/40 bg-slate-950 px-2 py-1 text-[10px] text-red-200 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100"
+                      >
+                        Use valid IPv4 format (example: 192.168.1.20)
+                      </span>
                     </span>
                   )}
                 </div>

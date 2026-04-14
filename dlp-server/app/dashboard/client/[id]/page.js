@@ -6,6 +6,7 @@ import {
   ArrowRight, Building2, Cpu, Activity, Users,
   Copy, CheckCheck, RefreshCw, AlertTriangle, Circle,
   BookOpen, X, Terminal, AlertOctagon, ShieldAlert,
+  Shield, LayoutDashboard, Network, HelpCircle,
 } from "lucide-react";
 import GhostLogo from "../../../../components/GhostLogo";
 
@@ -57,6 +58,50 @@ const ACTION_LABELS = {
   user_action:      "USER",
 };
 
+function getHostFromUrl(url = "") {
+  if (!url) return "";
+  try {
+    return new URL(url).hostname || "";
+  } catch {
+    return url.replace(/^https?:\/\//i, "").split("/")[0];
+  }
+}
+
+function isValidIpv4(host = "") {
+  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return false;
+  return host.split(".").every((part) => Number(part) >= 0 && Number(part) <= 255);
+}
+
+function ClientSidebar({ clientName, onBack }) {
+  return (
+    <aside className="hidden lg:flex lg:w-60 shrink-0 flex-col border-l border-slate-800 bg-slate-900/95">
+      <div className="flex items-center gap-3 px-5 py-5 border-b border-slate-800">
+        <GhostLogo size={22} className="text-cyan-500 shrink-0" />
+        <span className="text-cyan-300 font-bold text-sm tracking-widest whitespace-nowrap">GHOST</span>
+      </div>
+      <nav className="flex-1 px-3 py-5 space-y-2">
+        <div className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm bg-cyan-500/10 text-cyan-300 border border-cyan-500/20">
+          <LayoutDashboard size={16} className="text-cyan-500" />
+          <span className="truncate">Dashboard</span>
+        </div>
+        <div className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-slate-300 bg-slate-800/50 border border-slate-700/50">
+          <Network size={16} className="text-cyan-500" />
+          <span className="truncate">{clientName}</span>
+        </div>
+      </nav>
+      <div className="px-3 pb-4">
+        <button
+          onClick={onBack}
+          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors"
+        >
+          <ArrowRight size={16} />
+          חזרה ללוח הראשי
+        </button>
+      </div>
+    </aside>
+  );
+}
+
 function CopyButton({ text }) {
   const [copied, setCopied] = useState(false);
   function handleCopy() {
@@ -83,7 +128,7 @@ function CopyButton({ text }) {
 
 function KpiCard({ label, value, sub, colorClass = "text-cyan-300", icon: Icon }) {
   return (
-    <div className="bg-[#0d0d14] border border-slate-700/40 rounded-xl p-4">
+    <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
       <div className="flex items-center justify-between mb-1">
         <p className="text-xs text-slate-500">{label}</p>
         {Icon && <Icon size={14} className="text-slate-600" />}
@@ -243,7 +288,7 @@ function ActiveEmployeesWidget({ events }) {
   const employees = [...employeeMap.values()].sort((a, b) => b.lastSeen - a.lastSeen);
 
   return (
-    <div className="bg-[#0d0d14] border border-slate-700/40 rounded-xl overflow-hidden">
+    <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
       <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
         <div className="flex items-center gap-2">
           <Users size={14} className="text-cyan-400" />
@@ -333,7 +378,7 @@ export default function ClientDetailPage() {
 
   if (loading) {
     return (
-      <div dir="rtl" className="min-h-screen bg-[#0a0a0f] flex items-center justify-center">
+      <div dir="rtl" className="min-h-screen bg-slate-900 flex items-center justify-center">
         <div className="flex items-center gap-3 text-slate-400">
           <RefreshCw size={18} className="animate-spin text-cyan-400" />
           <span className="text-sm">טוען נתוני לקוח...</span>
@@ -344,7 +389,7 @@ export default function ClientDetailPage() {
 
   if (!client) {
     return (
-      <div dir="rtl" className="min-h-screen bg-[#0a0a0f] flex items-center justify-center">
+      <div dir="rtl" className="min-h-screen bg-slate-900 flex items-center justify-center">
         <div className="text-center space-y-4">
           <AlertTriangle size={40} className="text-yellow-400 mx-auto" />
           <p className="text-slate-300 text-sm">לקוח לא נמצא</p>
@@ -385,53 +430,59 @@ export default function ClientDetailPage() {
   const topTechniques = Object.entries(techniqueCounts)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 5);
+  const agentEndpoint = client.serverUrl || "לא הוגדר";
+  const agentHost = client.serverUrl ? getHostFromUrl(client.serverUrl) : "";
+  const ipv4Candidate = /^[\d.]+$/.test(agentHost);
+  const invalidIpFormat = Boolean(agentHost) && ipv4Candidate && !isValidIpv4(agentHost);
 
   return (
-    <div dir="rtl" className="min-h-screen bg-[#0a0a0f] text-white">
+    <div dir="rtl" className="min-h-screen bg-slate-900 text-white">
       {/* Connection Guide Modal */}
       {showGuide && <ConnectionModal client={client} onClose={() => setShowGuide(false)} />}
 
-      {/* Top bar */}
-      <header className="flex items-center justify-between px-6 py-3.5 border-b border-slate-800/60 bg-[#0a0a0f]/80 backdrop-blur-sm">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => router.push("/dashboard")}
-            className="flex items-center gap-2 text-slate-400 hover:text-slate-200 transition-colors text-sm"
-          >
-            <ArrowRight size={16} />
-            <span>חזרה</span>
-          </button>
-          <span className="text-slate-700">/</span>
-          <div className="flex items-center gap-2">
-            <GhostLogo size={16} className="text-cyan-500" />
-            <span className="text-sm font-bold text-cyan-300 tracking-widest">GHOST</span>
-          </div>
-          <span className="text-slate-700">/</span>
-          <span className="text-sm text-slate-300 font-medium">{client.name}</span>
-        </div>
-        <div className="flex items-center gap-2">
-          {/* ── CRITICAL UX: Always-visible Connection Guide button ── */}
-          <button
-            onClick={() => setShowGuide(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/40 rounded-lg text-xs font-semibold text-cyan-300 hover:text-cyan-100 transition-all shadow-[0_0_12px_rgba(34,211,238,0.15)]"
-          >
-            <BookOpen size={13} />
-            Add Agent / Connection Guide
-          </button>
-          <button
-            onClick={handleRefresh}
-            disabled={refreshing}
-            className="flex items-center gap-2 px-3 py-2 bg-slate-800/60 hover:bg-slate-700/60 border border-slate-700/40 rounded-lg text-xs text-slate-400 hover:text-slate-200 transition-colors disabled:opacity-50"
-          >
-            <RefreshCw size={13} className={refreshing ? "animate-spin" : ""} />
-            רענן
-          </button>
-        </div>
-      </header>
+      <div className="flex min-h-screen">
+        <ClientSidebar clientName={client.name} onBack={() => router.push("/dashboard")} />
+        <div className="flex-1">
+          {/* Top bar */}
+          <header className="flex flex-wrap items-center justify-between gap-3 px-6 lg:px-8 py-4 border-b border-slate-800 bg-slate-900/90 backdrop-blur-sm">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => router.push("/dashboard")}
+                className="lg:hidden flex items-center gap-2 text-slate-400 hover:text-slate-200 transition-colors text-sm"
+              >
+                <ArrowRight size={16} />
+                <span>חזרה</span>
+              </button>
+              <span className="text-slate-700 lg:hidden">/</span>
+              <div className="flex items-center gap-2">
+                <GhostLogo size={16} className="text-cyan-500" />
+                <span className="text-sm font-bold text-cyan-300 tracking-widest">GHOST</span>
+              </div>
+              <span className="text-slate-700">/</span>
+              <span className="text-sm text-slate-300 font-medium">{client.name}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowGuide(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/40 rounded-lg text-xs font-semibold text-cyan-300 hover:text-cyan-100 transition-all shadow-[0_0_12px_rgba(34,211,238,0.15)]"
+              >
+                <BookOpen size={13} />
+                Add Agent / Connection Guide
+              </button>
+              <button
+                onClick={handleRefresh}
+                disabled={refreshing}
+                className="flex items-center gap-2 px-3 py-2 bg-slate-800/60 hover:bg-slate-700/60 border border-slate-700/40 rounded-lg text-xs text-slate-400 hover:text-slate-200 transition-colors disabled:opacity-50"
+              >
+                <RefreshCw size={13} className={refreshing ? "animate-spin" : ""} />
+                רענן
+              </button>
+            </div>
+          </header>
 
-      <main className="p-6 space-y-6 max-w-7xl mx-auto">
+          <main className="p-6 lg:p-8 space-y-8 max-w-7xl mx-auto">
         {/* Client header card */}
-        <div className="bg-[#0d0d14] border border-slate-700/40 rounded-xl p-5">
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div className="flex items-center gap-4">
               <div className="w-12 h-12 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center shrink-0">
@@ -454,7 +505,7 @@ export default function ClientDetailPage() {
         </div>
 
         {/* KPI row */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
           <KpiCard
             label="סוכנים פעילים"
             value={client.agentCount ?? 0}
@@ -483,7 +534,7 @@ export default function ClientDetailPage() {
 
         {/* ── Evasion Detection Panel ──────────────────────────────────────── */}
         {(evasionCount > 0 || fragmentEvents.length > 0 || roleplayEvents.length > 0) && (
-          <div className="bg-[#0d0d14] border border-orange-700/30 rounded-xl overflow-hidden">
+          <div className="bg-slate-900 border border-orange-700/30 rounded-xl overflow-hidden">
             <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-800 bg-gradient-to-r from-orange-900/10 to-transparent">
               <AlertTriangle size={14} className="text-orange-400" />
               <h3 className="text-sm text-slate-200 font-semibold">ניסיונות הטעיה – Evasion Shield</h3>
@@ -531,7 +582,7 @@ export default function ClientDetailPage() {
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
 
           {/* ── Live Threat Feed ───────────────────────── */}
-          <div className="xl:col-span-2 bg-[#0d0d14] border border-slate-700/40 rounded-xl overflow-hidden">
+          <div className="xl:col-span-2 bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800 bg-gradient-to-r from-red-900/10 to-transparent">
               <div className="flex items-center gap-2">
                 <AlertOctagon size={14} className="text-red-400" />
@@ -629,30 +680,78 @@ export default function ClientDetailPage() {
             </div>
           </div>
 
-          {/* ── Active Employees + Connection status ────── */}
+          {/* ── Active Employees + Connectivity ────── */}
           <div className="space-y-4">
             <ActiveEmployeesWidget events={events} />
 
-            {/* API Key card */}
-            <div className="bg-[#0d0d14] border border-slate-700/40 rounded-xl p-4 space-y-3">
-              <h3 className="text-xs text-slate-500 uppercase tracking-wider">מפתח API</h3>
-              <div className="flex items-center gap-2 bg-slate-900/60 border border-slate-700/60 rounded-lg px-3 py-2">
-                <code className="flex-1 text-xs text-cyan-300 font-mono truncate" dir="ltr">
-                  {client.apiKey || "לא הוגדר"}
-                </code>
-                {client.apiKey && <CopyButton text={client.apiKey} />}
+            {/* Connectivity card */}
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-xs text-slate-400 uppercase tracking-wider">Connectivity</h3>
+                <div className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[10px] font-semibold ${
+                  isConnected
+                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+                    : "border-slate-700 bg-slate-800/70 text-slate-400"
+                }`}>
+                  {isConnected ? (
+                    <span className="relative flex h-2.5 w-2.5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-400" />
+                    </span>
+                  ) : (
+                    <span className="w-2.5 h-2.5 rounded-full bg-slate-600" />
+                  )}
+                  <span>Status: {isConnected ? "Active" : "Disconnected"}</span>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <div className={`w-2.5 h-2.5 rounded-full ${isConnected ? "bg-green-400 shadow-[0_0_6px_rgba(74,222,128,0.6)]" : "bg-slate-600"}`} />
-                <span className={`text-xs ${isConnected ? "text-green-400" : "text-slate-400"}`}>
-                  {isConnected ? "מחובר ופעיל" : "לא מחובר"}
-                </span>
+
+              <div className="space-y-2">
+                <p className="text-[11px] text-slate-500">Agent Endpoint</p>
+                <div className="flex items-center gap-2 bg-slate-950/60 border border-slate-700/70 rounded-lg px-3 py-2">
+                  <code className="flex-1 text-xs text-cyan-300 font-mono truncate" dir="ltr">{agentEndpoint}</code>
+                  {client.serverUrl && <CopyButton text={client.serverUrl} />}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center gap-1.5">
+                  <p className="text-[11px] text-slate-500">Agent IP / Host</p>
+                  {invalidIpFormat && (
+                    <span
+                      className="inline-flex items-center gap-1 text-[10px] text-red-300"
+                      title="Help: השתמש בפורמט IPv4 תקין (לדוגמה: 192.168.1.20)"
+                    >
+                      <HelpCircle size={12} className="text-red-400" />
+                      Help
+                    </span>
+                  )}
+                </div>
+                <div className={`flex items-center gap-2 rounded-lg px-3 py-2 border ${
+                  invalidIpFormat
+                    ? "bg-red-950/20 border-red-500/40"
+                    : "bg-slate-950/60 border-slate-700/70"
+                }`}>
+                  <code className={`text-xs font-mono truncate ${invalidIpFormat ? "text-red-300" : "text-slate-300"}`} dir="ltr">
+                    {agentHost || "—"}
+                  </code>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-[11px] text-slate-500">Tenant API Key</p>
+                <div className="flex items-center gap-2 bg-slate-950/60 border border-slate-700/70 rounded-lg px-3 py-2">
+                  <code className="flex-1 text-xs text-cyan-300 font-mono truncate" dir="ltr">
+                    {client.apiKey || "לא הוגדר"}
+                  </code>
+                  {client.apiKey && <CopyButton text={client.apiKey} />}
+                </div>
               </div>
             </div>
           </div>
         </div>
-      </main>
+          </main>
+        </div>
+      </div>
     </div>
   );
 }
-

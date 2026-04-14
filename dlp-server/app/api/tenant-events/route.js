@@ -75,6 +75,7 @@ export async function POST(request) {
     let resolvedSeverity;
     let resolvedDetails;
     let resolvedWebhookUrl;
+    let resolvedExpireAt;
 
     if (tenantApiKey) {
       // ── Auth path: validate tenantApiKey and resolve tenant ──────────────
@@ -172,7 +173,6 @@ export async function POST(request) {
       });
     }
 
-    return NextResponse.json({ event }, { status: 201 });
     return NextResponse.json({ event }, { status: 201, headers: CORS_HEADERS });
   } catch (err) {
     return NextResponse.json({ error: err.message }, { status: err.status || 500 });
@@ -180,6 +180,5 @@ export async function POST(request) {
 }
 
 export async function OPTIONS() {
-  // OPTIONS preflight is handled centrally by middleware.js.
-  return new NextResponse(null, { status: 204 });
+  return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
 }

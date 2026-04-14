@@ -17,6 +17,7 @@ import {
   recordUserActivity,
   connectMongo,
   Tenant,
+  hashApiKey,
 } from "../../../lib/db.js";
 import { getDefaultPolicies, SEVERITY_SCORES } from "../../../lib/policies.js";
 import { runTriageWithStats } from "../../../lib/triage.js";
@@ -390,7 +391,7 @@ export async function POST(request) {
     if (rawApiKey) {
       try {
         await connectMongo();
-        const tenant = await Tenant.findOne({ apiKey: rawApiKey }).lean();
+        const tenant = await Tenant.findOne({ apiKey: hashApiKey(rawApiKey) }).lean();
         if (tenant) {
           const blocksInc = replacements.length > 0 ? { "usage.totalBlocks": 1 } : {};
           await Tenant.updateOne(

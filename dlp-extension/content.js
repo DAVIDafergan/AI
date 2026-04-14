@@ -951,7 +951,22 @@ async function interceptInput(element) {
     return;
   }
 
+  // ── Soft-only typing: phone/account numbers alone don't block typing ──────
+  // When the preflight detects only "soft" patterns (PHONE, ACCOUNT) with no
+  // evasion and no checksum-validated matches, let the user keep typing freely.
+  // These will still be checked by the server on paste/send (interceptSend),
+  // but we don't interrupt the typing flow for regular numbers.
+  // Note: `softOnly` already implies no evasion and no hard patterns; the
+  // `tier1Exact` guard is redundant but kept as a safety net since tier1
+  // matches (credit card/ID checksums) should always override soft-only.
+  if (!preflight?.error && preflight?.softOnly && !preflight?.tier1Exact) {
+    safeStateMap.set(element, text);
+    return;
+  }
+
   // ── Tier 1 exact bypass: checksum-validated match – mask locally, skip AI ──
+  // Note: only CREDIT_CARD and ID_NUMBER have checksum validation.
+  // PHONE/ACCOUNT never reach here because they have no checksum validator.
   if (!preflight?.error && preflight?.tier1Exact && preflight?.tier1Matches?.length > 0) {
     const { maskedText, replacements } = applyTier1Masking(text, preflight.tier1Matches);
     if (replacements.length > 0) {

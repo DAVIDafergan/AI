@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { connectMongo, Tenant, Agent, TenantEvent } from "../../../lib/db.js";
+import { connectMongo, Tenant, Agent, TenantEvent, hashApiKey } from "../../../lib/db.js";
 
 export const dynamic = "force-dynamic";
 const CORS_HEADERS = {
@@ -25,7 +25,7 @@ export async function GET(request) {
 
     await connectMongo();
 
-    const tenant = await Tenant.findOne({ apiKey }).lean();
+    const tenant = await Tenant.findOne({ apiKey: hashApiKey(apiKey) }).lean();
     if (!tenant) {
       return NextResponse.json({ error: "מפתח API אינו תקין" }, { status: 401, headers: CORS_HEADERS });
     }
@@ -126,9 +126,9 @@ export async function GET(request) {
 
     // בנה פקודת התקנת סוכן שרת (אם יש סוכן ראשון)
     const primaryAgent = enrichedAgents[0] || null;
-    const deploymentConfig = primaryAgent
-      ? buildDeploymentConfig(serverUrl, tenant.apiKey)
-      : null;
+    // Always build deployment config so the dashboard shows instructions
+    // even before the first agent connects.
+    const deploymentConfig = buildDeploymentConfig(serverUrl, apiKey);
 
     return NextResponse.json(
       {
@@ -138,7 +138,9 @@ export async function GET(request) {
           plan: tenant.plan,
           status: tenant.status,
           contactEmail: tenant.contactEmail,
-          apiKey: tenant.apiKey,
+          // Return the raw API key (from the request header) instead of the stored
+          // hash so the dashboard can display it for copy-paste into agent configs.
+          apiKey,
         },
         stats: {
           connectedAgents,

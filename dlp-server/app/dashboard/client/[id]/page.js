@@ -58,6 +58,12 @@ const ACTION_LABELS = {
   user_action:      "USER",
 };
 
+/**
+ * Extracts a host from a URL-like value.
+ * Falls back to a lightweight protocol/path strip when URL parsing fails.
+ * @param {string} url
+ * @returns {string}
+ */
 function getHostFromUrl(url = "") {
   if (!url) return "";
   try {
@@ -67,6 +73,11 @@ function getHostFromUrl(url = "") {
   }
 }
 
+/**
+ * Validates whether a host string is a valid IPv4 address.
+ * @param {string} host
+ * @returns {boolean}
+ */
 function isValidIPv4(host = "") {
   return /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/.test(host);
 }
@@ -431,8 +442,8 @@ export default function ClientDetailPage() {
     .slice(0, 5);
   const agentEndpoint = client.serverUrl || "לא הוגדר";
   const agentHost = client.serverUrl ? getHostFromUrl(client.serverUrl) : "";
-  const ipv4Candidate = /^[\d.]+$/.test(agentHost);
-  const invalidIpFormat = Boolean(agentHost) && ipv4Candidate && !isValidIPv4(agentHost);
+  const looksLikeIPv4 = /^[\d.]+$/.test(agentHost);
+  const invalidIpFormat = Boolean(agentHost) && looksLikeIPv4 && !isValidIPv4(agentHost);
 
   return (
     <div dir="rtl" className="min-h-screen bg-slate-900 text-white">

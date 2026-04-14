@@ -12,7 +12,6 @@ import {
   connectMongo,
   Tenant,
   TenantEvent,
-  hashApiKey,
   findTenantByApiKey,
 } from "../../../lib/db.js";
 import { getDefaultPolicies } from "../../../lib/policies.js";

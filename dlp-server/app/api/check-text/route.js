@@ -17,7 +17,6 @@ import {
   recordUserActivity,
   connectMongo,
   Tenant,
-  hashApiKey,
   findTenantByApiKey,
 } from "../../../lib/db.js";
 import { getDefaultPolicies, SEVERITY_SCORES } from "../../../lib/policies.js";

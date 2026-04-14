@@ -22,6 +22,48 @@ import GhostLogo from "../../components/GhostLogo";
 
 function clsx(...cls) { return cls.filter(Boolean).join(" "); }
 function formatNum(n) { return (n ?? 0).toLocaleString("he-IL"); }
+const TENANT_DASHBOARD_API_PATH = "/api/tenant-dashboard";
+const ADMIN_API_KEY_STORAGE_KEYS = ["ghostlayer_admin_key", "tenantApiKey", "ghostlayer_api_key"];
+
+function readStoredApiKey() {
+  if (typeof window === "undefined") return "";
+  for (const key of ADMIN_API_KEY_STORAGE_KEYS) {
+    const fromLocal = localStorage.getItem(key)?.trim();
+    if (fromLocal) return fromLocal;
+    const fromSession = sessionStorage.getItem(key)?.trim();
+    if (fromSession) return fromSession;
+  }
+  return "";
+}
+
+function readEnvApiKey() {
+  return (
+    process.env.NEXT_PUBLIC_TENANT_API_KEY ||
+    process.env.NEXT_PUBLIC_DLP_API_KEY ||
+    process.env.NEXT_PUBLIC_API_KEY ||
+    ""
+  ).trim();
+}
+
+function resolveTenantApiKey(preferred = "") {
+  return preferred?.trim() || readStoredApiKey() || readEnvApiKey();
+}
+
+function persistTenantApiKey(key) {
+  if (typeof window === "undefined") return;
+  const clean = key?.trim();
+  if (!clean) return;
+  try { localStorage.setItem("ghostlayer_admin_key", clean); } catch {}
+  try { sessionStorage.setItem("ghostlayer_admin_key", clean); } catch {}
+}
+
+function clearPersistedTenantApiKey() {
+  if (typeof window === "undefined") return;
+  for (const key of ADMIN_API_KEY_STORAGE_KEYS) {
+    try { localStorage.removeItem(key); } catch {}
+    try { sessionStorage.removeItem(key); } catch {}
+  }
+}
 
 function LiveDot({ color = "bg-green-500" }) {
   return (
@@ -905,12 +947,13 @@ function AuthGate({ onAuth }) {
   const [loading, setLoading] = useState(false);
 
   const submit = async () => {
-    if (!key.trim()) return;
+    const requestKey = resolveTenantApiKey(key);
+    if (!requestKey) return;
     setErr(""); setLoading(true);
     try {
-      const res = await fetch("/api/tenant-dashboard", { headers: { "x-api-key": key.trim() } });
+      const res = await fetch(TENANT_DASHBOARD_API_PATH, { headers: { "x-api-key": requestKey } });
       if (res.ok) {
-        onAuth(key.trim(), await res.json());
+        onAuth(requestKey, await res.json());
       } else {
         let msg = "מפתח שגוי";
         try { const d = await res.json(); msg = d.error || msg; } catch {}
@@ -950,6 +993,8 @@ function AuthGate({ onAuth }) {
 export default function CommandCenterDashboard() {
   const [apiKey, setApiKey] = useState(null);
   const [data, setData]     = useState(null);
+  const [isHydrating, setIsHydrating] = useState(true);
+  const [isDataLoading, setIsDataLoading] = useState(false);
   const [time, setTime]     = useState("");
   const refreshRef = useRef(null);
 
@@ -960,34 +1005,42 @@ export default function CommandCenterDashboard() {
     return () => clearInterval(id);
   }, []);
 
-  // Restore API key from sessionStorage on mount to survive page refreshes.
+  // Restore API key from local/session storage (or env fallback) on mount.
   useEffect(() => {
     try {
-      const saved = sessionStorage.getItem("ghostlayer_admin_key");
+      const saved = resolveTenantApiKey();
       if (saved) setApiKey(saved);
     } catch {}
+    setIsHydrating(false);
+  }, []);
+
+  const redirectToAuth = useCallback(() => {
+    clearPersistedTenantApiKey();
+    setApiKey(null);
+    setData(null);
+    window.location.replace("/admin");
   }, []);
 
   const loadData = useCallback(async (key) => {
+    const requestKey = resolveTenantApiKey(key);
+    if (!requestKey) {
+      redirectToAuth();
+      return;
+    }
+    setIsDataLoading(true);
     try {
-      const res = await fetch("/api/tenant-dashboard", { headers: { "x-api-key": key } });
+      const res = await fetch(TENANT_DASHBOARD_API_PATH, { headers: { "x-api-key": requestKey } });
       if (res.ok) {
         setData(await res.json());
       } else if (res.status === 401 || res.status === 403) {
-        // Key no longer valid – clear persisted key and show login gate.
-        try { sessionStorage.removeItem("ghostlayer_admin_key"); } catch {}
-        setApiKey(null);
-        setData(null);
-      } else {
-        console.error("[GhostLayer] Refresh failed:", res.status);
+        redirectToAuth();
       }
-    } catch (err) {
-      console.error("[GhostLayer] Refresh error:", err);
-    }
-  }, []);
+    } catch {}
+    finally { setIsDataLoading(false); }
+  }, [redirectToAuth]);
 
   const handleAuth = useCallback((key, initialData) => {
-    try { sessionStorage.setItem("ghostlayer_admin_key", key); } catch {}
+    persistTenantApiKey(key);
     setApiKey(key);
     setData(initialData);
   }, []);
@@ -1002,6 +1055,14 @@ export default function CommandCenterDashboard() {
     refreshRef.current = setInterval(() => loadData(apiKey), 15000);
     return () => clearInterval(refreshRef.current);
   }, [apiKey, loadData]);
+
+  if (isHydrating || (apiKey && isDataLoading && !data)) {
+    return (
+      <div className="min-h-screen bg-[#030712] flex items-center justify-center text-slate-300" dir="rtl">
+        Loading
+      </div>
+    );
+  }
 
   if (!apiKey) return <AuthGate onAuth={handleAuth} />;
 
@@ -1030,7 +1091,7 @@ export default function CommandCenterDashboard() {
           </button>
           <button
             onClick={() => {
-              try { sessionStorage.removeItem("ghostlayer_admin_key"); } catch {}
+              clearPersistedTenantApiKey();
               setApiKey(null);
               setData(null);
             }}

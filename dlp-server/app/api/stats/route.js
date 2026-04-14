@@ -13,6 +13,7 @@ import {
   Tenant,
   TenantEvent,
   hashApiKey,
+  findTenantByApiKey,
 } from "../../../lib/db.js";
 import { getDefaultPolicies } from "../../../lib/policies.js";
 
@@ -51,7 +52,7 @@ export async function GET(request) {
       if (rawApiKey) {
         try {
           await connectMongo();
-          const tenant = await Tenant.findOne({ apiKey: hashApiKey(rawApiKey) }).lean();
+          const tenant = await findTenantByApiKey(rawApiKey);
           if (tenant) {
             const tenantId = tenant._id;
             const [totalBlocks, catAgg, lastEvent] = await Promise.all([

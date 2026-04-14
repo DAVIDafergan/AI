@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import mongoose from "mongoose";
-import { connectMongo, Tenant, hashApiKey } from "../../../../lib/db.js";
+import { connectMongo, Tenant, findTenantByApiKey } from "../../../../lib/db.js";
 
 export const dynamic = "force-dynamic";
 // ── ScanReport Schema ──
@@ -29,7 +29,7 @@ export async function POST(request) {
       return NextResponse.json({ error: "Missing x-api-key header" }, { status: 401 });
     }
 
-    const tenant = await Tenant.findOne({ apiKey: hashApiKey(apiKey) }).lean();
+    const tenant = await findTenantByApiKey(apiKey);
     if (!tenant) {
       return NextResponse.json({ error: "Invalid API key" }, { status: 403 });
     }

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireSuperAdmin } from "../../../lib/superAdminAuth.js";
-import { connectMongo, Tenant, TenantEvent, hashApiKey } from "../../../lib/db.js";
+import { connectMongo, Tenant, TenantEvent, findTenantByApiKey } from "../../../lib/db.js";
 
 export const dynamic = "force-dynamic";
 
@@ -80,7 +80,7 @@ export async function POST(request) {
     if (tenantApiKey) {
       // ── Auth path: validate tenantApiKey and resolve tenant ──────────────
       // Hash the incoming key and compare against the stored SHA-256 digest.
-      const tenant = await Tenant.findOne({ apiKey: hashApiKey(tenantApiKey) }).lean();
+      const tenant = await findTenantByApiKey(tenantApiKey);
       if (!tenant) {
         return NextResponse.json({ error: "Invalid tenantApiKey" }, { status: 401 });
       }

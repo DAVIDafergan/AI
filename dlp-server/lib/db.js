@@ -463,6 +463,30 @@ export async function validateApiKey(key) {
   return { organizationId: tenant._id.toString(), orgName: tenant.name };
 }
 
+/**
+ * Resolve a raw API key to the full Tenant document.
+ * Checks the dedicated ApiKey collection first, then falls back to the
+ * Tenant.apiKey field – mirrors the logic in {@link validateApiKey} but
+ * returns the full Tenant document instead of a minimal object.
+ *
+ * @param {string} rawKey – the unhashed API key supplied by the caller
+ * @returns {Promise<object|null>} – lean Tenant document, or null
+ */
+export async function findTenantByApiKey(rawKey) {
+  await connectMongo();
+  const hashed = hashApiKey(rawKey);
+  // Try dedicated ApiKey collection first (covers rotated / additional keys).
+  const apiKeyDoc = await ApiKey.findOne({ key: hashed }).lean();
+  if (apiKeyDoc) {
+    try {
+      const tenant = await Tenant.findById(apiKeyDoc.organizationId).lean();
+      if (tenant) return tenant;
+    } catch { /* invalid ObjectId – fall through */ }
+  }
+  // Fallback: Tenant.apiKey field (tenants provisioned via super-admin).
+  return await Tenant.findOne({ apiKey: hashed }).lean();
+}
+
 export async function createApiKey(orgId) {
   await connectMongo();
   const rawKey = `key-${randomUUID().replace(/-/g, "").slice(0, 20)}`;

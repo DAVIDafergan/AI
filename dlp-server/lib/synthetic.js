@@ -49,10 +49,10 @@ export function generateEmail() {
 
 // ── כרטיס אשראי (Luhn valid, Visa) ──
 export function generateCreditCard() {
-  const prefix = [4, ...Array.from({ length: 11 }, () => randInt(0, 9))];
+  const prefix = [4, ...Array.from({ length: 14 }, () => randInt(0, 9))];
   let sum = 0;
   for (let i = 0; i < 15; i++) {
-    let v = prefix[i] * (i % 2 === 0 ? 1 : 2);
+    let v = prefix[i] * (i % 2 === 0 ? 2 : 1);
     if (v > 9) v -= 9;
     sum += v;
   }

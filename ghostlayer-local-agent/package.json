@@ -8,7 +8,8 @@
     "ghostlayer-agent": "./index.js"
   },
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "test": "node --test tests/bloom.test.mjs tests/evasion.test.mjs tests/api.e2e.test.mjs"
   },
   "dependencies": {
     "@qdrant/js-client-rest": "^1.17.0",

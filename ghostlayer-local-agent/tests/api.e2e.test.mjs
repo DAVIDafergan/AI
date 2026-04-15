@@ -28,6 +28,7 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { startApiServer } from "../api-server.js";
+import { getRedisClient } from "../redis-client.js";
 
 const TEST_PORT = 49878;
 const BASE = `http://127.0.0.1:${TEST_PORT}`;
@@ -51,8 +52,13 @@ describe("Local Agent API – End-to-End", { timeout: 30_000 }, () => {
     });
   });
 
-  after(() => {
+  after(async () => {
     server?.close();
+    // Force-disconnect Redis to stop reconnect timers then exit cleanly
+    try { getRedisClient().disconnect(); } catch {}
+    // Allow a short drain window, then exit – ioredis reconnect timers would
+    // otherwise keep the process alive indefinitely in a Redis-less environment.
+    setTimeout(() => process.exit(0), 500).unref();
   });
 
   // ── Health Check ────────────────────────────────────────────────────────────

@@ -2237,7 +2237,6 @@ async function init() {
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area !== "local") return;
       if (changes.localAgentUrl?.newValue) localAgentUrl = changes.localAgentUrl.newValue;
-      if (changes.serverUrl?.newValue)     localAgentUrl = changes.serverUrl.newValue;
       if (changes.tenantApiKey?.newValue)  tenantApiKey  = changes.tenantApiKey.newValue;
       if (changes.employeeEmail?.newValue) userEmail     = changes.employeeEmail.newValue;
     });

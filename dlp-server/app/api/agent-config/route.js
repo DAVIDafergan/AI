@@ -16,24 +16,6 @@ function normalizeUrl(url) {
   return trimmed.replace(/\/+$/, "");
 }
 
-function resolveFallbackUrl(request) {
-  const envUrl =
-    process.env.DLP_SERVER_URL ||
-    process.env.NEXT_PUBLIC_DLP_SERVER_URL ||
-    process.env.NEXT_PUBLIC_SERVER_URL ||
-    "";
-
-  const normalizedEnv = normalizeUrl(envUrl);
-  if (normalizedEnv) return normalizedEnv;
-
-  try {
-    const origin = new URL(request.url).origin;
-    return normalizeUrl(origin) || "http://localhost:3000";
-  } catch {
-    return "http://localhost:3000";
-  }
-}
-
 function trimApiKey(apiKey) {
   if (typeof apiKey !== "string") return "";
   return apiKey.trim();
@@ -65,8 +47,6 @@ export async function OPTIONS() {
 }
 
 export async function GET(request) {
-  const fallbackUrl = resolveFallbackUrl(request);
-
   try {
     await connectMongo();
     const { searchParams } = new URL(request.url);
@@ -76,18 +56,17 @@ export async function GET(request) {
 
     const tenant = await resolveTenant({ rawApiKey, tenantId, tenantSlug });
 
-    const agentUrl = normalizeUrl(tenant?.serverUrl) || fallbackUrl;
+    const agentUrl = normalizeUrl(tenant?.serverUrl) || null;
     const apiKey = resolveApiKeyForResponse(tenant, rawApiKey);
 
     return NextResponse.json({ agentUrl, apiKey }, { headers: CORS_HEADERS });
   } catch (err) {
     console.warn("[agent-config] Failed to resolve tenant agent URL, using fallback:", err?.message || err);
-    return NextResponse.json({ agentUrl: fallbackUrl, apiKey: "" }, { headers: CORS_HEADERS });
+    return NextResponse.json({ agentUrl: null, apiKey: "" }, { headers: CORS_HEADERS });
   }
 }
 
 async function upsertConfig(request) {
-  const fallbackUrl = resolveFallbackUrl(request);
   try {
     await connectMongo();
     const { searchParams } = new URL(request.url);
@@ -125,7 +104,7 @@ async function upsertConfig(request) {
       { new: true, projection: { serverUrl: 1, settings: 1 } }
     ).lean();
 
-    const responseAgentUrl = normalizeUrl(updated?.serverUrl) || fallbackUrl;
+    const responseAgentUrl = normalizeUrl(updated?.serverUrl) || null;
     const responseApiKey = resolveApiKeyForResponse(updated, rawApiKey);
 
     return NextResponse.json(

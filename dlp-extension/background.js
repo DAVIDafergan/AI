@@ -281,7 +281,10 @@ async function resolveHeartbeatIdentity(preferredEmail) {
         resolve(existing);
         return;
       }
-      const generated = `ext-${crypto.randomUUID()}@${FALLBACK_HEARTBEAT_IDENTITY_DOMAIN}`;
+      const randomPart =
+        globalThis.crypto?.randomUUID?.() ||
+        `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+      const generated = `ext-${randomPart}@${FALLBACK_HEARTBEAT_IDENTITY_DOMAIN}`;
       chrome.storage.local.set({ dlp_heartbeatIdentity: generated }, () => resolve(generated));
     });
   });

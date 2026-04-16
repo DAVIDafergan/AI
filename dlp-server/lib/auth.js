@@ -18,7 +18,6 @@
  *   Use the same OIDC_ variables pointing at the proxy's OIDC endpoint.
  */
 
-import NextAuth from "next-auth";
 import { connectMongo, TenantUser } from "./db.js";
 
 /**
@@ -122,5 +121,3 @@ export const authOptions = {
     error:   "/auth/error",
   },
 };
-
-export default NextAuth(authOptions);

@@ -3,6 +3,13 @@ import { jwtVerify } from "jose";
 
 /** Maximum allowed request body size for API routes (bytes). */
 const MAX_BODY_BYTES = 500 * 1024; // 500 KB
+const PUBLIC_CORS_API_PATHS = new Set(["/api/agent-config"]);
+const PUBLIC_CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+  "Access-Control-Allow-Headers":
+    "Content-Type, Authorization, x-api-key, x-dlp-extension, x-super-admin-key",
+};
 
 /**
  * Returns the set of allowed origins from the environment variable.
@@ -27,6 +34,9 @@ export async function middleware(request) {
 
     // Reject preflight OPTIONS requests from unknown origins immediately
     if (request.method === "OPTIONS") {
+      if (PUBLIC_CORS_API_PATHS.has(pathname)) {
+        return new NextResponse(null, { status: 204, headers: PUBLIC_CORS_HEADERS });
+      }
       if (!allowedOrigins.has(origin)) {
         return new NextResponse(null, { status: 403 });
       }

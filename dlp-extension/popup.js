@@ -43,12 +43,9 @@ chrome.runtime.sendMessage({ type: "GET_STATS" }, (data) => {
   serverUrlInput.value          = data.serverUrl || DEFAULT_SERVER;
   enabledToggle.checked         = data.enabled !== false;
 
-  // Read localAgentUrl directly from storage (not included in GET_STATS response)
-  chrome.storage.local.get(["localAgentUrl"], (localData) => {
-    const activeServer = localData.localAgentUrl || data.serverUrl || DEFAULT_SERVER;
-    if (serverDisplayEl) serverDisplayEl.textContent = activeServer;
-    checkConnection(activeServer, data.tenantApiKey || "");
-  });
+  const activeServer = data.localAgentUrl || data.serverUrl || DEFAULT_SERVER;
+  if (serverDisplayEl) serverDisplayEl.textContent = activeServer;
+  checkConnection(activeServer, data.tenantApiKey || "");
 
   // Resolve the best available email:
   // Priority: employeeEmail (manually configured in Options page by the user)

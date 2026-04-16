@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "shield": "node desktop-shield.js"
+    "shield": "node desktop-shield.js",
+    "test": "node --test tests/evasion.test.mjs tests/triage.test.mjs tests/synthetic.test.mjs tests/policies.test.mjs"
   },
   "dependencies": {
     "clipboardy": "^4.0.0",

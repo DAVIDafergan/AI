@@ -5,6 +5,7 @@
 const HEALTH_CHECK_TIMEOUT_MS = 8000;
 // Development-only fallback; production should be supplied via dashboard/managed config.
 const DEFAULT_SERVER_URL = "http://localhost:3000";
+const FALLBACK_HEARTBEAT_IDENTITY_DOMAIN = "extension.local";
 
 /**
  * Read a setting from chrome.storage.managed first (IT/MDM/GPO), then fall back
@@ -245,23 +246,47 @@ function updateBadge(count) {
 
 // ── Get current stats ─────────────────────────────────────────────────────────
 async function getStats() {
+  const storageData = await readManagedThenLocal([
+    "restoredCount",
+    "interceptedCount",
+    "sessionStart",
+    "serverUrl",
+    "localAgentUrl",
+    "enabled",
+    "userEmail",
+    "employeeEmail",
+    "dlp_user_stats",
+    "tenantApiKey",
+  ]);
+  return {
+    restoredCount: storageData.restoredCount || 0,
+    interceptedCount: storageData.interceptedCount || 0,
+    sessionStart: storageData.sessionStart || Date.now(),
+    serverUrl: storageData.serverUrl || DEFAULT_SERVER_URL,
+    localAgentUrl: storageData.localAgentUrl || null,
+    enabled: storageData.enabled !== false,
+    userEmail: storageData.userEmail || null,
+    employeeEmail: storageData.employeeEmail || null,
+    userStats: storageData.dlp_user_stats || {},
+    tenantApiKey: storageData.tenantApiKey || null,
+  };
+}
+
+async function resolveHeartbeatIdentity(preferredEmail) {
+  if (preferredEmail) return preferredEmail;
   return new Promise((resolve) => {
-    chrome.storage.local.get(
-      ["restoredCount", "interceptedCount", "sessionStart", "serverUrl", "enabled", "userEmail", "employeeEmail", "dlp_user_stats", "tenantApiKey"],
-      (data) => {
-        resolve({
-          restoredCount: data.restoredCount || 0,
-          interceptedCount: data.interceptedCount || 0,
-          sessionStart: data.sessionStart || Date.now(),
-          serverUrl: data.serverUrl || DEFAULT_SERVER_URL,
-          enabled: data.enabled !== false,
-          userEmail: data.userEmail || null,
-          employeeEmail: data.employeeEmail || null,
-          userStats: data.dlp_user_stats || {},
-          tenantApiKey: data.tenantApiKey || null,
-        });
+    chrome.storage.local.get(["dlp_heartbeatIdentity"], (stored) => {
+      const existing = stored?.dlp_heartbeatIdentity?.trim() || "";
+      if (existing) {
+        resolve(existing);
+        return;
       }
-    );
+      const randomPart =
+        globalThis.crypto?.randomUUID?.() ||
+        `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+      const generated = `ext-${randomPart}@${FALLBACK_HEARTBEAT_IDENTITY_DOMAIN}`;
+      chrome.storage.local.set({ dlp_heartbeatIdentity: generated }, () => resolve(generated));
+    });
   });
 }
 
@@ -409,8 +434,7 @@ async function sendUserHeartbeat() {
 
     const serverUrl = data.serverUrl || DEFAULT_SERVER_URL;
     const apiKey    = data.tenantApiKey || "";
-    const email     = data.employeeEmail || data.userEmail || null;
-    if (!email) return; // Skip heartbeat if no email configured – avoids invalid telemetry
+    const email = await resolveHeartbeatIdentity(data.employeeEmail || data.userEmail || null);
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);

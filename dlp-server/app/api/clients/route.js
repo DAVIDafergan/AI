@@ -7,6 +7,13 @@ import {
   getApiKeysForOrg,
 } from "../../../lib/db.js";
 
+function normalizeUrl(value) {
+  if (typeof value !== "string") return "";
+  let normalized = value.trim();
+  while (normalized.length > 0 && normalized.endsWith("/")) normalized = normalized.slice(0, -1);
+  return normalized;
+}
+
 // GET – רשימת כל הלקוחות עם סטטיסטיקות
 export async function GET() {
   try {
@@ -34,7 +41,7 @@ export async function POST(request) {
       notes: notes || "",
       status: "active",
       initialPolicy: initialPolicy || [],
-      agentUrl: typeof agentUrl === "string" ? agentUrl.trim().replace(/\/+$/, "") : "",
+      agentUrl: normalizeUrl(agentUrl),
     });
 
     // בניית הוראות חיבור מפורטות

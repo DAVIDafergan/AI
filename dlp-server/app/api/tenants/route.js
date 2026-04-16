@@ -6,7 +6,12 @@ import { randomUUID } from "crypto";
 
 export const dynamic = "force-dynamic";
 const AGENT_ONLINE_THRESHOLD_MS = 60000;
-const normalizeUrl = (value) => (typeof value === "string" ? value.trim().replace(/\/+$/, "") : "");
+const normalizeUrl = (value) => {
+  if (typeof value !== "string") return "";
+  let normalized = value.trim();
+  while (normalized.length > 0 && normalized.endsWith("/")) normalized = normalized.slice(0, -1);
+  return normalized;
+};
 
 function slugify(name) {
   return name

@@ -57,7 +57,7 @@ export async function GET(request) {
 
     const tenant = await resolveTenant({ rawApiKey, tenantId, tenantSlug });
 
-    const agentUrl = normalizeUrl(tenant?.agentUrl || tenant?.serverUrl) || null;
+    const agentUrl = normalizeUrl(tenant?.agentUrl) || normalizeUrl(tenant?.serverUrl) || null;
     const apiKey = resolveApiKeyForResponse(tenant, rawApiKey);
     const policies = Array.isArray(tenant?.settings?.policies)
       ? tenant.settings.policies
@@ -108,7 +108,7 @@ async function upsertConfig(request) {
       { new: true, projection: { agentUrl: 1, serverUrl: 1, settings: 1 } }
     ).lean();
 
-    const responseAgentUrl = normalizeUrl(updated?.agentUrl || updated?.serverUrl) || null;
+    const responseAgentUrl = normalizeUrl(updated?.agentUrl) || normalizeUrl(updated?.serverUrl) || null;
     const responseApiKey = resolveApiKeyForResponse(updated, rawApiKey);
     const responsePolicies = Array.isArray(updated?.settings?.policies)
       ? updated.settings.policies

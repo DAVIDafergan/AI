@@ -3,9 +3,11 @@
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const HEALTH_CHECK_TIMEOUT_MS = 8000;
-// Development-only fallback; production should be supplied via dashboard/managed config.
-const DEFAULT_SERVER_URL = "http://localhost:3000";
+const DASHBOARD_BASE_URL = "https://ai-production-ffa9.up.railway.app";
+const DASHBOARD_AGENT_CONFIG_URL = `${DASHBOARD_BASE_URL}/api/agent-config`;
 const FALLBACK_HEARTBEAT_IDENTITY_DOMAIN = "extension.local";
+const LAST_KNOWN_GOOD_AGENT_URL_KEY = "dlp_lastKnownGoodAgentUrl";
+const LAST_KNOWN_GOOD_API_KEY_KEY = "dlp_lastKnownGoodApiKey";
 
 /**
  * Read a setting from chrome.storage.managed first (IT/MDM/GPO), then fall back
@@ -39,23 +41,43 @@ function readManagedThenLocal(keys) {
   });
 }
 
+function normalizeUrl(value) {
+  if (typeof value !== "string") return "";
+  return value.trim().replace(/\/+$/, "");
+}
+
+async function fetchDashboardAgentConfig(apiKey) {
+  const normalizedApiKey = typeof apiKey === "string" ? apiKey.trim() : "";
+  const res = await fetch(DASHBOARD_AGENT_CONFIG_URL, {
+    cache: "no-store",
+    headers: normalizedApiKey ? { "x-api-key": normalizedApiKey } : undefined,
+  });
+  if (!res.ok) {
+    throw new Error(`agent-config HTTP ${res.status}`);
+  }
+  const data = await res.json();
+  return {
+    agentUrl: normalizeUrl(data?.agentUrl),
+    apiKey: typeof data?.apiKey === "string" ? data.apiKey.trim() : "",
+    policies: Array.isArray(data?.policies) ? data.policies : [],
+  };
+}
+
 function resolveRuntimeScanConfig() {
   return readManagedThenLocal([
-    "serverUrl",
     "localAgentUrl",
     "tenantApiKey",
-    "dlp_lastKnownGoodAgentUrl",
-    "dlp_lastKnownGoodApiKey",
+    LAST_KNOWN_GOOD_AGENT_URL_KEY,
+    LAST_KNOWN_GOOD_API_KEY_KEY,
   ]).then((data) => {
     const localAgentUrl = typeof data?.localAgentUrl === "string" ? data.localAgentUrl.trim() : "";
-    const serverUrl = typeof data?.serverUrl === "string" ? data.serverUrl.trim() : "";
     const tenantApiKey = typeof data?.tenantApiKey === "string" ? data.tenantApiKey.trim() : "";
     const lastKnownGoodAgentUrl =
-      typeof data?.dlp_lastKnownGoodAgentUrl === "string" ? data.dlp_lastKnownGoodAgentUrl.trim() : "";
+      typeof data?.[LAST_KNOWN_GOOD_AGENT_URL_KEY] === "string" ? data[LAST_KNOWN_GOOD_AGENT_URL_KEY].trim() : "";
     const lastKnownGoodApiKey =
-      typeof data?.dlp_lastKnownGoodApiKey === "string" ? data.dlp_lastKnownGoodApiKey.trim() : "";
+      typeof data?.[LAST_KNOWN_GOOD_API_KEY_KEY] === "string" ? data[LAST_KNOWN_GOOD_API_KEY_KEY].trim() : "";
     return {
-      agentUrl: localAgentUrl || lastKnownGoodAgentUrl || serverUrl || DEFAULT_SERVER_URL,
+      agentUrl: localAgentUrl || lastKnownGoodAgentUrl || "",
       apiKey: tenantApiKey || lastKnownGoodApiKey,
     };
   });
@@ -110,6 +132,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const { text, userEmail, source, mode } = message;
     resolveRuntimeScanConfig()
       .then(({ agentUrl, apiKey }) => {
+        if (!agentUrl) {
+          sendResponse({ error: true, errorCode: 0, message: "Agent URL is not configured" });
+          return;
+        }
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 8000);
         fetch(`${agentUrl}/api/check-text`, {
@@ -152,6 +178,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const { imageData, userEmail } = message;
     resolveRuntimeScanConfig()
       .then(({ agentUrl, apiKey }) => {
+        if (!agentUrl) {
+          sendResponse({ error: true, message: "Agent URL is not configured" });
+          return;
+        }
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 30000); // OCR may take up to 30s
         fetch(`${agentUrl}/api/check-image`, {
@@ -262,7 +292,7 @@ async function getStats() {
     restoredCount: storageData.restoredCount || 0,
     interceptedCount: storageData.interceptedCount || 0,
     sessionStart: storageData.sessionStart || Date.now(),
-    serverUrl: storageData.serverUrl || DEFAULT_SERVER_URL,
+    serverUrl: storageData.serverUrl || DASHBOARD_BASE_URL,
     localAgentUrl: storageData.localAgentUrl || null,
     enabled: storageData.enabled !== false,
     userEmail: storageData.userEmail || null,
@@ -304,7 +334,7 @@ chrome.runtime.onInstalled.addListener(() => {
       restoredCount: 0,
       interceptedCount: 0,
       sessionStart: Date.now(),
-      serverUrl: existing.serverUrl || DEFAULT_SERVER_URL,
+      serverUrl: existing.serverUrl || DASHBOARD_BASE_URL,
       enabled: existing.enabled !== undefined ? existing.enabled : true,
     });
   });
@@ -366,28 +396,33 @@ chrome.alarms.onAlarm.addListener((alarm) => {
  */
 async function syncLivePolicy() {
   try {
-    const data = await readManagedThenLocal(["serverUrl", "tenantApiKey", "enabled"]);
+    const data = await readManagedThenLocal([
+      "tenantApiKey",
+      "enabled",
+      "localAgentUrl",
+      LAST_KNOWN_GOOD_AGENT_URL_KEY,
+      LAST_KNOWN_GOOD_API_KEY_KEY,
+    ]);
     if (!data.enabled) return;
 
-    const serverUrl = data.serverUrl || DEFAULT_SERVER_URL;
     const apiKey    = data.tenantApiKey || "";
     if (!apiKey) return; // cannot fetch without an API key
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
-
-    const res = await fetch(`${serverUrl}/api/organizations/policy`, {
-      headers: { "x-api-key": apiKey },
-      signal: controller.signal,
+    const body = await fetchDashboardAgentConfig(apiKey);
+    const nextAgentUrl =
+      body.agentUrl ||
+      normalizeUrl(data.localAgentUrl) ||
+      normalizeUrl(data[LAST_KNOWN_GOOD_AGENT_URL_KEY]);
+    const nextApiKey =
+      body.apiKey ||
+      (typeof data[LAST_KNOWN_GOOD_API_KEY_KEY] === "string" ? data[LAST_KNOWN_GOOD_API_KEY_KEY].trim() : "") ||
+      apiKey;
+    await chrome.storage.local.set({
+      localAgentUrl: nextAgentUrl,
+      tenantApiKey: nextApiKey,
+      [LAST_KNOWN_GOOD_AGENT_URL_KEY]: nextAgentUrl,
+      [LAST_KNOWN_GOOD_API_KEY_KEY]: nextApiKey,
+      dlp_live_policy: body.policies,
     });
-    clearTimeout(timeout);
-
-    if (res.ok) {
-      const body = await res.json();
-      if (Array.isArray(body.policies)) {
-        await chrome.storage.local.set({ dlp_live_policy: body.policies });
-      }
-    }
   } catch (err) {
     // Non-critical – policy sync failures do not block extension operation.
     // The extension continues to use the previously cached policy (or server-side enforcement).
@@ -397,14 +432,13 @@ async function syncLivePolicy() {
 
 async function performHealthCheck() {
   try {
-    const data = await readManagedThenLocal(["serverUrl", "tenantApiKey", "enabled"]);
+    const data = await readManagedThenLocal(["tenantApiKey", "enabled"]);
     if (!data.enabled) return;
 
-    const serverUrl = data.serverUrl || DEFAULT_SERVER_URL;
     const apiKey = typeof data.tenantApiKey === "string" ? data.tenantApiKey.trim() : "";
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), HEALTH_CHECK_TIMEOUT_MS);
-    const res = await fetch(`${serverUrl}/api/health`, {
+    const res = await fetch(`${DASHBOARD_BASE_URL}/api/health`, {
       headers: apiKey ? { "x-api-key": apiKey } : undefined,
       signal: controller.signal,
     });
@@ -428,18 +462,17 @@ async function performHealthCheck() {
 async function sendUserHeartbeat() {
   try {
     const data = await readManagedThenLocal(
-      ["serverUrl", "tenantApiKey", "employeeEmail", "userEmail", "enabled", "interceptedCount"]
+      ["tenantApiKey", "employeeEmail", "userEmail", "enabled", "interceptedCount"]
     );
     if (!data.enabled) return;
 
-    const serverUrl = data.serverUrl || DEFAULT_SERVER_URL;
     const apiKey    = data.tenantApiKey || "";
     const email = await resolveHeartbeatIdentity(data.employeeEmail || data.userEmail || null);
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);
 
-    await fetch(`${serverUrl}/api/user-heartbeat`, {
+    await fetch(`${DASHBOARD_BASE_URL}/api/user-heartbeat`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

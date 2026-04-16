@@ -288,6 +288,7 @@ export default function TenantDetailView({ tenant, superAdminKey, onBack }) {
   const [loading, setLoading]         = useState(true);
   const [activeUsers, setActiveUsers] = useState([]);
   const [serverUrlEdit, setServerUrlEdit] = useState(tenant?.serverUrl || "");
+  const [agentUrlEdit, setAgentUrlEdit] = useState(tenant?.agentUrl || "");
   const [savingUrl, setSavingUrl]         = useState(false);
   const [urlSaveMsg, setUrlSaveMsg]       = useState("");
 
@@ -321,11 +322,12 @@ export default function TenantDetailView({ tenant, superAdminKey, onBack }) {
       const res = await fetch(`/api/tenants/${tenant._id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", "x-super-admin-key": superAdminKey },
-        body: JSON.stringify({ serverUrl: serverUrlEdit }),
+        body: JSON.stringify({ serverUrl: serverUrlEdit, agentUrl: agentUrlEdit }),
       });
       if (!res.ok) throw new Error((await res.json()).error || "שגיאה");
       setUrlSaveMsg("✓ נשמר");
       tenant.serverUrl = serverUrlEdit;
+      tenant.agentUrl = agentUrlEdit;
     } catch (e) {
       setUrlSaveMsg(`✗ ${e.message}`);
     } finally {
@@ -546,6 +548,14 @@ export default function TenantDetailView({ tenant, superAdminKey, onBack }) {
               שמור
             </button>
           </div>
+          <label className="block text-slate-400 mt-3 mb-1.5">כתובת Local Agent (IP/URL):</label>
+          <input
+            value={agentUrlEdit}
+            onChange={(e) => setAgentUrlEdit(e.target.value)}
+            placeholder="http://10.0.0.50:4000"
+            dir="ltr"
+            className="w-full bg-slate-900/60 border border-slate-700/60 rounded-lg px-3 py-1.5 text-xs text-slate-200 font-mono outline-none focus:border-cyan-600/60"
+          />
           {urlSaveMsg && (
             <p className={`mt-1 text-[10px] ${urlSaveMsg.startsWith("✓") ? "text-green-400" : "text-red-400"}`}>
               {urlSaveMsg}

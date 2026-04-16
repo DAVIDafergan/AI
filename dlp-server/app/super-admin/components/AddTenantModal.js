@@ -18,7 +18,15 @@ function CopyButton({ text }) {
 }
 
 export default function AddTenantModal({ onClose, onCreated, superAdminKey }) {
-  const [form, setForm] = useState({ name: "", contactEmail: "", contactName: "", plan: "starter", domain: "", serverUrl: "" });
+  const [form, setForm] = useState({
+    name: "",
+    contactEmail: "",
+    contactName: "",
+    plan: "starter",
+    domain: "",
+    serverUrl: "",
+    agentUrl: "",
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState("");
   const [credentials, setCredentials] = useState(null);
@@ -95,6 +103,11 @@ export default function AddTenantModal({ onClose, onCreated, superAdminKey }) {
                   <label className="block text-xs text-slate-400 mb-1">כתובת שרת DLP (לסוכן ולתוסף)</label>
                   <input value={form.serverUrl} onChange={(e) => set("serverUrl", e.target.value)} className="w-full bg-slate-900/60 border border-slate-700/60 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono outline-none focus:border-cyan-600/60" placeholder="https://dlp.company.com" dir="ltr" />
                   <p className="text-[10px] text-slate-500 mt-1">הכתובת שהסוכן והתוסף ישתמשו בה לתקשורת עם השרת</p>
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-xs text-slate-400 mb-1">כתובת Local Agent (IP/URL)</label>
+                  <input value={form.agentUrl} onChange={(e) => set("agentUrl", e.target.value)} className="w-full bg-slate-900/60 border border-slate-700/60 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono outline-none focus:border-cyan-600/60" placeholder="http://10.0.0.50:4000" dir="ltr" />
+                  <p className="text-[10px] text-slate-500 mt-1">הכתובת שתוסף העובד ישתמש בה לבדיקות טקסט/תמונות</p>
                 </div>
               </div>
 

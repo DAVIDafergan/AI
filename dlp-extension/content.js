@@ -7,10 +7,8 @@
    ═══════════════════════════════════════════════════════════════ */
 
 
-// Development-only fallback; production should be supplied by dashboard settings.
-const DEFAULT_CONFIG_SERVER_URL  = "http://localhost:3000";
+const DASHBOARD_AGENT_CONFIG_URL = "https://ai-production-ffa9.up.railway.app/api/agent-config";
 const DEFAULT_LOCAL_AGENT_URL    = "http://localhost:4000";
-const AGENT_CONFIG_PATH          = "/api/agent-config";
 const CONFIG_SYNC_MIN_INTERVAL_MS = 30_000;
 const DLP_PREFIX                 = "🛡️ DLP Shield:";
 
@@ -263,19 +261,13 @@ function normalizeUrlValue(value) {
   return value.trim().replace(/\/+$/, "");
 }
 
-function buildAgentConfigEndpoint(serverUrl) {
-  const base = normalizeUrlValue(serverUrl) || DEFAULT_CONFIG_SERVER_URL;
-  return `${base}${AGENT_CONFIG_PATH}`;
-}
-
 function readLocalConfigSnapshot() {
   return new Promise((resolve) => {
     try {
       chrome.storage.local.get(
-        ["serverUrl", "localAgentUrl", "tenantApiKey", LAST_KNOWN_GOOD_AGENT_URL_KEY, LAST_KNOWN_GOOD_API_KEY_KEY],
+        ["localAgentUrl", "tenantApiKey", LAST_KNOWN_GOOD_AGENT_URL_KEY, LAST_KNOWN_GOOD_API_KEY_KEY],
         (local) => {
           resolve({
-            serverUrl: normalizeUrlValue(local?.serverUrl),
             localAgentUrl: normalizeUrlValue(local?.localAgentUrl),
             tenantApiKey: typeof local?.tenantApiKey === "string" ? local.tenantApiKey.trim() : "",
             lastKnownGoodAgentUrl: normalizeUrlValue(local?.[LAST_KNOWN_GOOD_AGENT_URL_KEY]),
@@ -287,7 +279,6 @@ function readLocalConfigSnapshot() {
       );
     } catch {
       resolve({
-        serverUrl: "",
         localAgentUrl: "",
         tenantApiKey: "",
         lastKnownGoodAgentUrl: "",
@@ -311,9 +302,8 @@ async function fetchConfig({ force = false } = {}) {
     try {
       const snapshot = await readLocalConfigSnapshot();
       const requestApiKey = snapshot.lastKnownGoodApiKey || snapshot.tenantApiKey || "";
-      const endpoint = buildAgentConfigEndpoint(snapshot.serverUrl);
 
-      const res = await fetch(endpoint, {
+      const res = await fetch(DASHBOARD_AGENT_CONFIG_URL, {
         cache: "no-store",
         headers: requestApiKey ? { "x-api-key": requestApiKey } : undefined,
       });
@@ -322,6 +312,7 @@ async function fetchConfig({ force = false } = {}) {
       const data = await res.json();
       const agentUrlFromApi = normalizeUrlValue(data?.agentUrl);
       const apiKeyFromApi = typeof data?.apiKey === "string" ? data.apiKey.trim() : "";
+      const policiesFromApi = Array.isArray(data?.policies) ? data.policies : [];
 
       const nextAgentUrl =
         agentUrlFromApi ||
@@ -342,6 +333,7 @@ async function fetchConfig({ force = false } = {}) {
               tenantApiKey: nextApiKey,
               [LAST_KNOWN_GOOD_AGENT_URL_KEY]: nextAgentUrl,
               [LAST_KNOWN_GOOD_API_KEY_KEY]: nextApiKey,
+              dlp_live_policy: policiesFromApi,
             },
             resolve
           );
@@ -394,16 +386,15 @@ async function fetchConfig({ force = false } = {}) {
 /* ─────────────────────────────────────────────
    Read fresh settings right before a fetch.
    Checks chrome.storage.managed first (IT/MDM/GPO policy) and falls back to
-   chrome.storage.local.  localAgentUrl (saved by options.js) takes priority over
-   serverUrl (saved by popup.js). Falls back to DEFAULT_LOCAL_AGENT_URL.
+   chrome.storage.local localAgentUrl (saved by options.js) takes priority.
+   Falls back to DEFAULT_LOCAL_AGENT_URL.
    ───────────────────────────────────────────── */
 async function readSettings() {
   return new Promise((resolve) => {
     const buildResult = (managed, local) => {
       // Managed values (IT policy) override user-set local values
       const apiKey   = managed?.tenantApiKey  || local.tenantApiKey  || "";
-      // localAgentUrl is the explicit per-device runtime endpoint and should override popup serverUrl.
-      const finalUrl = managed?.localAgentUrl || local.localAgentUrl || local.serverUrl || DEFAULT_LOCAL_AGENT_URL;
+      const finalUrl = managed?.localAgentUrl || local.localAgentUrl || DEFAULT_LOCAL_AGENT_URL;
       resolve({
         localAgentUrl: finalUrl,
         tenantApiKey:  apiKey,
@@ -412,7 +403,7 @@ async function readSettings() {
     };
 
     try {
-      chrome.storage.local.get(["serverUrl", "localAgentUrl", "tenantApiKey", "userEmail", "employeeEmail"], (local) => {
+      chrome.storage.local.get(["localAgentUrl", "tenantApiKey", "userEmail", "employeeEmail"], (local) => {
         if (chrome.runtime.lastError) {
           resolve({
             localAgentUrl: DEFAULT_LOCAL_AGENT_URL,

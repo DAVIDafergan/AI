@@ -6,6 +6,7 @@ import { randomUUID } from "crypto";
 
 export const dynamic = "force-dynamic";
 const AGENT_ONLINE_THRESHOLD_MS = 60000;
+const normalizeUrl = (value) => (typeof value === "string" ? value.trim().replace(/\/+$/, "") : "");
 
 function slugify(name) {
   return name
@@ -54,7 +55,7 @@ export async function POST(request) {
     await requireSuperAdmin(request);
     await connectMongo();
     const body = await request.json();
-    const { name, contactEmail, contactName, plan, domain } = body;
+    const { name, contactEmail, contactName, plan, domain, serverUrl, agentUrl } = body;
 
     if (!name || !contactEmail) {
       return NextResponse.json({ error: "name and contactEmail are required" }, { status: 400 });
@@ -74,6 +75,8 @@ export async function POST(request) {
       contactName,
       plan: plan || "starter",
       domain,
+      serverUrl: normalizeUrl(serverUrl),
+      agentUrl: normalizeUrl(agentUrl),
     });
 
     await recordAuditLog({

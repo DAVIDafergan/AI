@@ -56,6 +56,11 @@ function getApiKeyLookupCandidates(key) {
   return [...candidates];
 }
 
+// Test hook for focused unit tests.
+export function _test_getApiKeyLookupCandidates(key) {
+  return getApiKeyLookupCandidates(key);
+}
+
 // ── MongoDB connection (used by new multi-tenant models) ──
 // Cache the promise on a module-level global so that Next.js hot-reloads and
 // concurrent requests share a single connection pool rather than spawning a new

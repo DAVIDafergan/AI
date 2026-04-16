@@ -14,7 +14,7 @@ const FALLBACK_AGENT_URL =
   normalizeUrl(process.env.DEFAULT_AGENT_URL) ||
   normalizeUrl(process.env.AGENT_URL) ||
   normalizeUrl(process.env.NEXT_PUBLIC_DLP_AGENT_URL) ||
-  "http://localhost:4000";
+  "";
 
 function normalizeUrl(url) {
   if (typeof url !== "string") return "";

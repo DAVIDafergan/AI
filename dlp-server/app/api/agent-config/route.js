@@ -10,6 +10,11 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Headers":
     "Content-Type, Authorization, x-api-key, x-dlp-extension, x-super-admin-key",
 };
+const FALLBACK_AGENT_URL =
+  normalizeUrl(process.env.DEFAULT_AGENT_URL) ||
+  normalizeUrl(process.env.AGENT_URL) ||
+  normalizeUrl(process.env.NEXT_PUBLIC_DLP_AGENT_URL) ||
+  "";
 
 function normalizeUrl(url) {
   if (typeof url !== "string") return "";
@@ -58,16 +63,20 @@ export async function GET(request) {
 
     const tenant = await resolveTenant({ rawApiKey, tenantId, tenantSlug });
 
-    const agentUrl = normalizeUrl(tenant?.agentUrl) || normalizeUrl(tenant?.serverUrl) || null;
+    const agentUrl =
+      normalizeUrl(tenant?.agentUrl) || normalizeUrl(tenant?.serverUrl) || FALLBACK_AGENT_URL;
     const apiKey = resolveApiKeyForResponse(tenant, rawApiKey);
     const policies = Array.isArray(tenant?.settings?.policies)
       ? tenant.settings.policies
       : getDefaultPolicies(tenant?._id?.toString?.() || tenantId || tenantSlug || "");
 
-    return NextResponse.json({ agentUrl, apiKey, policies }, { headers: CORS_HEADERS });
+    return NextResponse.json({ agentUrl, apiKey, policies }, { status: 200, headers: CORS_HEADERS });
   } catch (err) {
     console.warn("[agent-config] Failed to resolve tenant agent URL, using fallback:", err?.message || err);
-    return NextResponse.json({ agentUrl: null, apiKey: "", policies: [] }, { headers: CORS_HEADERS });
+    return NextResponse.json(
+      { agentUrl: FALLBACK_AGENT_URL, apiKey: "", policies: [] },
+      { status: 200, headers: CORS_HEADERS }
+    );
   }
 }
 

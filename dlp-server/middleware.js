@@ -32,16 +32,16 @@ export async function middleware(request) {
     const origin = request.headers.get("origin") || "";
     const allowedOrigins = getAllowedOrigins();
 
-    // Reject preflight OPTIONS requests from unknown origins immediately
+    // Only preflight requests should return an early response from middleware.
     if (request.method === "OPTIONS") {
       if (PUBLIC_CORS_API_PATHS.has(pathname)) {
-        return new NextResponse(null, { status: 204, headers: PUBLIC_CORS_HEADERS });
+        return new NextResponse(null, { status: 200, headers: PUBLIC_CORS_HEADERS });
       }
       if (!allowedOrigins.has(origin)) {
         return new NextResponse(null, { status: 403 });
       }
       return new NextResponse(null, {
-        status: 204,
+        status: 200,
         headers: {
           "Access-Control-Allow-Origin": origin,
           "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -63,7 +63,7 @@ export async function middleware(request) {
       }
     }
 
-    // For non-preflight requests, add CORS headers when origin is allowed
+    // For non-preflight requests, always continue to the route handler.
     const response = NextResponse.next();
     if (origin && allowedOrigins.has(origin)) {
       response.headers.set("Access-Control-Allow-Origin", origin);

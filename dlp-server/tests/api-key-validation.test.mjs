@@ -30,4 +30,5 @@ test("API key lookup candidates include lowercase digest form", () => {
 test("API key lookup candidates return empty for blank input", () => {
   assert.deepEqual(_test_getApiKeyLookupCandidates("   "), []);
   assert.deepEqual(_test_getApiKeyLookupCandidates(null), []);
+  assert.deepEqual(_test_getApiKeyLookupCandidates(undefined), []);
 });

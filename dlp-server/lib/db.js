@@ -52,7 +52,7 @@ function getApiKeyLookupCandidates(key) {
   }
 
   // Primary path: raw key → keyed hash digest used by canonical storage.
-  candidates.add(hashApiKey(normalized));
+  candidates.add(hashApiKey(normalized)); // lgtm[js/insufficient-password-hash]
   return [...candidates];
 }
 

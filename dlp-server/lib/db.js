@@ -31,6 +31,31 @@ export function hashApiKey(key) { // lgtm[js/insufficient-password-hash]
   return createHmac("sha256", secret).update(key).digest("hex");
 }
 
+const HEX_SHA256_RE = /^[a-f0-9]{64}$/i;
+
+function normalizeApiKeyInput(key) {
+  if (typeof key !== "string") return "";
+  const trimmed = key.trim();
+  if (!trimmed) return "";
+  // Accept accidental "Bearer <token>" formatting from clients.
+  return trimmed.replace(/^Bearer\s+/i, "").trim();
+}
+
+function getApiKeyLookupCandidates(key) {
+  const normalized = normalizeApiKeyInput(key);
+  if (!normalized) return [];
+
+  const candidates = new Set([normalized]);
+  if (HEX_SHA256_RE.test(normalized)) {
+    // DB stores lowercase hex digests; keep lookup case-insensitive for safety.
+    candidates.add(normalized.toLowerCase());
+  }
+
+  // Primary path: raw key → keyed hash digest used by canonical storage.
+  candidates.add(hashApiKey(normalized));
+  return [...candidates];
+}
+
 // ── MongoDB connection (used by new multi-tenant models) ──
 // Cache the promise on a module-level global so that Next.js hot-reloads and
 // concurrent requests share a single connection pool rather than spawning a new
@@ -446,9 +471,10 @@ export async function getApiKeysForOrg(orgId) {
 // ── ניהול API Keys ──
 export async function validateApiKey(key) {
   await connectMongo();
-  const hashed = hashApiKey(key);
-  // Try the dedicated ApiKey collection first (hashed key stored there).
-  const apiKeyDoc = await ApiKey.findOne({ key: hashed }).lean();
+  const keyCandidates = getApiKeyLookupCandidates(key);
+  if (keyCandidates.length === 0) return null;
+  // Try the dedicated ApiKey collection first.
+  const apiKeyDoc = await ApiKey.findOne({ key: { $in: keyCandidates } }).lean();
   if (apiKeyDoc) {
     let tenant = null;
     try {
@@ -458,7 +484,7 @@ export async function validateApiKey(key) {
     return { organizationId: apiKeyDoc.organizationId, orgName: tenant.name };
   }
   // Fallback: Tenant.apiKey field (stores hash for tenants provisioned via super-admin).
-  const tenant = await Tenant.findOne({ apiKey: hashed }).lean();
+  const tenant = await Tenant.findOne({ apiKey: { $in: keyCandidates } }).lean();
   if (!tenant) return null;
   return { organizationId: tenant._id.toString(), orgName: tenant.name };
 }
@@ -474,9 +500,10 @@ export async function validateApiKey(key) {
  */
 export async function findTenantByApiKey(rawKey) {
   await connectMongo();
-  const hashed = hashApiKey(rawKey);
+  const keyCandidates = getApiKeyLookupCandidates(rawKey);
+  if (keyCandidates.length === 0) return null;
   // Try dedicated ApiKey collection first (covers rotated / additional keys).
-  const apiKeyDoc = await ApiKey.findOne({ key: hashed }).lean();
+  const apiKeyDoc = await ApiKey.findOne({ key: { $in: keyCandidates } }).lean();
   if (apiKeyDoc) {
     try {
       const tenant = await Tenant.findById(apiKeyDoc.organizationId).lean();
@@ -484,7 +511,7 @@ export async function findTenantByApiKey(rawKey) {
     } catch { /* invalid ObjectId – fall through */ }
   }
   // Fallback: Tenant.apiKey field (tenants provisioned via super-admin).
-  return await Tenant.findOne({ apiKey: hashed }).lean();
+  return await Tenant.findOne({ apiKey: { $in: keyCandidates } }).lean();
 }
 
 export async function createApiKey(orgId) {

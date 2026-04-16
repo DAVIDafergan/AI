@@ -7,6 +7,13 @@ import {
   getApiKeysForOrg,
 } from "../../../lib/db.js";
 
+function normalizeUrl(value) {
+  if (typeof value !== "string") return "";
+  let normalized = value.trim();
+  while (normalized.length > 0 && normalized.endsWith("/")) normalized = normalized.slice(0, -1);
+  return normalized;
+}
+
 // GET – רשימת כל הלקוחות עם סטטיסטיקות
 export async function GET() {
   try {
@@ -21,7 +28,7 @@ export async function GET() {
 export async function POST(request) {
   try {
     const body = await request.json();
-    const { name, contactEmail, plan, notes, initialPolicy } = body;
+    const { name, contactEmail, plan, notes, initialPolicy, agentUrl } = body;
 
     if (!name || !name.trim()) {
       return NextResponse.json({ error: "name is required" }, { status: 400 });
@@ -34,6 +41,7 @@ export async function POST(request) {
       notes: notes || "",
       status: "active",
       initialPolicy: initialPolicy || [],
+      agentUrl: normalizeUrl(agentUrl),
     });
 
     // בניית הוראות חיבור מפורטות
@@ -47,7 +55,7 @@ export async function POST(request) {
       process.env.DLP_SERVER_URL ||
       process.env.NEXT_PUBLIC_SERVER_URL ||
       requestOrigin;
-    const instructions = buildConnectionInstructions(serverUrl, org.apiKey);
+    const instructions = buildConnectionInstructions(serverUrl, org.apiKey, org.agentUrl);
 
     return NextResponse.json(
       {
@@ -92,7 +100,8 @@ export async function OPTIONS() {
 }
 
 // ── בניית הוראות חיבור ──
-function buildConnectionInstructions(serverUrl, apiKey) {
+function buildConnectionInstructions(serverUrl, apiKey, agentUrl) {
+  const resolvedAgentUrl = agentUrl || "http://localhost:4000";
   const agentCommand =
     `cd ghostlayer-local-agent || exit 1; npm install && node index.js \\\n` +
     `  --api-key="${apiKey}" \\\n` +
@@ -108,7 +117,7 @@ function buildConnectionInstructions(serverUrl, apiKey) {
     {
       serverUrl,
       tenantApiKey: apiKey,
-      localAgentUrl: "http://localhost:4000",
+      localAgentUrl: resolvedAgentUrl,
       enabled: true,
     },
     null,
@@ -120,7 +129,7 @@ function buildConnectionInstructions(serverUrl, apiKey) {
     {
       serverUrl,
       tenantApiKey: apiKey,
-      localAgentUrl: "http://localhost:4000",
+      localAgentUrl: resolvedAgentUrl,
       enabled: true,
     },
     null,
@@ -131,7 +140,7 @@ function buildConnectionInstructions(serverUrl, apiKey) {
     browserExtension: [
       "טען את dlp-extension כתוסף Unpacked דרך chrome://extensions (מצב מפתח)",
       `ב-Popup של התוסף הגדר "כתובת שרת DLP" ל: ${serverUrl}`,
-      "פתח את Options של התוסף והגדר Local Agent URL ל-http://localhost:4000",
+      `פתח את Options של התוסף והגדר Local Agent URL ל-${resolvedAgentUrl}`,
       `ב-Options הזן Tenant API Key: ${apiKey} ושמור`,
       "לחץ על בדיקת חיבור וודא שהסטטוס ירוק",
     ],

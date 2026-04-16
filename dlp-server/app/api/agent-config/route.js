@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { connectMongo, Tenant, validateApiKey } from "../../../lib/db.js";
+import { getDefaultPolicies } from "../../../lib/policies.js";
 
 export const dynamic = "force-dynamic";
 
@@ -25,13 +26,13 @@ async function resolveTenant({ rawApiKey, tenantId, tenantSlug }) {
   if (rawApiKey) {
     const validated = await validateApiKey(rawApiKey);
     if (!validated?.organizationId) return null;
-    return Tenant.findById(validated.organizationId, { serverUrl: 1, settings: 1 }).lean();
+    return Tenant.findById(validated.organizationId, { agentUrl: 1, serverUrl: 1, settings: 1 }).lean();
   }
   if (tenantId) {
-    return Tenant.findById(tenantId, { serverUrl: 1, settings: 1 }).lean();
+    return Tenant.findById(tenantId, { agentUrl: 1, serverUrl: 1, settings: 1 }).lean();
   }
   if (tenantSlug) {
-    return Tenant.findOne({ slug: tenantSlug }, { serverUrl: 1, settings: 1 }).lean();
+    return Tenant.findOne({ slug: tenantSlug }, { agentUrl: 1, serverUrl: 1, settings: 1 }).lean();
   }
   return null;
 }
@@ -56,13 +57,16 @@ export async function GET(request) {
 
     const tenant = await resolveTenant({ rawApiKey, tenantId, tenantSlug });
 
-    const agentUrl = normalizeUrl(tenant?.serverUrl) || null;
+    const agentUrl = normalizeUrl(tenant?.agentUrl) || normalizeUrl(tenant?.serverUrl) || null;
     const apiKey = resolveApiKeyForResponse(tenant, rawApiKey);
+    const policies = Array.isArray(tenant?.settings?.policies)
+      ? tenant.settings.policies
+      : getDefaultPolicies(tenant?._id?.toString?.() || tenantId || tenantSlug || "");
 
-    return NextResponse.json({ agentUrl, apiKey }, { headers: CORS_HEADERS });
+    return NextResponse.json({ agentUrl, apiKey, policies }, { headers: CORS_HEADERS });
   } catch (err) {
     console.warn("[agent-config] Failed to resolve tenant agent URL, using fallback:", err?.message || err);
-    return NextResponse.json({ agentUrl: null, apiKey: "" }, { headers: CORS_HEADERS });
+    return NextResponse.json({ agentUrl: null, apiKey: "", policies: [] }, { headers: CORS_HEADERS });
   }
 }
 
@@ -92,7 +96,7 @@ async function upsertConfig(request) {
 
     const update = {};
     if (requestedAgentUrl) {
-      update.serverUrl = requestedAgentUrl;
+      update.agentUrl = requestedAgentUrl;
     }
     if (requestedApiKey) {
       update["settings.extensionApiKey"] = requestedApiKey;
@@ -101,14 +105,17 @@ async function upsertConfig(request) {
     const updated = await Tenant.findByIdAndUpdate(
       tenant._id,
       { $set: update },
-      { new: true, projection: { serverUrl: 1, settings: 1 } }
+      { new: true, projection: { agentUrl: 1, serverUrl: 1, settings: 1 } }
     ).lean();
 
-    const responseAgentUrl = normalizeUrl(updated?.serverUrl) || null;
+    const responseAgentUrl = normalizeUrl(updated?.agentUrl) || normalizeUrl(updated?.serverUrl) || null;
     const responseApiKey = resolveApiKeyForResponse(updated, rawApiKey);
+    const responsePolicies = Array.isArray(updated?.settings?.policies)
+      ? updated.settings.policies
+      : getDefaultPolicies(updated?._id?.toString?.() || tenant?._id?.toString?.() || "");
 
     return NextResponse.json(
-      { agentUrl: responseAgentUrl, apiKey: responseApiKey },
+      { agentUrl: responseAgentUrl, apiKey: responseApiKey, policies: responsePolicies },
       { headers: CORS_HEADERS }
     );
   } catch (err) {

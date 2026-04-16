@@ -120,6 +120,7 @@ const TenantSchema = new mongoose.Schema(
     contactName:   { type: String },
     domain:        { type: String },
     serverUrl: { type: String, default: "" },
+    agentUrl: { type: String, default: "" },
     settings: {
       autoBlockThreshold: { type: Number, default: 80 },
       retentionDays:      { type: Number, default: 30 },
@@ -299,7 +300,15 @@ const alerts = new Map();        // alertId → alertData
 const users = new Map();         // email → userStatsObject
 
 // ── ניהול ארגונים ──
-export async function createOrganization({ name, contactEmail = "", plan = "basic", notes = "", status = "active", initialPolicy = [] } = {}) {
+export async function createOrganization({
+  name,
+  contactEmail = "",
+  plan = "basic",
+  notes = "",
+  status = "active",
+  initialPolicy = [],
+  agentUrl = "",
+} = {}) {
   await connectMongo();
   const rawApiKey = `key-${randomUUID().replace(/-/g, "").slice(0, 20)}`;
   const hashedApiKey = hashApiKey(rawApiKey);
@@ -321,6 +330,7 @@ export async function createOrganization({ name, contactEmail = "", plan = "basi
     contactEmail: contactEmail || "noreply@example.com",
     plan: mongoPlan,
     status: mongoStatus,
+    agentUrl,
   });
   await ApiKey.create({ key: hashedApiKey, organizationId: org._id.toString() });
   if (initialPolicy && initialPolicy.length > 0) {
@@ -334,6 +344,7 @@ export async function createOrganization({ name, contactEmail = "", plan = "basi
     plan,
     notes,
     status,
+    agentUrl: org.agentUrl || "",
     settings: { language: "he", timezone: "Asia/Jerusalem" },
     // Return the raw (unhashed) key so the caller can present it to the user once.
     apiKey: rawApiKey,
@@ -357,6 +368,7 @@ export async function getOrganization(orgId) {
     plan: tenant.plan || "starter",
     notes: "",
     status: tenant.status || "active",
+    agentUrl: tenant.agentUrl || "",
     settings: tenant.settings || { language: "he", timezone: "Asia/Jerusalem" },
   };
 }
@@ -372,6 +384,7 @@ export async function getAllOrganizations() {
     plan: t.plan || "starter",
     notes: "",
     status: t.status || "active",
+    agentUrl: t.agentUrl || "",
     settings: t.settings || {},
   }));
 }
@@ -382,6 +395,7 @@ export async function updateOrganization(orgId, updates) {
   if (updates.name)         mongoUpdates.name         = updates.name;
   if (updates.contactEmail) mongoUpdates.contactEmail = updates.contactEmail;
   if (updates.status)       mongoUpdates.status       = updates.status;
+  if (typeof updates.agentUrl === "string") mongoUpdates.agentUrl = updates.agentUrl;
   if (updates.plan) {
     mongoUpdates.plan =
       updates.plan === "pro" ? "professional" :

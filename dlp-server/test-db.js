@@ -1,7 +1,12 @@
 const mongoose = require('mongoose');
-const uri = "mongodb://mongo:CJIYYeWjRwoQChiJPyxBjQGbqbsfgQeu@ballast.proxy.rlwy.net:56402";
+const uri = process.env.MONGODB_URI;
 
 console.log("🔄 מנסה להתחבר למסד הנתונים...");
+
+if (!uri) {
+  console.error("❌ חסר MONGODB_URI בסביבה");
+  process.exit(1);
+}
 
 mongoose.connect(uri)
   .then(() => {

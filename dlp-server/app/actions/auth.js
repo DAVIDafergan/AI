@@ -2,12 +2,25 @@
 
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import jwt from "jsonwebtoken";
+import { timingSafeEqual } from "node:crypto";
+import { createSuperAdminSessionToken } from "../../lib/superAdminSession.js";
 
 const SUPER_ADMIN_USERNAME = process.env.SUPER_ADMIN_USERNAME;
 const SUPER_ADMIN_PASSWORD = process.env.SUPER_ADMIN_PASSWORD;
 const COOKIE_NAME = "super_admin_auth";
 const SESSION_DURATION_SECONDS = 60 * 60 * 8; // 8 hours
+
+function safeStringEquals(left, right) {
+  const a = Buffer.from(String(left ?? ""), "utf8");
+  const b = Buffer.from(String(right ?? ""), "utf8");
+  const len = Math.max(a.length, b.length, 1);
+  const aa = Buffer.alloc(len);
+  const bb = Buffer.alloc(len);
+  a.copy(aa);
+  b.copy(bb);
+  const equal = timingSafeEqual(aa, bb);
+  return equal && a.length === b.length;
+}
 
 export async function loginAction(formData) {
   if (!SUPER_ADMIN_USERNAME || !SUPER_ADMIN_PASSWORD) {
@@ -22,12 +35,15 @@ export async function loginAction(formData) {
   const username = formData.get("username");
   const password = formData.get("password");
 
-  if (username === SUPER_ADMIN_USERNAME && password === SUPER_ADMIN_PASSWORD) {
-    const token = jwt.sign(
-      { sub: username, role: "super_admin" },
-      jwtSecret,
-      { expiresIn: SESSION_DURATION_SECONDS }
-    );
+  if (
+    safeStringEquals(username, SUPER_ADMIN_USERNAME) &&
+    safeStringEquals(password, SUPER_ADMIN_PASSWORD)
+  ) {
+    const token = await createSuperAdminSessionToken({
+      username: String(username),
+      secret: jwtSecret,
+      expiresInSeconds: SESSION_DURATION_SECONDS,
+    });
 
     const cookieStore = await cookies();
     cookieStore.set(COOKIE_NAME, token, {

@@ -27,15 +27,8 @@ function readStoredSuperAdminKey() {
   return "";
 }
 
-function readEnvSuperAdminKey() {
-  return (
-    process.env.NEXT_PUBLIC_SUPER_ADMIN_KEY ||
-    ""
-  ).trim();
-}
-
 function resolveSuperAdminKey(preferred = "") {
-  return preferred?.trim() || readStoredSuperAdminKey() || readEnvSuperAdminKey();
+  return preferred?.trim() || readStoredSuperAdminKey();
 }
 
 function persistSuperAdminKey(key) {
@@ -306,7 +299,11 @@ export default function SuperAdminPage() {
 
   return (
     <div className="flex min-h-screen bg-[#0a0a0f]" dir="rtl">
-      <SuperAdminSidebar activeTab={selectedTenant ? "tenants" : activeTab} onTabChange={(t) => { setActiveTab(t); setSelectedTenant(null); }} />
+      <SuperAdminSidebar
+        activeTab={selectedTenant ? "tenants" : activeTab}
+        onTabChange={(t) => { setActiveTab(t); setSelectedTenant(null); }}
+        onLogout={logout}
+      />
 
       {/* Main area */}
       <div className="flex-1 flex flex-col overflow-hidden">

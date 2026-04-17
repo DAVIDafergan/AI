@@ -16,7 +16,7 @@ const NAV_ITEMS = [
   { id: "activity",  label: "פעילות",        icon: Activity },
 ];
 
-export default function SuperAdminSidebar({ activeTab, onTabChange }) {
+export default function SuperAdminSidebar({ activeTab, onTabChange, onLogout }) {
   const [collapsed, setCollapsed] = useState(false);
 
   return (
@@ -64,7 +64,10 @@ export default function SuperAdminSidebar({ activeTab, onTabChange }) {
         >
           {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
         </button>
-        <button className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-900/20 transition-colors text-sm">
+        <button
+          onClick={onLogout}
+          className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-900/20 transition-colors text-sm"
+        >
           <LogOut size={16} />
           {!collapsed && <span>יציאה</span>}
         </button>

@@ -108,7 +108,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "GET_USER_EMAIL") {
     if (cachedEmail) {
       sendResponse({ email: cachedEmail });
-      return;
+      return true;
     }
     try {
       chrome.identity.getProfileUserInfo({ accountStatus: "SYNC" }, (userInfo) => {

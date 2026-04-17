@@ -864,6 +864,7 @@ export async function startApiServer(options = {}) {
   const app = express();
 
   app.use(cors());
+  app.options("/{*corsPreflight}", cors());
   app.use(express.json({ limit: "500kb" }));
 
   // ── Health check ─────────────────────────────────────────────────────────
@@ -1072,4 +1073,3 @@ export async function startApiServer(options = {}) {
     server.on("error", reject);
   });
 }
-

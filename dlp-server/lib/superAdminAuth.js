@@ -4,6 +4,12 @@
 import { cookies } from "next/headers";
 import { verifySuperAdminSessionToken } from "./superAdminSession.js";
 
+const JOSE_SESSION_ERROR_CODES = new Set([
+  "ERR_JWT_EXPIRED",
+  "ERR_JWS_SIGNATURE_VERIFICATION_FAILED",
+  "ERR_JWT_CLAIM_VALIDATION_FAILED",
+]);
+
 /**
  * Validates the request as coming from a super admin.
  * Accepts:
@@ -24,7 +30,7 @@ export async function requireSuperAdmin(request) {
         return;
       }
     } catch (e) {
-      if (e.code === "ERR_JWT_EXPIRED" || e.code === "ERR_JWS_SIGNATURE_VERIFICATION_FAILED" || e.code === "ERR_JWT_CLAIM_VALIDATION_FAILED") {
+      if (JOSE_SESSION_ERROR_CODES.has(e?.code)) {
         const err = new Error("Unauthorized: Invalid or expired session token");
         err.status = 401;
         throw err;

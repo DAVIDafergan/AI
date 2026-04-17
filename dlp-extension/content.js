@@ -86,7 +86,8 @@ const _vault        = {};    // token → original value, e.g. { "[PERSON_1]": "
 let   _maskingActive = false; // true only while programmatically re-triggering a masked send
 
 function persistVault() {
-  // Intentionally disabled: never persist sensitive vault mappings to local storage.
+  // Intentionally disabled: vault contains real PII mapped to synthetic tokens.
+  // Persisting it in chrome.storage.local exposes sensitive data to other extensions.
 }
 
 // ── Input masking guard: prevents the programmatic field update from re-triggering the scanner ──

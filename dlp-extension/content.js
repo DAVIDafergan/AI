@@ -85,14 +85,9 @@ function workerPreflight(text) {
 const _vault        = {};    // token → original value, e.g. { "[PERSON_1]": "David" }
 let   _maskingActive = false; // true only while programmatically re-triggering a masked send
 
-/* Persist the vault to chrome.storage.local so tokens survive page reloads and
-   multi-turn conversations where the AI echoes back a token from an earlier turn. */
 function persistVault() {
-  try {
-    chrome.storage.local.set({ dlp_vault: _vault });
-  } catch {
-    // extension context may be invalidated – ignore
-  }
+  // Intentionally disabled: vault contains real PII mapped to synthetic tokens.
+  // Persisting it in chrome.storage.local keeps sensitive mappings on disk.
 }
 
 // ── Input masking guard: prevents the programmatic field update from re-triggering the scanner ──
@@ -794,9 +789,6 @@ async function handlePaste(event) {
   const target = event.target;
 
   try {
-    // TODO(SEMANTIC-TEST-BYPASS): Remove after 2026-05-01 once remote semantic validation closes.
-    // always call the remote AI check API from paste flow.
-
     const { localAgentUrl: agentUrl, tenantApiKey: apiKey, userEmail: email } = await readSettings();
 
     const result = await sendCheckText({ text, userEmail: email, source: "paste", apiKey, agentUrl });
@@ -862,10 +854,12 @@ async function handlePaste(event) {
     await closeOverlay(overlayParts);
   } catch (err) {
     if (err.name === "AbortError") {
-      showFallbackToast("⚠️ חומת אש AI: פסק זמן שרת. ההדבקה נחסמה.", "warning");
+      insertTextIntoField(target, text);
+      showFallbackToast("⚠️ חומת אש AI: פסק זמן שרת. ההדבקה הועברה ללא סינון.", "warning");
     } else {
       console.error(`${DLP_PREFIX} שגיאה:`, err);
-      showFallbackToast("⚠️ חומת אש AI: שגיאת תקשורת. ההדבקה נחסמה לבטיחות.", "warning");
+      insertTextIntoField(target, text);
+      showFallbackToast("⚠️ חומת אש AI: שגיאת תקשורת. ההדבקה הועברה ללא סינון.", "warning");
     }
   }
 }
@@ -904,9 +898,6 @@ async function interceptInput(element) {
     safeStateMap.set(element, text);
     return;
   }
-
-  // TODO(SEMANTIC-TEST-BYPASS): Remove after 2026-05-01 once remote semantic validation closes.
-  // always call the remote AI check API from typing flow.
 
   inputRequestPending = true;
   try {
@@ -2206,21 +2197,6 @@ async function init() {
 
   // Load settings (localAgentUrl, tenantApiKey) from storage
   await loadSettings();
-
-  // Restore persisted vault so tokens from previous turns/sessions are recognised
-  await new Promise((resolve) => {
-    try {
-      chrome.storage.local.get(["dlp_vault"], (data) => {
-        if (!chrome.runtime.lastError && data.dlp_vault && typeof data.dlp_vault === "object") {
-          Object.assign(_vault, data.dlp_vault);
-        }
-        resolve();
-      });
-    } catch {
-      // extension context may be invalidated – ignore
-      resolve();
-    }
-  });
 
   // Live-sync settings: if the user updates Email or Agent URL in the Popup/Options,
   // pick up the change immediately without requiring a page reload.

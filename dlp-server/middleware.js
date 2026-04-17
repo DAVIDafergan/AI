@@ -1,16 +1,8 @@
 import { NextResponse } from "next/server";
-import { jwtVerify } from "jose";
+import { verifySuperAdminSessionToken } from "./lib/superAdminSession.js";
 
 /** Maximum allowed request body size for API routes (bytes). */
 const MAX_BODY_BYTES = 500 * 1024; // 500 KB
-const PUBLIC_CORS_API_PATHS = new Set(["/api/agent-config"]);
-const PUBLIC_CORS_HEADERS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers":
-    "Content-Type, Authorization, x-api-key, x-dlp-extension, x-super-admin-key",
-};
-
 /**
  * Returns the set of allowed origins from the environment variable.
  * @returns {Set<string>}
@@ -34,9 +26,6 @@ export async function middleware(request) {
 
     // Only preflight requests should return an early response from middleware.
     if (request.method === "OPTIONS") {
-      if (PUBLIC_CORS_API_PATHS.has(pathname)) {
-        return new NextResponse(null, { status: 200, headers: PUBLIC_CORS_HEADERS });
-      }
       if (!allowedOrigins.has(origin)) {
         return new NextResponse(null, { status: 403 });
       }
@@ -88,7 +77,7 @@ export async function middleware(request) {
     }
 
     try {
-      await jwtVerify(token, new TextEncoder().encode(secret));
+      await verifySuperAdminSessionToken(token, secret);
     } catch {
       // Token is missing, expired, or invalid → redirect to login
       const loginUrl = new URL("/", request.url);

@@ -1,15 +1,10 @@
 import { NextResponse } from "next/server";
 import { connectMongo, Tenant, validateApiKey } from "../../../lib/db.js";
+import { getCorsHeaders } from "../../../lib/middleware.js";
 import { getDefaultPolicies } from "../../../lib/policies.js";
 
 export const dynamic = "force-dynamic";
 
-const CORS_HEADERS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers":
-    "Content-Type, Authorization, x-api-key, x-dlp-extension, x-super-admin-key",
-};
 const FALLBACK_AGENT_URL =
   normalizeUrl(process.env.DEFAULT_AGENT_URL) ||
   normalizeUrl(process.env.AGENT_URL) ||
@@ -49,11 +44,16 @@ function resolveApiKeyForResponse(tenant, rawApiKey) {
   return trimApiKey(rawApiKey);
 }
 
-export async function OPTIONS() {
-  return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
+export async function OPTIONS(request) {
+  const corsHeaders = getCorsHeaders(request);
+  if (!corsHeaders) {
+    return new NextResponse(null, { status: 403 });
+  }
+  return new NextResponse(null, { status: 204, headers: corsHeaders });
 }
 
 export async function GET(request) {
+  const corsHeaders = getCorsHeaders(request) || {};
   try {
     await connectMongo();
     const { searchParams } = new URL(request.url);
@@ -70,17 +70,18 @@ export async function GET(request) {
       ? tenant.settings.policies
       : getDefaultPolicies(tenant?._id?.toString?.() || tenantId || tenantSlug || "");
 
-    return NextResponse.json({ agentUrl, apiKey, policies }, { status: 200, headers: CORS_HEADERS });
+    return NextResponse.json({ agentUrl, apiKey, policies }, { status: 200, headers: corsHeaders });
   } catch (err) {
     console.warn("[agent-config] Failed to resolve tenant agent URL, using fallback:", err?.message || err);
     return NextResponse.json(
       { agentUrl: FALLBACK_AGENT_URL, apiKey: "", policies: [] },
-      { status: 200, headers: CORS_HEADERS }
+      { status: 200, headers: corsHeaders }
     );
   }
 }
 
 async function upsertConfig(request) {
+  const corsHeaders = getCorsHeaders(request) || {};
   try {
     await connectMongo();
     const { searchParams } = new URL(request.url);
@@ -95,13 +96,13 @@ async function upsertConfig(request) {
     if (!requestedAgentUrl && !requestedApiKey) {
       return NextResponse.json(
         { error: "agentUrl or apiKey is required" },
-        { status: 400, headers: CORS_HEADERS }
+        { status: 400, headers: corsHeaders }
       );
     }
 
     const tenant = await resolveTenant({ rawApiKey, tenantId, tenantSlug });
     if (!tenant) {
-      return NextResponse.json({ error: "Tenant not found" }, { status: 404, headers: CORS_HEADERS });
+      return NextResponse.json({ error: "Tenant not found" }, { status: 404, headers: corsHeaders });
     }
 
     const update = {};
@@ -126,11 +127,11 @@ async function upsertConfig(request) {
 
     return NextResponse.json(
       { agentUrl: responseAgentUrl, apiKey: responseApiKey, policies: responsePolicies },
-      { headers: CORS_HEADERS }
+      { headers: corsHeaders }
     );
   } catch (err) {
     console.warn("[agent-config] Failed to save tenant config:", err?.message || err);
-    return NextResponse.json({ error: "Failed to save config" }, { status: 500, headers: CORS_HEADERS });
+    return NextResponse.json({ error: "Failed to save config" }, { status: 500, headers: corsHeaders });
   }
 }
 

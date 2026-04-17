@@ -10,8 +10,7 @@ services:
       - "3000:3000"
     environment:
       NODE_ENV: production
-      # External Railway MongoDB – override with MONGODB_URI env var if needed
-      MONGODB_URI: ${MONGODB_URI:-mongodb://mongo:CJIYYeWjRwoQChiJPyxBjQGbqbsfgQeu@ballast.proxy.rlwy.net:56402}
+      MONGODB_URI: ${MONGODB_URI}
       SUPER_ADMIN_KEY: ${SUPER_ADMIN_KEY}
       SUPER_ADMIN_USERNAME: ${SUPER_ADMIN_USERNAME}
       SUPER_ADMIN_PASSWORD: ${SUPER_ADMIN_PASSWORD}

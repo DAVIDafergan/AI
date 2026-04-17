@@ -21,6 +21,11 @@ function SortIcon({ field, sort }) {
   return sort.dir === "asc" ? <ChevronUp size={12} className="text-cyan-400" /> : <ChevronDown size={12} className="text-cyan-400" />;
 }
 
+function getNestedValue(row, path) {
+  if (!path) return undefined;
+  return path.split(".").reduce((obj, key) => obj?.[key], row);
+}
+
 export default function TenantsTable({ tenants = [], onView, onEdit, onSuspend, onDelete }) {
   const [query, setQuery]   = useState("");
   const [sort, setSort]     = useState({ field: "createdAt", dir: "desc" });
@@ -38,7 +43,8 @@ export default function TenantsTable({ tenants = [], onView, onEdit, onSuspend, 
         t.slug?.toLowerCase().includes(q)
     );
     return [...list].sort((a, b) => {
-      let av = a[sort.field], bv = b[sort.field];
+      let av = getNestedValue(a, sort.field);
+      let bv = getNestedValue(b, sort.field);
       if (typeof av === "string") av = av.toLowerCase();
       if (typeof bv === "string") bv = bv.toLowerCase();
       if (av < bv) return sort.dir === "asc" ? -1 : 1;

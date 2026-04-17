@@ -2,7 +2,13 @@
 // Accepts either a valid JWT in the super_admin_auth cookie or a valid x-super-admin-key header
 
 import { cookies } from "next/headers";
-import jwt from "jsonwebtoken";
+import { verifySuperAdminSessionToken } from "./superAdminSession.js";
+
+const JOSE_SESSION_ERROR_CODES = new Set([
+  "ERR_JWT_EXPIRED",
+  "ERR_JWS_SIGNATURE_VERIFICATION_FAILED",
+  "ERR_JWT_CLAIM_VALIDATION_FAILED",
+]);
 
 /**
  * Validates the request as coming from a super admin.
@@ -20,11 +26,11 @@ export async function requireSuperAdmin(request) {
       const cookieStore = await cookies();
       const authCookie = cookieStore.get("super_admin_auth");
       if (authCookie?.value) {
-        jwt.verify(authCookie.value, jwtSecret);
+        await verifySuperAdminSessionToken(authCookie.value, jwtSecret);
         return;
       }
     } catch (e) {
-      if (e.name === "JsonWebTokenError" || e.name === "TokenExpiredError") {
+      if (JOSE_SESSION_ERROR_CODES.has(e?.code)) {
         const err = new Error("Unauthorized: Invalid or expired session token");
         err.status = 401;
         throw err;

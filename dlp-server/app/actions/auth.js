@@ -2,7 +2,7 @@
 
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { createSuperAdminSessionToken } from "../../lib/superAdminSession.js";
 
 const SUPER_ADMIN_USERNAME = process.env.SUPER_ADMIN_USERNAME;
@@ -11,15 +11,9 @@ const COOKIE_NAME = "super_admin_auth";
 const SESSION_DURATION_SECONDS = 60 * 60 * 8; // 8 hours
 
 function safeStringEquals(left, right) {
-  const a = Buffer.from(String(left ?? ""), "utf8");
-  const b = Buffer.from(String(right ?? ""), "utf8");
-  const len = Math.max(a.length, b.length, 1);
-  const aa = Buffer.alloc(len);
-  const bb = Buffer.alloc(len);
-  a.copy(aa);
-  b.copy(bb);
-  const equal = timingSafeEqual(aa, bb);
-  return equal && a.length === b.length;
+  const a = createHash("sha256").update(String(left ?? ""), "utf8").digest();
+  const b = createHash("sha256").update(String(right ?? ""), "utf8").digest();
+  return timingSafeEqual(a, b);
 }
 
 export async function loginAction(formData) {

@@ -863,7 +863,8 @@ export async function startApiServer(options = {}) {
 
   const app = express();
 
-  app.use(cors({ origin: "*" }));
+  app.use(cors());
+  app.options("/{*corsPreflight}", cors());
   app.use(express.json({ limit: "500kb" }));
 
   // ── Health check ─────────────────────────────────────────────────────────

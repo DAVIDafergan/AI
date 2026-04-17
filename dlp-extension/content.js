@@ -87,7 +87,7 @@ let   _maskingActive = false; // true only while programmatically re-triggering 
 
 function persistVault() {
   // Intentionally disabled: vault contains real PII mapped to synthetic tokens.
-  // Persisting it in chrome.storage.local exposes sensitive data to other extensions.
+  // Persisting it in chrome.storage.local keeps sensitive mappings on disk.
 }
 
 // ── Input masking guard: prevents the programmatic field update from re-triggering the scanner ──

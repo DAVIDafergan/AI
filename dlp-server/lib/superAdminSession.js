@@ -15,7 +15,13 @@ export async function createSuperAdminSessionToken({ username, secret, expiresIn
 
 export async function verifySuperAdminSessionToken(token, secret) {
   const secretKey = new TextEncoder().encode(secret);
-  return jwtVerify(token, secretKey, {
+  const verified = await jwtVerify(token, secretKey, {
     issuer: SESSION_ISSUER,
   });
+  if (verified?.payload?.role !== "super_admin") {
+    const err = new Error("Invalid super-admin session role");
+    err.code = "ERR_JWT_CLAIM_VALIDATION_FAILED";
+    throw err;
+  }
+  return verified;
 }

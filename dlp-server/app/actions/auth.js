@@ -14,6 +14,7 @@ const MAX_COMPARE_BYTES = 256;
 function safeStringEquals(left, right) {
   const aSource = Buffer.from(String(left ?? ""), "utf8");
   const bSource = Buffer.from(String(right ?? ""), "utf8");
+  if (aSource.length === 0 || bSource.length === 0) return false;
   const a = Buffer.alloc(MAX_COMPARE_BYTES);
   const b = Buffer.alloc(MAX_COMPARE_BYTES);
   aSource.subarray(0, MAX_COMPARE_BYTES).copy(a);

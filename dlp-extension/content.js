@@ -1679,9 +1679,14 @@ async function scanAndRestore(root) {
               fragment.appendChild(textPartNode);
             } else {
               const restoredSpan = createRestoredSpan(part.original, part.synthetic);
-              const restoredTextNode = restoredSpan.firstChild;
-              if (restoredTextNode?.nodeType === Node.TEXT_NODE) {
-                newTextNodes.push(restoredTextNode);
+              const spanTextWalker = document.createTreeWalker(
+                restoredSpan,
+                NodeFilter.SHOW_TEXT,
+                null
+              );
+              let spanTextNode;
+              while ((spanTextNode = spanTextWalker.nextNode())) {
+                newTextNodes.push(spanTextNode);
               }
               fragment.appendChild(restoredSpan);
             }

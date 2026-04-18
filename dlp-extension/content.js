@@ -87,11 +87,13 @@ let   _maskingActive = false; // true only while programmatically re-triggering 
 
 const VAULT_SESSION_KEY = "dlp_session_vault";
 const INTERNAL_GUARD_RELEASE_DELAY_MS = 50;
+let _vaultPatternCache = null;
+let _vaultPatternStamp = "";
 
 function persistVault() {
   try {
     if (!chrome?.storage?.session?.set) return;
-    chrome.storage.session.set({ [VAULT_SESSION_KEY]: { ..._vault } });
+    chrome.storage.session.set({ [VAULT_SESSION_KEY]: _vault });
   } catch {
     // ignore when session storage is unavailable
   }
@@ -906,10 +908,19 @@ function typingInterceptedToast(count) {
 }
 
 function buildVaultKeysPattern() {
-  const keys = Object.keys(_vault).filter(Boolean);
-  if (keys.length === 0) return null;
+  const keys = Object.keys(_vault).filter(Boolean).sort();
+  const stamp = keys.join("\u0000");
+  if (stamp === _vaultPatternStamp) return _vaultPatternCache;
+
+  _vaultPatternStamp = stamp;
+  if (keys.length === 0) {
+    _vaultPatternCache = null;
+    return null;
+  }
+
   const escaped = keys.map(escapeRegex).sort((a, b) => b.length - a.length);
-  return new RegExp(escaped.join("|"), "g");
+  _vaultPatternCache = new RegExp(escaped.join("|"), "g");
+  return _vaultPatternCache;
 }
 
 function textContainsOnlyVaultTokens(text) {
@@ -1527,10 +1538,7 @@ async function scanAndRestore(root) {
 
   try {
   console.log("[DLP] vault keys:", Object.keys(_vault));
-  const vaultKeys = Object.keys(_vault).filter(Boolean);
-  const vaultKeyPattern = vaultKeys.length > 0
-    ? new RegExp(vaultKeys.map((k) => escapeRegex(k)).sort((a, b) => b.length - a.length).join("|"), "g")
-    : null;
+  const vaultKeyPattern = buildVaultKeysPattern();
 
   // Walk all text nodes
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {

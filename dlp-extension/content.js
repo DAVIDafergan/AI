@@ -85,9 +85,32 @@ function workerPreflight(text) {
 const _vault        = {};    // token → original value, e.g. { "[PERSON_1]": "David" }
 let   _maskingActive = false; // true only while programmatically re-triggering a masked send
 
+const VAULT_SESSION_KEY = "dlp_session_vault";
+const INTERNAL_GUARD_RELEASE_DELAY_MS = 50;
+
 function persistVault() {
-  // Intentionally disabled: vault contains real PII mapped to synthetic tokens.
-  // Persisting it in chrome.storage.local keeps sensitive mappings on disk.
+  try {
+    if (!chrome?.storage?.session?.set) return;
+    chrome.storage.session.set({ [VAULT_SESSION_KEY]: { ..._vault } });
+  } catch {
+    // ignore when session storage is unavailable
+  }
+}
+
+function loadVaultFromSession() {
+  return new Promise((resolve) => {
+    try {
+      if (!chrome?.storage?.session?.get) { resolve(); return; }
+      chrome.storage.session.get([VAULT_SESSION_KEY], (data) => {
+        if (!chrome.runtime.lastError && data?.[VAULT_SESSION_KEY] && typeof data[VAULT_SESSION_KEY] === "object") {
+          Object.assign(_vault, data[VAULT_SESSION_KEY]);
+        }
+        resolve();
+      });
+    } catch {
+      resolve();
+    }
+  });
 }
 
 // ── Input masking guard: prevents the programmatic field update from re-triggering the scanner ──
@@ -175,6 +198,10 @@ function debounce(fn, delay) {
   }
   debounced.cancel = () => clearTimeout(timer);
   return debounced;
+}
+
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /* ─────────────────────────────────────────────
@@ -691,11 +718,11 @@ function insertTextIntoField(element, text) {
 
     element.dispatchEvent(new Event("change", { bubbles: true }));
   } finally {
-    // Remove bypass marker after a microtask so queued event handlers see it
-    Promise.resolve().then(() => {
+    // Hold the guard briefly so browser input/mutation queues flush first.
+    setTimeout(() => {
       element.removeAttribute(DLP_BYPASS_ATTR);
       setInternalOperation(false);
-    });
+    }, INTERNAL_GUARD_RELEASE_DELAY_MS);
   }
 }
 
@@ -800,6 +827,7 @@ async function handlePaste(event) {
         result.errorCode === 413 ? "⚠️ DLP: הטקסט ארוך מדי לסינון – הועבר ללא שינוי." :
         "⚠️ DLP: מגבלת קצב בקשות הגיעה – הועבר ללא סינון.";
       insertTextIntoField(target, text);
+      safeStateMap.set(target, text);
       showFallbackToast(msg, "warning");
       return;
     }
@@ -812,6 +840,7 @@ async function handlePaste(event) {
 
     if (!isHardBlocked && !shouldApplyMask) {
       insertTextIntoField(target, text);
+      safeStateMap.set(target, text);
       showFallbackToast("✅ המידע בטוח – הודבק בהצלחה.", "success");
       return;
     }
@@ -838,6 +867,7 @@ async function handlePaste(event) {
 
     if (replacements.length === 0) {
       insertTextIntoField(target, maskedText);
+      safeStateMap.set(target, maskedText || "");
       showFallbackToast("🛡️ חומת אש AI: תוכן רגיש חוסם ונשלח מוסווה.", "warning");
       return;
     }
@@ -848,6 +878,7 @@ async function handlePaste(event) {
     await runMorphAnimation(overlayParts);
 
     insertTextIntoField(target, maskedText);
+    safeStateMap.set(target, maskedText || "");
     console.log(`${DLP_PREFIX} ✅ הודבק טקסט סינתטי (${replacements.length} החלפות)`);
 
     await sleep(TIMING.closeDelay);
@@ -855,10 +886,12 @@ async function handlePaste(event) {
   } catch (err) {
     if (err.name === "AbortError") {
       insertTextIntoField(target, text);
+      safeStateMap.set(target, text);
       showFallbackToast("⚠️ חומת אש AI: פסק זמן שרת. ההדבקה הועברה ללא סינון.", "warning");
     } else {
       console.error(`${DLP_PREFIX} שגיאה:`, err);
       insertTextIntoField(target, text);
+      safeStateMap.set(target, text);
       showFallbackToast("⚠️ חומת אש AI: שגיאת תקשורת. ההדבקה הועברה ללא סינון.", "warning");
     }
   }
@@ -870,6 +903,30 @@ async function handlePaste(event) {
 function typingInterceptedToast(count) {
   const pl = count !== 1;
   return `🛡️ ${count} פריט${pl ? "ים" : ""} רגיש${pl ? "ים" : ""} הוחלפ${pl ? "ו" : ""} בזמן הקלדה`;
+}
+
+function buildVaultKeysPattern() {
+  const keys = Object.keys(_vault).filter(Boolean);
+  if (keys.length === 0) return null;
+  const escaped = keys.map(escapeRegex).sort((a, b) => b.length - a.length);
+  return new RegExp(escaped.join("|"), "g");
+}
+
+function textContainsOnlyVaultTokens(text) {
+  if (typeof text !== "string" || text.length === 0) return false;
+
+  // If the text equals a known original value, do not treat it as "safe synthetic".
+  if (Object.values(_vault).includes(text)) return false;
+
+  const keys = Object.keys(_vault);
+  if (keys.length === 0) return false;
+  if (keys.includes(text)) return true;
+
+  const vaultKeysPattern = buildVaultKeysPattern();
+  if (!vaultKeysPattern) return false;
+
+  const remainder = text.replace(vaultKeysPattern, "").trim();
+  return remainder.length === 0;
 }
 
 /* ─────────────────────────────────────────────
@@ -884,6 +941,11 @@ async function interceptInput(element) {
   const text = element.isContentEditable
     ? element.innerText || element.textContent
     : element.value;
+
+  if (textContainsOnlyVaultTokens(text)) {
+    safeStateMap.set(element, text ?? "");
+    return;
+  }
 
   if (!text || text.trim().length < 3) {
     // Update safe state for short/empty content (it's safe by definition)
@@ -1464,6 +1526,12 @@ async function scanAndRestore(root) {
   _activeScanRoots.add(root);
 
   try {
+  console.log("[DLP] vault keys:", Object.keys(_vault));
+  const vaultKeys = Object.keys(_vault).filter(Boolean);
+  const vaultKeyPattern = vaultKeys.length > 0
+    ? new RegExp(vaultKeys.map((k) => escapeRegex(k)).sort((a, b) => b.length - a.length).join("|"), "g")
+    : null;
+
   // Walk all text nodes
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
@@ -1491,12 +1559,17 @@ async function scanAndRestore(root) {
 
   for (const textNode of nodesToProcess) {
     const text = textNode.nodeValue;
-    // Record current content immediately so a concurrent scan skips this snapshot.
-    processedContent.set(textNode, text);
     if (!text) continue;
 
     // Collect all matches from all patterns
     const allMatches = [];
+    if (vaultKeyPattern) {
+      vaultKeyPattern.lastIndex = 0;
+      let vm;
+      while ((vm = vaultKeyPattern.exec(text)) !== null) {
+        allMatches.push({ match: vm[0], index: vm.index });
+      }
+    }
     for (const pattern of SYNTHETIC_PATTERNS) {
       pattern.lastIndex = 0; // reset before reuse
       let m;
@@ -1505,7 +1578,10 @@ async function scanAndRestore(root) {
       }
     }
 
-    if (allMatches.length === 0) continue;
+    if (allMatches.length === 0) {
+      processedContent.set(textNode, text);
+      continue;
+    }
 
     // Remove duplicates and sort by position
     const uniqueMatches = [];
@@ -1532,7 +1608,10 @@ async function scanAndRestore(root) {
       }
     }
 
-    if (replaceMap.size === 0) continue;
+    if (replaceMap.size === 0) {
+      processedContent.set(textNode, text);
+      continue;
+    }
 
     // Build the parts array (text / restored segments) for this node
     const sortedSynthetics = [...replaceMap.keys()].sort((a, b) => {
@@ -1592,16 +1671,27 @@ async function scanAndRestore(root) {
           if (!textNode.parentNode) continue;
 
           const fragment = document.createDocumentFragment();
+          const newTextNodes = [];
           for (const part of parts) {
             if (part.type === "text") {
-              fragment.appendChild(document.createTextNode(part.value));
+              const textPartNode = document.createTextNode(part.value);
+              newTextNodes.push(textPartNode);
+              fragment.appendChild(textPartNode);
             } else {
-              fragment.appendChild(createRestoredSpan(part.original, part.synthetic));
+              const restoredSpan = createRestoredSpan(part.original, part.synthetic);
+              const restoredTextNode = restoredSpan.firstChild;
+              if (restoredTextNode?.nodeType === Node.TEXT_NODE) {
+                newTextNodes.push(restoredTextNode);
+              }
+              fragment.appendChild(restoredSpan);
             }
           }
 
           try {
             textNode.parentNode.replaceChild(fragment, textNode);
+            for (const newNode of newTextNodes) {
+              processedContent.set(newNode, newNode.nodeValue || "");
+            }
             totalRestored += replaceCount;
           } catch {
             // DOM operation failed (node removed concurrently) – ignore
@@ -2197,6 +2287,7 @@ async function init() {
 
   // Load settings (localAgentUrl, tenantApiKey) from storage
   await loadSettings();
+  await loadVaultFromSession();
 
   // Live-sync settings: if the user updates Email or Agent URL in the Popup/Options,
   // pick up the change immediately without requiring a page reload.

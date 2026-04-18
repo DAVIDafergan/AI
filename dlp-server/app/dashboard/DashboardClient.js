@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Bell, Clock, Plus, Building2, Settings, LogOut, RefreshCw, Activity, Users, AlertTriangle, Wifi, WifiOff } from "lucide-react";
+import { Bell, Clock, Plus, Building2, Settings, LogOut, RefreshCw, Activity, Users, AlertTriangle, Wifi, WifiOff, Link2 } from "lucide-react";
 import { logoutAction } from "../actions/auth";
 import TenantsTable from "../super-admin/components/TenantsTable";
 import AddTenantModal from "../super-admin/components/AddTenantModal";
@@ -124,6 +124,7 @@ const SIDEBAR_ITEMS = [
   { id: "clients",  label: "ניהול לקוחות",      icon: Building2 },
   { id: "add",      label: "הוספת לקוח חדש",    icon: Plus },
   { id: "agents",   label: "סוכנים",             icon: Activity },
+  { id: "connection", label: "חיבור והגדרות",    icon: Link2 },
   { id: "settings", label: "הגדרות מערכת",       icon: Settings },
 ];
 
@@ -215,6 +216,71 @@ function SystemSettings() {
           <li className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-green-400" />עוגיית HTTP-only להגנה על הסשן</li>
           <li className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-green-400" />אימות מבוסס מפתח API לכל לקוח</li>
           <li className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-yellow-400" />ניתוק אוטומטי לאחר 8 שעות</li>
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+function ConnectionSetupLite() {
+  const serverRows = [
+    ["Chrome Extension", "Options page (right-click extension → Options)", '"Local Agent URL"'],
+    ["Desktop Shield", "Environment variable", "DLP_SERVER_URL"],
+    ["On-Premise Agent", "CLI flag", "--saas-url"],
+    ["docker-compose.yml", ".env file", "DLP_SERVER_URL"],
+  ];
+
+  const checklist = [
+    '☐ Server is running (`curl https://your-server.com/api/health` returns `{"status":"ok"}`)',
+    "☐ Server has a public HTTPS URL (not http://, not an internal IP)",
+    "☐ .env file is filled and server restarted after changes",
+    "☐ Chrome Extension options page: Local Agent URL is set",
+    "☐ Chrome Extension options page: Tenant API Key is set",
+    '☐ Extension status dot shows green ("מחובר לשרת ✓")',
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-2">
+        <h2 className="text-sm font-semibold text-slate-200">חיבור והגדרות</h2>
+        <p className="text-xs text-slate-400">
+          מדריך קצר לחיבור מהיר של השרת, התוסף והרכיבים.
+        </p>
+      </div>
+
+      <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-3">
+        <h3 className="text-xs text-slate-500 uppercase tracking-wider">1) Server URL</h3>
+        <p className="text-xs text-slate-400">
+          כל הרכיבים צריכים כתובת HTTPS ציבורית אחת של dlp-server.
+        </p>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-slate-400 border-b border-slate-800">
+                <th className="py-2 text-right font-medium">Component</th>
+                <th className="py-2 text-right font-medium">Where to set the URL</th>
+                <th className="py-2 text-right font-medium">Field/Variable name</th>
+              </tr>
+            </thead>
+            <tbody>
+              {serverRows.map(([component, where, field]) => (
+                <tr key={component} className="border-b border-slate-800/60 text-slate-200">
+                  <td className="py-2">{component}</td>
+                  <td className="py-2 text-slate-300">{where}</td>
+                  <td className="py-2"><code className="text-cyan-300 font-mono">{field}</code></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-3">
+        <h3 className="text-xs text-slate-500 uppercase tracking-wider">4) Connection checklist</h3>
+        <ul className="space-y-2 text-sm text-slate-200">
+          {checklist.map((item) => (
+            <li key={item} className="leading-relaxed">{item}</li>
+          ))}
         </ul>
       </div>
     </div>
@@ -463,6 +529,9 @@ export default function DashboardClient({ initialClients = [] }) {
 
       case "agents":
         return <AgentsGrid superAdminKey="" onSelectAgent={setSelectedAgent} />;
+
+      case "connection":
+        return <ConnectionSetupLite />;
 
       case "settings":
         return <SystemSettings />;

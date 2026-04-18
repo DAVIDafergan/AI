@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Bell, Clock, LogOut, Plus } from "lucide-react";
+import { Bell, Clock, LogOut, Plus, Copy, Check } from "lucide-react";
 import GhostLogo from "../../components/GhostLogo";
 import SuperAdminSidebar from "./components/SuperAdminSidebar";
 import GlobalKpiBar      from "./components/GlobalKpiBar";
@@ -15,6 +15,23 @@ import TenantDetailView  from "./components/TenantDetailView";
 
 const SUPER_ADMIN_API_PATH = "/api/super-admin-stats";
 const SUPER_ADMIN_KEY_STORAGE_KEYS = ["ghostlayer_super_admin_key", "superAdminKey"];
+const ENV_TEMPLATE = `# Server public URL (must be HTTPS for the Chrome extension to work)
+DLP_SERVER_URL=https://your-server.com
+
+# MongoDB connection string
+MONGODB_URI=mongodb+srv://user:password@cluster.mongodb.net/ghostlayer
+
+# Super Admin credentials
+SUPER_ADMIN_KEY=change-me-to-a-long-random-string
+SUPER_ADMIN_USERNAME=admin@yourcompany.com
+SUPER_ADMIN_PASSWORD=change-me
+
+# JWT secret – generate with:
+# node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+JWT_SECRET=
+
+# Comma-separated list of allowed origins for CORS
+ALLOWED_ORIGINS=https://your-server.com,chrome-extension://YOUR_EXTENSION_ID`;
 
 function readStoredSuperAdminKey() {
   if (typeof window === "undefined") return "";
@@ -57,6 +74,133 @@ function SystemClock() {
     return () => clearInterval(id);
   }, []);
   return <span className="font-mono text-xs text-cyan-400/80 tabular-nums">{time}</span>;
+}
+
+function CopyButton({ text }) {
+  const [copied, setCopied] = useState(false);
+  const handle = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {}
+  };
+  return (
+    <button onClick={handle} className="p-1 rounded hover:bg-slate-700 text-slate-400 hover:text-cyan-400 transition-colors">
+      {copied ? <Check size={13} className="text-green-400" /> : <Copy size={13} />}
+    </button>
+  );
+}
+
+function ConnectionSetupPanel() {
+  const serverRows = [
+    ["Chrome Extension", "Options page (right-click extension → Options)", '"Local Agent URL"'],
+    ["Desktop Shield", "Environment variable", "DLP_SERVER_URL"],
+    ["On-Premise Agent", "CLI flag", "--saas-url"],
+    ["docker-compose.yml", ".env file", "DLP_SERVER_URL"],
+  ];
+
+  const apiKeyRows = [
+    ["Chrome Extension", "Options page", '"Tenant API Key"'],
+    ["Desktop Shield", "Environment variable", "DLP_API_KEY"],
+    ["On-Premise Agent", "CLI flag", "--api-key"],
+  ];
+
+  const checklist = [
+    '☐ Server is running (`curl https://your-server.com/api/health` returns `{"status":"ok"}`)',
+    "☐ Server has a public HTTPS URL (not http://, not an internal IP)",
+    "☐ .env file is filled and server restarted after changes",
+    "☐ Chrome Extension options page: Local Agent URL is set",
+    "☐ Chrome Extension options page: Tenant API Key is set",
+    '☐ Extension status dot shows green ("מחובר לשרת ✓")',
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-[#0d0d14] border border-slate-700/40 rounded-xl p-4 space-y-2">
+        <h2 className="text-sm font-semibold text-slate-200">חיבור והגדרות</h2>
+        <p className="text-xs text-slate-400 leading-relaxed">
+          מדריך מהיר לחיבור כל הרכיבים לשרת בצורה תקינה.
+        </p>
+      </div>
+
+      <div className="bg-[#0d0d14] border border-slate-700/40 rounded-xl p-4 space-y-3">
+        <h3 className="text-xs text-slate-300 uppercase tracking-wider">1) Server URL</h3>
+        <p className="text-xs text-slate-400">
+          כל הרכיבים צריכים כתובת אחת: כתובת HTTPS ציבורית של dlp-server.
+        </p>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-slate-400 border-b border-slate-700/40">
+                <th className="py-2 text-right font-medium">Component</th>
+                <th className="py-2 text-right font-medium">Where to set the URL</th>
+                <th className="py-2 text-right font-medium">Field/Variable name</th>
+              </tr>
+            </thead>
+            <tbody>
+              {serverRows.map(([component, where, field]) => (
+                <tr key={component} className="border-b border-slate-800/50 text-slate-200">
+                  <td className="py-2">{component}</td>
+                  <td className="py-2 text-slate-300">{where}</td>
+                  <td className="py-2"><code className="text-cyan-300 font-mono">{field}</code></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="text-xs text-amber-300/90 bg-amber-900/20 border border-amber-700/40 rounded-lg px-3 py-2 leading-relaxed">
+          If your server is on Google Cloud and only has an internal IP (10.x.x.x), the extension cannot reach it. You must assign an External IP in GCP Console and open port 3000 in Firewall Rules.
+        </p>
+      </div>
+
+      <div className="bg-[#0d0d14] border border-slate-700/40 rounded-xl p-4 space-y-3">
+        <h3 className="text-xs text-slate-300 uppercase tracking-wider">2) API Key</h3>
+        <p className="text-xs text-slate-400">
+          לכל Tenant נוצר API Key בזמן יצירה (מוצג פעם אחת בלבד בחלון Add Tenant).
+        </p>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-slate-400 border-b border-slate-700/40">
+                <th className="py-2 text-right font-medium">Component</th>
+                <th className="py-2 text-right font-medium">Where to set the API Key</th>
+                <th className="py-2 text-right font-medium">Field/Variable name</th>
+              </tr>
+            </thead>
+            <tbody>
+              {apiKeyRows.map(([component, where, field]) => (
+                <tr key={component} className="border-b border-slate-800/50 text-slate-200">
+                  <td className="py-2">{component}</td>
+                  <td className="py-2 text-slate-300">{where}</td>
+                  <td className="py-2"><code className="text-cyan-300 font-mono">{field}</code></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="bg-[#0d0d14] border border-slate-700/40 rounded-xl p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs text-slate-300 uppercase tracking-wider">3) .env file template</h3>
+          <CopyButton text={ENV_TEMPLATE} />
+        </div>
+        <div className="bg-slate-900/80 border border-slate-700/60 rounded-lg p-3">
+          <pre className="text-xs text-slate-300 font-mono whitespace-pre-wrap" dir="ltr">{ENV_TEMPLATE}</pre>
+        </div>
+      </div>
+
+      <div className="bg-[#0d0d14] border border-slate-700/40 rounded-xl p-4 space-y-3">
+        <h3 className="text-xs text-slate-300 uppercase tracking-wider">4) Connection checklist</h3>
+        <ul className="space-y-2 text-sm text-slate-200">
+          {checklist.map((item) => (
+            <li key={item} className="leading-relaxed">{item}</li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
 }
 
 // ── Auth gate ──────────────────────────────────────────────────
@@ -291,6 +435,9 @@ export default function SuperAdminPage() {
 
       case "threats":
         return <GlobalThreatMap stats={stats} />;
+
+      case "connection":
+        return <ConnectionSetupPanel />;
 
       default:
         return <GlobalKpiBar stats={stats} />;

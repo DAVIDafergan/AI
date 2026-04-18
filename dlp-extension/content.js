@@ -908,7 +908,7 @@ function typingInterceptedToast(count) {
 }
 
 function buildVaultKeysPattern() {
-  const keys = Object.keys(_vault).filter(Boolean).sort();
+  const keys = Object.keys(_vault).sort();
   const stamp = keys.join("\u0000");
   if (stamp === _vaultPatternStamp) return _vaultPatternCache;
 
@@ -935,6 +935,7 @@ function textContainsOnlyVaultTokens(text) {
 
   const vaultKeysPattern = buildVaultKeysPattern();
   if (!vaultKeysPattern) return false;
+  vaultKeysPattern.lastIndex = 0;
 
   const remainder = text.replace(vaultKeysPattern, "").trim();
   return remainder.length === 0;

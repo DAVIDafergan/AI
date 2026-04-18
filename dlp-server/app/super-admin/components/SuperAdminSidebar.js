@@ -3,7 +3,7 @@
 import { useState } from "react";
 import {
   LayoutDashboard, Building2, Cpu, Activity,
-  Map, Radio, ChevronLeft, ChevronRight, LogOut,
+  Map, Radio, Link2, ChevronLeft, ChevronRight, LogOut,
 } from "lucide-react";
 import GhostLogo from "../../../components/GhostLogo";
 
@@ -13,6 +13,7 @@ const NAV_ITEMS = [
   { id: "agents",    label: "סוכנים",        icon: Cpu },
   { id: "events",    label: "אירועים חיים",  icon: Radio },
   { id: "threats",   label: "מפת איומים",    icon: Map },
+  { id: "connection",label: "חיבור והגדרות", icon: Link2 },
   { id: "activity",  label: "פעילות",        icon: Activity },
 ];
 

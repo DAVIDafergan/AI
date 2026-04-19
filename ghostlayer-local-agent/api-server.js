@@ -1196,10 +1196,14 @@ export async function startApiServer(options = {}) {
   //  }
   app.post("/api/check-context", async (req, res) => {
     const text      = (req.body?.text      ?? "").trim();
-    const userEmail = (req.body?.userEmail ?? "").trim() || "unknown"; // eslint-disable-line no-unused-vars
+    const userEmail = (req.body?.userEmail ?? "").trim() || "unknown";
 
     if (!text) {
       return res.status(400).json({ isSensitive: false, reason: "No text provided." });
+    }
+
+    if (verbose) {
+      console.log(`[api-server] /api/check-context: ${text.length} char(s) for ${userEmail}`);
     }
 
     try {

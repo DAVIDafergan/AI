@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const VALID_USER_RE = /^[a-zA-Z0-9._-]+$/;
-const VALID_INSTALL_HOST_RE = /^[a-zA-Z0-9._-]+$/;
+const VALID_SSH_HOST_RE = /^[a-zA-Z0-9._-]+$/;
 const VALID_INSTALL_DIR_RE = /^\/[a-zA-Z0-9/_-]+$/;
 
 const PROVISION_COMMANDS = [
@@ -31,7 +31,7 @@ const PROVISION_COMMANDS = [
   {
     step: "start_service",
     title: "Start background service",
-    command: 'cd "$INSTALL_DIR" && nohup npm run start > agent.log 2>&1 & echo $! > agent.pid && cat agent.pid',
+    command: 'cd "$INSTALL_DIR" && nohup npm run start > agent.log 2>&1 & echo $! > agent.pid; cat agent.pid',
   },
   {
     step: "verify_health",
@@ -42,7 +42,7 @@ const PROVISION_COMMANDS = [
 
 const CONTROL_COMMANDS = {
   restart:
-    'cd "$INSTALL_DIR" && if [ -f agent.pid ]; then kill $(cat agent.pid) >/dev/null 2>&1 || true; fi && nohup npm run start > agent.log 2>&1 & echo $! > agent.pid && cat agent.pid',
+    'cd "$INSTALL_DIR" && if [ -f agent.pid ]; then kill $(cat agent.pid) >/dev/null 2>&1 || true; fi && nohup npm run start > agent.log 2>&1 & echo $! > agent.pid; cat agent.pid',
   logs: 'cd "$INSTALL_DIR" && (test -f agent.log && tail -n 100 agent.log || echo "agent.log not found")',
 };
 
@@ -120,6 +120,9 @@ async function runControlAction({ tenantId, action }) {
   if (!remote.sshHost || !remote.sshUser) {
     return { status: 400, body: { success: false, error: "Missing saved SSH connection details" } };
   }
+  if (!CONTROL_COMMANDS[action]) {
+    return { status: 400, body: { success: false, error: "Unsupported action" } };
+  }
 
   const client = await connectSsh({
     host: remote.sshHost,
@@ -161,7 +164,7 @@ function validateProvisionRequest(body) {
   if (!tenantId || !sshHost || !sshUser) {
     return { valid: false, error: "tenantId, sshHost and sshUser are required" };
   }
-  if (!VALID_INSTALL_HOST_RE.test(sshHost)) {
+  if (!VALID_SSH_HOST_RE.test(sshHost)) {
     return { valid: false, error: "Invalid SSH host" };
   }
   const parsedPort = Number(sshPort);

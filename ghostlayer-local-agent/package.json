@@ -9,6 +9,7 @@
   },
   "scripts": {
     "start": "node index.js",
+    "mock-server": "node mock-server.js",
     "test": "node --test tests/bloom.test.mjs tests/evasion.test.mjs tests/api.e2e.test.mjs"
   },
   "dependencies": {

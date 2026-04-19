@@ -143,9 +143,7 @@ export default function AgentsGrid({ superAdminKey, onSelectAgent }) {
 
   const fetchAgents = async () => {
     try {
-      const res = await fetch("/api/agents", {
-        headers: { "x-super-admin-key": superAdminKey },
-      });
+      const res = await fetch("/api/agents", { credentials: "include" });
       if (!res.ok) return;
       const data = await res.json();
       setAgents(data.agents || []);
@@ -160,7 +158,7 @@ export default function AgentsGrid({ superAdminKey, onSelectAgent }) {
     try {
       const res = await fetch(`/api/agents/${agent._id}`, {
         method: "DELETE",
-        headers: { "x-super-admin-key": superAdminKey },
+        credentials: "include",
       });
       if (!res.ok) throw new Error((await res.json()).error || "שגיאה במחיקה");
       setAgents((prev) => prev.filter((a) => a._id !== agent._id));
@@ -173,7 +171,7 @@ export default function AgentsGrid({ superAdminKey, onSelectAgent }) {
     fetchAgents();
     const interval = setInterval(fetchAgents, 10000);
     return () => clearInterval(interval);
-  }, [superAdminKey]);
+  }, []);
 
   return (
     <div className="bg-[#0d0d14] border border-slate-700/40 rounded-xl overflow-hidden">

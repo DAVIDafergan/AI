@@ -52,7 +52,8 @@ export default function AddTenantModal({ onClose, onCreated, superAdminKey }) {
     try {
       const res = await fetch("/api/tenants", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "x-super-admin-key": superAdminKey },
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify(form),
       });
       const data = await res.json();
@@ -70,7 +71,6 @@ export default function AddTenantModal({ onClose, onCreated, superAdminKey }) {
   const deployScript = credentials
     ? `curl -X POST ${typeof window !== "undefined" ? window.location.origin : ""}/api/provision \\
   -H "Content-Type: application/json" \\
-  -H "x-super-admin-key: ${superAdminKey}" \\
   -d '{"tenantId":"<TENANT_ID>","name":"agent-01"}'`
     : "";
 
@@ -104,7 +104,8 @@ export default function AddTenantModal({ onClose, onCreated, superAdminKey }) {
     try {
       const res = await fetch("/api/provision-agent", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "x-super-admin-key": superAdminKey },
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({
           tenantId: createdTenant?._id,
           tenantApiKey: credentials.apiKey,

@@ -207,22 +207,26 @@ function ConnectionSetupPanel() {
 
 // ── Auth gate ──────────────────────────────────────────────────
 function AuthGate({ onAuth }) {
-  const [key, setKey]   = useState(resolveSuperAdminKey());
-  const [err, setErr]   = useState("");
-  const [loading, setLoading] = useState(false);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [err, setErr]           = useState("");
+  const [loading, setLoading]   = useState(false);
 
   const submit = async () => {
-    const requestKey = resolveSuperAdminKey(key);
-    if (!requestKey) return;
+    if (!username.trim() || !password) return;
     setErr("");
     setLoading(true);
     try {
-      const res = await fetch(SUPER_ADMIN_API_PATH, {
-        headers: { "x-super-admin-key": requestKey },
+      const res = await fetch("/api/super-admin-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: username.trim(), password }),
+        credentials: "include",
       });
-      if (res.ok) { onAuth(requestKey); }
-      else {
-        let msg = "מפתח ניהול על שגוי";
+      if (res.ok) {
+        onAuth();
+      } else {
+        let msg = "שם משתמש או סיסמה שגויים";
         try {
           const d = await res.json();
           msg = d.error || msg;
@@ -246,24 +250,37 @@ function AuthGate({ onAuth }) {
             <p className="text-slate-500 text-xs">Super Admin</p>
           </div>
         </div>
-        <div>
-          <label className="block text-xs text-slate-400 mb-1.5">מפתח ניהול</label>
-          <input
-            type="password"
-            value={key}
-            onChange={(e) => setKey(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && submit()}
-            className="w-full bg-slate-900/60 border border-slate-700/60 rounded-lg px-3 py-2.5 text-sm text-slate-200 font-mono outline-none focus:border-cyan-600/60"
-            placeholder="SUPER_ADMIN_KEY"
-          />
-          <p className="mt-2 text-[11px] text-slate-500 leading-relaxed">
-            הזן את מפתח ניהול העל (SUPER_ADMIN_KEY) שמוגדר בשרת.
-          </p>
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs text-slate-400 mb-1.5">שם משתמש</label>
+            <input
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && submit()}
+              className="w-full bg-slate-900/60 border border-slate-700/60 rounded-lg px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-cyan-600/60"
+              placeholder="admin@example.com"
+              autoComplete="username"
+              dir="ltr"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-400 mb-1.5">סיסמה</label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && submit()}
+              className="w-full bg-slate-900/60 border border-slate-700/60 rounded-lg px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-cyan-600/60"
+              placeholder="••••••••"
+              autoComplete="current-password"
+            />
+          </div>
         </div>
         {err && <p className="text-xs text-red-400">{err}</p>}
         <button
           onClick={submit}
-          disabled={!resolveSuperAdminKey(key) || loading}
+          disabled={!username.trim() || !password || loading}
           className="w-full py-2.5 bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-600/40 rounded-lg text-sm text-cyan-300 font-medium transition-colors disabled:opacity-40"
         >
           {loading ? "מאמת..." : "כניסה"}
@@ -284,13 +301,15 @@ export default function SuperAdminPage() {
   const [selectedTenant, setSelectedTenant] = useState(null);
   const [notifCount, setNotifCount]     = useState(0);
 
+  // On mount: check if there is already a valid session cookie
   useEffect(() => {
-    const saved = resolveSuperAdminKey();
-    if (saved) setAdminKey(saved);
+    fetch(SUPER_ADMIN_API_PATH, { credentials: "include" })
+      .then((res) => { if (res.ok) setAdminKey("session"); })
+      .catch(() => {});
   }, []);
 
-  const logout = useCallback(() => {
-    clearPersistedSuperAdminKey();
+  const logout = useCallback(async () => {
+    try { await fetch("/api/super-admin-logout", { method: "POST", credentials: "include" }); } catch {}
     setAdminKey(null);
     setStats(null);
     setTenants([]);
@@ -301,9 +320,7 @@ export default function SuperAdminPage() {
   const fetchStats = useCallback(async () => {
     if (!adminKey) return;
     try {
-      const res = await fetch(SUPER_ADMIN_API_PATH, {
-        headers: { "x-super-admin-key": adminKey },
-      });
+      const res = await fetch(SUPER_ADMIN_API_PATH, { credentials: "include" });
       if (res.ok) {
         const data = await res.json();
         setStats(data);
@@ -317,9 +334,7 @@ export default function SuperAdminPage() {
   const fetchTenants = useCallback(async () => {
     if (!adminKey) return;
     try {
-      const res = await fetch("/api/tenants", {
-        headers: { "x-super-admin-key": adminKey },
-      });
+      const res = await fetch("/api/tenants", { credentials: "include" });
       if (res.ok) setTenants((await res.json()).tenants || []);
       else if (res.status === 401 || res.status === 403) logout();
     } catch {}
@@ -338,7 +353,8 @@ export default function SuperAdminPage() {
     try {
       const res = await fetch(`/api/tenants/${tenant._id}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json", "x-super-admin-key": adminKey },
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ status: newStatus }),
       });
       if (res.ok) fetchTenants();
@@ -351,7 +367,7 @@ export default function SuperAdminPage() {
     try {
       const res = await fetch(`/api/tenants/${tenant._id}`, {
         method: "DELETE",
-        headers: { "x-super-admin-key": adminKey },
+        credentials: "include",
       });
       if (res.ok) fetchTenants();
       else if (res.status === 401 || res.status === 403) logout();
@@ -359,7 +375,7 @@ export default function SuperAdminPage() {
   };
 
   if (!adminKey) {
-    return <AuthGate onAuth={(key) => { persistSuperAdminKey(key); setAdminKey(key); }} />;
+    return <AuthGate onAuth={() => setAdminKey("session")} />;
   }
 
   const renderContent = () => {

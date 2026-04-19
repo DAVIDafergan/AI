@@ -78,8 +78,8 @@ function ConnectionInstructions({ tenant, superAdminKey, onAgentProvisioned }) {
     try {
       const res = await fetch("/api/provision", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "x-super-admin-key": superAdminKey },
-        body: JSON.stringify({ tenantId: tenant._id, name: provName.trim(), environment: "production" }),
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
@@ -304,13 +304,13 @@ export default function TenantDetailView({ tenant, superAdminKey, onBack }) {
     try {
       const [agentsRes, eventsRes, usersRes] = await Promise.all([
         fetch(`/api/agents?tenantId=${tenant._id}`, {
-          headers: { "x-super-admin-key": superAdminKey },
+          credentials: "include",
         }),
         fetch(`/api/tenant-events?tenantId=${tenant._id}&limit=25`, {
-          headers: { "x-super-admin-key": superAdminKey },
+          credentials: "include",
         }),
         fetch(`/api/tenant-users?tenantId=${tenant._id}`, {
-          headers: { "x-super-admin-key": superAdminKey },
+          credentials: "include",
         }),
       ]);
       if (agentsRes.ok) {
@@ -331,8 +331,8 @@ export default function TenantDetailView({ tenant, superAdminKey, onBack }) {
     try {
       const res = await fetch(`/api/tenants/${tenant._id}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json", "x-super-admin-key": superAdminKey },
-        body: JSON.stringify({ serverUrl: serverUrlEdit, agentUrl: agentUrlEdit }),
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
       });
       if (!res.ok) throw new Error((await res.json()).error || "שגיאה");
       setUrlSaveMsg("✓ נשמר");
@@ -351,7 +351,7 @@ export default function TenantDetailView({ tenant, superAdminKey, onBack }) {
     try {
       const res = await fetch(`/api/agents/${agentId}`, {
         method: "DELETE",
-        headers: { "x-super-admin-key": superAdminKey },
+        credentials: "include",
       });
       if (!res.ok) throw new Error((await res.json()).error || "שגיאה במחיקה");
       setAgents((prev) => prev.filter((a) => a._id !== agentId));
@@ -364,7 +364,7 @@ export default function TenantDetailView({ tenant, superAdminKey, onBack }) {
     if (!tenant?._id) return;
     try {
       const res = await fetch(`/api/agents?tenantId=${tenant._id}`, {
-        headers: { "x-super-admin-key": superAdminKey },
+        credentials: "include",
       });
       if (!res.ok) return;
       const data = await res.json();
@@ -379,7 +379,8 @@ export default function TenantDetailView({ tenant, superAdminKey, onBack }) {
     try {
       const res = await fetch("/api/provision-agent", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "x-super-admin-key": superAdminKey },
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ action, tenantId: tenant._id }),
       });
       const data = await res.json();

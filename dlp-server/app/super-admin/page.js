@@ -20,6 +20,8 @@ DLP_SERVER_URL=https://your-server.com
 
 # MongoDB connection string
 MONGODB_URI=mongodb+srv://user:password@cluster.mongodb.net/ghostlayer
+# Optional fallback tenant API key for remote provisioning when MongoDB is disabled
+FALLBACK_TENANT_API_KEY=
 
 # Super Admin credentials
 SUPER_ADMIN_KEY=change-me-to-a-long-random-string

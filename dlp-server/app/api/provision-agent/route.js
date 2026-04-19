@@ -8,6 +8,7 @@ export const runtime = "nodejs";
 const VALID_USER_RE = /^[a-zA-Z0-9._-]+$/;
 const VALID_SSH_HOST_RE = /^[a-zA-Z0-9._-]+$/;
 const VALID_INSTALL_DIR_RE = /^\/[a-zA-Z0-9/_-]+$/;
+const FALLBACK_TENANT_API_KEY_ENV_KEYS = ["FALLBACK_TENANT_API_KEY", "GHOSTLAYER_TENANT_API_KEY", "DLP_TENANT_API_KEY"];
 
 const PROVISION_COMMANDS = [
   {
@@ -56,6 +57,14 @@ async function getSshClientClass() {
 
 function sseEvent(name, payload) {
   return `event: ${name}\ndata: ${JSON.stringify(payload)}\n\n`;
+}
+
+function readFallbackTenantApiKey() {
+  for (const key of FALLBACK_TENANT_API_KEY_ENV_KEYS) {
+    const value = process.env[key];
+    if (value && value.trim()) return value.trim();
+  }
+  return "";
 }
 
 function parseLines(chunk, onLine) {
@@ -248,6 +257,14 @@ export async function POST(request) {
           const hashedTenantApiKey = hashApiKey(tenantApiKey);
           if (tenant.apiKey !== hashedTenantApiKey) {
             throw new Error("Invalid tenant API key for tenant");
+          }
+        } else if (!mongoEnabled) {
+          const expectedApiKey = readFallbackTenantApiKey();
+          if (!expectedApiKey) {
+            throw new Error("MongoDB is disabled. Set FALLBACK_TENANT_API_KEY (or GHOSTLAYER_TENANT_API_KEY / DLP_TENANT_API_KEY) to enable secure provisioning");
+          }
+          if (tenantApiKey !== expectedApiKey) {
+            throw new Error("Invalid tenant API key for provisioning");
           }
         }
 

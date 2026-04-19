@@ -2,7 +2,7 @@
 
 // אשף הוספת לקוח חדש – Client Onboarding Wizard
 import { useState } from "react";
-import { X, Copy, Check, ChevronRight, ChevronLeft, Building2, Shield, Key } from "lucide-react";
+import { X, Copy, Check, ChevronRight, ChevronLeft, Building2, Shield, Key, Terminal, Container } from "lucide-react";
 
 // כל סוגי ה-PII הנתמכים
 const PII_TYPES = [
@@ -296,9 +296,41 @@ export default function ClientOnboardingWizard({ onClose, onClientCreated }) {
                 <p className="text-xs text-rose-400 mt-2">⚠️ שמור את המפתח – לא יוצג שוב לאחר סגירת חלון זה!</p>
               </div>
 
+              {/* ── Zero-Touch Docker Install Command ── */}
+              {(() => {
+                const serverUrl =
+                  typeof window !== "undefined" ? window.location.origin : "http://localhost:3000";
+                const dockerCmd =
+                  `docker run -d --restart=always \\\n` +
+                  `  --name ghostlayer-agent \\\n` +
+                  `  -e API_KEY="${result.apiKey}" \\\n` +
+                  `  -e SERVER_URL="${serverUrl}" \\\n` +
+                  `  -v /path/to/company/docs:/docs \\\n` +
+                  `  ghostlayer/agent:latest`;
+                return (
+                  <div className="bg-cyan-950/30 border border-cyan-500/30 rounded-xl p-4 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <Terminal className="w-4 h-4 text-cyan-400" />
+                      <p className="text-xs font-semibold text-cyan-300 uppercase tracking-wider">
+                        🚀 Zero-Touch Agent Install (Docker)
+                      </p>
+                    </div>
+                    <p className="text-xs text-slate-400 leading-relaxed">
+                      הרץ פקודה אחת על שרת הלקוח — הכל מוגדר אוטומטית, אין צורך בהגדרה ידנית.
+                    </p>
+                    <CodeBlock code={dockerCmd} language="bash" />
+                    <div className="text-xs text-slate-500 space-y-0.5">
+                      <p>• החלף <code className="text-cyan-400/80">/path/to/company/docs</code> בנתיב לכונן המשותף</p>
+                      <p>• הסוכן יתחבר אוטומטית לדשבורד ויאפשר שליטה מרחוק</p>
+                      <p>• אין צורך לפתוח פורטים — החיבור יוצא מהשרת החוצה בלבד</p>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* הוראות חיבור */}
               <div className="space-y-4">
-                <h4 className="text-sm font-semibold text-white border-b border-slate-700 pb-2">הוראות חיבור</h4>
+                <h4 className="text-sm font-semibold text-white border-b border-slate-700 pb-2">הוראות חיבור נוספות</h4>
 
                 {/* א. Browser Extension */}
                 <div>

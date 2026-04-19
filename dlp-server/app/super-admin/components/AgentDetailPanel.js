@@ -1,7 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { X, Cpu, RefreshCw, Pause, Settings, Activity, Loader2, Trash2, Brain, Users, Building2, ShieldAlert, BarChart2 } from "lucide-react";
+import {
+  X, Cpu, RefreshCw, Pause, Settings, Activity, Loader2, Trash2,
+  Brain, Users, Building2, ShieldAlert, BarChart2, Zap, ScrollText,
+  PowerOff, Wifi, WifiOff,
+} from "lucide-react";
 
 function BrainSummaryPanel({ agent }) {
   const b = agent.brainSummary || {};
@@ -81,14 +85,37 @@ function BrainSummaryPanel({ agent }) {
 }
 
 export default function AgentDetailPanel({ agent, superAdminKey, onClose, onUpdated, onDeleted }) {
-  const [tab, setTab]         = useState("brain");
+  const [tab, setTab]           = useState("brain");
   const [editForm, setEditForm] = useState(null);
-  const [loading, setLoading]  = useState(false);
-  const [msg, setMsg]          = useState("");
+  const [loading, setLoading]   = useState(false);
+  const [msg, setMsg]           = useState("");
+  const [remoteLogs, setRemoteLogs] = useState(null);
+  const [remoteLogsLoading, setRemoteLogsLoading] = useState(false);
 
   if (!agent) return null;
 
   const setF = (k, v) => setEditForm((f) => ({ ...f, [k]: v }));
+  const isConnected = !!agent.commandChannelConnected;
+
+  /** Send a command to the live agent via the command channel. */
+  async function sendCommand(action, params = {}) {
+    setLoading(true);
+    setMsg("");
+    try {
+      const res = await fetch(`/api/agents/${agent._id}/send-command`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ action, params }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "שגיאה");
+      if (!data.sent) throw new Error(data.message || "הסוכן לא מחובר לערוץ הפקודות");
+      return data;
+    } finally {
+      setLoading(false);
+    }
+  }
 
   const handleAction = async (action) => {
     setLoading(true);
@@ -113,6 +140,55 @@ export default function AgentDetailPanel({ agent, superAdminKey, onClose, onUpda
       setMsg(`✗ ${e.message}`);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleRemoteScan = async () => {
+    try {
+      await sendCommand("scan");
+      setMsg("✓ פקודת סריקה נשלחה לסוכן");
+    } catch (e) {
+      setMsg(`✗ ${e.message}`);
+    }
+  };
+
+  const handleGetLogs = async () => {
+    setRemoteLogsLoading(true);
+    setRemoteLogs(null);
+    setMsg("");
+    try {
+      const data = await sendCommand("get-logs");
+      if (!data.commandId) throw new Error("לא התקבל commandId");
+      // Poll for the result (up to 15s)
+      const agentId = agent._id;
+      for (let attempt = 0; attempt < 15; attempt++) {
+        await new Promise((r) => setTimeout(r, 1000));
+        const res = await fetch(
+          `/api/agents/command-result?agentId=${agentId}&commandId=${data.commandId}`,
+          { credentials: "include" }
+        );
+        const result = await res.json();
+        if (result.result?.result?.logs) {
+          setRemoteLogs(result.result.result.logs);
+          setTab("logs");
+          return;
+        }
+      }
+      setMsg("⚠️ לא התקבלה תשובה מהסוכן תוך 15 שניות");
+    } catch (e) {
+      setMsg(`✗ ${e.message}`);
+    } finally {
+      setRemoteLogsLoading(false);
+    }
+  };
+
+  const handleDeactivate = async () => {
+    if (!confirm(`האם לכבות את הסוכן "${agent.name}" מרחוק? הסוכן יופסק.`)) return;
+    try {
+      await sendCommand("deactivate");
+      setMsg("✓ פקודת כיבוי נשלחה לסוכן");
+    } catch (e) {
+      setMsg(`✗ ${e.message}`);
     }
   };
 
@@ -143,18 +219,40 @@ export default function AgentDetailPanel({ agent, superAdminKey, onClose, onUpda
             [{STATUS_LABEL[agent.syncStatus] || agent.syncStatus}]
           </span>
         </div>
-        <button onClick={onClose} className="text-slate-500 hover:text-slate-200 transition-colors">
-          <X size={16} />
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Command channel status indicator */}
+          <span
+            title={isConnected ? "מחובר לערוץ פקודות" : "לא מחובר לערוץ פקודות"}
+            className={`flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded ${
+              isConnected
+                ? "text-green-400 bg-green-500/10 border border-green-700/30"
+                : "text-slate-500 bg-slate-800/40 border border-slate-700/30"
+            }`}
+          >
+            {isConnected ? <Wifi size={9} /> : <WifiOff size={9} />}
+            {isConnected ? "מחובר" : "מנותק"}
+          </span>
+          <button onClick={onClose} className="text-slate-500 hover:text-slate-200 transition-colors">
+            <X size={16} />
+          </button>
+        </div>
       </div>
 
       {/* Tabs */}
-      <div className="flex border-b border-slate-800">
-        {[["brain","🧠 מה למד"],["metrics","מדדים"],["config","הגדרות"],["actions","פעולות"]].map(([id, label]) => (
+      <div className="flex border-b border-slate-800 overflow-x-auto">
+        {[
+          ["brain",   "🧠 מה למד"],
+          ["metrics", "מדדים"],
+          ["config",  "הגדרות"],
+          ["actions", "פעולות"],
+          ["logs",    "לוגים"],
+        ].map(([id, label]) => (
           <button
             key={id}
             onClick={() => setTab(id)}
-            className={`flex-1 py-2.5 text-xs transition-colors ${tab === id ? "text-cyan-300 border-b-2 border-cyan-500" : "text-slate-500 hover:text-slate-300"}`}
+            className={`flex-shrink-0 flex-1 py-2.5 text-xs transition-colors whitespace-nowrap ${
+              tab === id ? "text-cyan-300 border-b-2 border-cyan-500" : "text-slate-500 hover:text-slate-300"
+            }`}
           >
             {label}
           </button>
@@ -240,48 +338,124 @@ export default function AgentDetailPanel({ agent, superAdminKey, onClose, onUpda
         {tab === "actions" && (
           <div className="space-y-3">
             <h3 className="text-xs text-slate-500 uppercase tracking-wider mb-2">פעולות</h3>
-            <button
-              onClick={() => handleAction("restart")}
-              disabled={loading}
-              className="w-full flex items-center gap-2 py-2.5 px-4 bg-blue-500/10 border border-blue-700/40 rounded-lg text-sm text-blue-300 hover:bg-blue-500/20 transition-colors"
-            >
-              <RefreshCw size={14} /> הפעלה מחדש
-            </button>
-            <button
-              onClick={() => handleAction("pause")}
-              disabled={loading}
-              className="w-full flex items-center gap-2 py-2.5 px-4 bg-yellow-500/10 border border-yellow-700/40 rounded-lg text-sm text-yellow-300 hover:bg-yellow-500/20 transition-colors"
-            >
-              <Pause size={14} /> השהיה
-            </button>
-            <button
-              onClick={async () => {
-                if (!confirm(`האם למחוק את הסוכן "${agent.name}"?`)) return;
-                setLoading(true);
-                try {
-                  const res = await fetch(`/api/agents/${agent._id}`, {
-                    method: "DELETE",
-                    credentials: "include",
-                  });
-                  if (!res.ok) throw new Error((await res.json()).error);
-                  onDeleted?.();
-                  onClose?.();
-                } catch (e) {
-                  setMsg(`✗ ${e.message}`);
-                } finally {
-                  setLoading(false);
-                }
-              }}
-              disabled={loading}
-              className="w-full flex items-center gap-2 py-2.5 px-4 bg-red-500/10 border border-red-700/40 rounded-lg text-sm text-red-300 hover:bg-red-500/20 transition-colors"
-            >
-              <Trash2 size={14} /> מחיקת סוכן
-            </button>
+
+            {/* Remote commands – require live command channel */}
+            <div className="space-y-2">
+              <p className="text-[10px] text-slate-500 uppercase tracking-wider">שליטה מרחוק (ערוץ פקודות)</p>
+
+              <button
+                onClick={handleRemoteScan}
+                disabled={loading || !isConnected}
+                title={!isConnected ? "הסוכן לא מחובר לערוץ הפקודות" : undefined}
+                className="w-full flex items-center gap-2 py-2.5 px-4 bg-cyan-500/10 border border-cyan-700/40 rounded-lg text-sm text-cyan-300 hover:bg-cyan-500/20 disabled:opacity-40 transition-colors"
+              >
+                {loading ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
+                סרוק עכשיו (Scan Now)
+              </button>
+
+              <button
+                onClick={handleGetLogs}
+                disabled={remoteLogsLoading || loading || !isConnected}
+                title={!isConnected ? "הסוכן לא מחובר לערוץ הפקודות" : undefined}
+                className="w-full flex items-center gap-2 py-2.5 px-4 bg-slate-500/10 border border-slate-700/40 rounded-lg text-sm text-slate-300 hover:bg-slate-500/20 disabled:opacity-40 transition-colors"
+              >
+                {remoteLogsLoading ? <Loader2 size={14} className="animate-spin" /> : <ScrollText size={14} />}
+                {remoteLogsLoading ? "מושך לוגים…" : "הצג לוגים מרוחקים"}
+              </button>
+
+              <button
+                onClick={handleDeactivate}
+                disabled={loading || !isConnected}
+                title={!isConnected ? "הסוכן לא מחובר לערוץ הפקודות" : undefined}
+                className="w-full flex items-center gap-2 py-2.5 px-4 bg-orange-500/10 border border-orange-700/40 rounded-lg text-sm text-orange-300 hover:bg-orange-500/20 disabled:opacity-40 transition-colors"
+              >
+                {loading ? <Loader2 size={14} className="animate-spin" /> : <PowerOff size={14} />}
+                כיבוי מרחוק
+              </button>
+
+              {!isConnected && (
+                <p className="text-[10px] text-slate-500 bg-slate-800/40 border border-slate-700/30 rounded-lg p-2 leading-relaxed">
+                  💡 פקודות מרחוק זמינות רק כאשר הסוכן מחובר לערוץ הפקודות.
+                  ודא שהסוכן רץ ויש לו גישה לשרת.
+                </p>
+              )}
+            </div>
+
+            <div className="border-t border-slate-800 pt-3 space-y-2">
+              <p className="text-[10px] text-slate-500 uppercase tracking-wider">ניהול רשומה</p>
+
+              <button
+                onClick={() => handleAction("restart")}
+                disabled={loading}
+                className="w-full flex items-center gap-2 py-2.5 px-4 bg-blue-500/10 border border-blue-700/40 rounded-lg text-sm text-blue-300 hover:bg-blue-500/20 transition-colors"
+              >
+                <RefreshCw size={14} /> איפוס סטטוס (בלוח הבקרה)
+              </button>
+              <button
+                onClick={() => handleAction("pause")}
+                disabled={loading}
+                className="w-full flex items-center gap-2 py-2.5 px-4 bg-yellow-500/10 border border-yellow-700/40 rounded-lg text-sm text-yellow-300 hover:bg-yellow-500/20 transition-colors"
+              >
+                <Pause size={14} /> השהיה
+              </button>
+              <button
+                onClick={async () => {
+                  if (!confirm(`האם למחוק את הסוכן "${agent.name}"?`)) return;
+                  setLoading(true);
+                  try {
+                    const res = await fetch(`/api/agents/${agent._id}`, {
+                      method: "DELETE",
+                      credentials: "include",
+                    });
+                    if (!res.ok) throw new Error((await res.json()).error);
+                    onDeleted?.();
+                    onClose?.();
+                  } catch (e) {
+                    setMsg(`✗ ${e.message}`);
+                  } finally {
+                    setLoading(false);
+                  }
+                }}
+                disabled={loading}
+                className="w-full flex items-center gap-2 py-2.5 px-4 bg-red-500/10 border border-red-700/40 rounded-lg text-sm text-red-300 hover:bg-red-500/20 transition-colors"
+              >
+                <Trash2 size={14} /> מחיקת סוכן
+              </button>
+            </div>
+          </div>
+        )}
+
+        {tab === "logs" && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs text-slate-500 uppercase tracking-wider">לוגים מרוחקים</h3>
+              <button
+                onClick={handleGetLogs}
+                disabled={remoteLogsLoading || !isConnected}
+                className="flex items-center gap-1 text-[10px] px-2 py-1 bg-slate-700/40 border border-slate-600/40 rounded text-slate-400 hover:text-white transition-colors disabled:opacity-40"
+              >
+                {remoteLogsLoading ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />}
+                רענן
+              </button>
+            </div>
+            {remoteLogs ? (
+              <pre className="bg-slate-950 border border-slate-700/50 rounded-lg p-3 text-[10px] font-mono text-slate-300 overflow-auto max-h-[500px] whitespace-pre-wrap" dir="ltr">
+                {remoteLogs}
+              </pre>
+            ) : (
+              <div className="text-center py-10 text-slate-600 text-xs">
+                {remoteLogsLoading
+                  ? "מושך לוגים מהסוכן…"
+                  : isConnected
+                  ? "לחץ \"הצג לוגים מרוחקים\" בטאב הפעולות"
+                  : "הסוכן לא מחובר לערוץ הפקודות"}
+              </div>
+            )}
           </div>
         )}
 
         {msg && (
-          <p className={`mt-3 text-xs ${msg.startsWith("✓") ? "text-green-400" : "text-red-400"}`}>{msg}</p>
+          <p className={`mt-3 text-xs ${msg.startsWith("✓") ? "text-green-400" : msg.startsWith("⚠️") ? "text-yellow-400" : "text-red-400"}`}>{msg}</p>
         )}
       </div>
     </div>

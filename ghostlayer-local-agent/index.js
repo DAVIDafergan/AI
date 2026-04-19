@@ -30,6 +30,7 @@ import {
 import { ingestDocuments }          from "./vector-store.js";
 import { startApiServer, warmCache, refreshBrain } from "./api-server.js";
 import { sendHeartbeat, startPeriodicTelemetry, sendScanReport } from "./cloud-sync.js";
+import { startCommandChannel } from "./command-channel.js";
 
 // ── CLI definition ────────────────────────────────────────────────────────────
 
@@ -211,9 +212,40 @@ async function run() {
   console.log(`   ✅ API server is live on port ${localPort} – extensions are protected.`);
   console.log();
 
+  // ── Command Channel ───────────────────────────────────────────────────────────
+  // Opens an outbound SSE connection to the GhostLayer dashboard so that the
+  // super-admin can trigger scans, retrieve logs, or deactivate the agent
+  // remotely – without any inbound firewall rules.
+  console.log("📡 Connecting to GhostLayer dashboard command channel…");
+  const commandChannel = startCommandChannel({
+    apiKey:    opts.apiKey,
+    serverUrl: opts.serverUrl,
+    verbose,
+    onScan: async () => {
+      await runIndexingPipeline({ targetDir, verbose, opts, dryRun: false });
+    },
+    onGetLogs: async () => {
+      const { readFileSync, existsSync } = await import("fs");
+      const { join } = await import("path");
+      const logPath = join(process.cwd(), "agent.log");
+      if (existsSync(logPath)) {
+        return readFileSync(logPath, "utf8").split("\n").slice(-200).join("\n");
+      }
+      return "Log file not found. Run the agent with output redirected to agent.log.";
+    },
+    onDeactivate: () => {
+      console.log("[command-channel] Shutting down agent on dashboard request.");
+      server.close();
+      commandChannel.stop();
+      process.exit(0);
+    },
+  });
+  console.log("   ✅ Command channel active – dashboard control enabled.");
+  console.log();
+
   // Keep the process alive; the indexing pipeline runs in the background
-  process.on("SIGINT",  () => { server.close(); process.exit(0); });
-  process.on("SIGTERM", () => { server.close(); process.exit(0); });
+  process.on("SIGINT",  () => { commandChannel.stop(); server.close(); process.exit(0); });
+  process.on("SIGTERM", () => { commandChannel.stop(); server.close(); process.exit(0); });
 
   // Start periodic telemetry immediately with live counters so every tick
   // reflects actual scan/block activity from the already-running API server.

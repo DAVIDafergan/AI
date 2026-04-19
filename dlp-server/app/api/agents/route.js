@@ -4,6 +4,12 @@ import { connectMongo, Agent, Tenant } from "../../../lib/db.js";
 import { randomUUID } from "crypto";
 
 export const dynamic = "force-dynamic";
+
+// Access the global command-channel registry (populated by the SSE route)
+const _g = globalThis;
+if (!_g._agentChannels) _g._agentChannels = new Map();
+const agentChannels = _g._agentChannels;
+
 // GET /api/agents – list agents (optionally filter by tenantId)
 export async function GET(request) {
   try {
@@ -24,7 +30,9 @@ export async function GET(request) {
         else if ((a.metrics?.documentsIndexed || 0) === 0) status = "learning";
         else status = "active";
       }
-      return { ...a, syncStatus: status };
+      // Indicate whether the agent has an active SSE command channel
+      const commandChannelConnected = agentChannels.has(a.agentKey);
+      return { ...a, syncStatus: status, commandChannelConnected };
     });
 
     if (tenantId) {

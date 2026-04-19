@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Cpu, LayoutGrid, List, RefreshCw, Trash2, Brain } from "lucide-react";
+import { Cpu, LayoutGrid, List, RefreshCw, Trash2, Brain, Wifi, WifiOff } from "lucide-react";
 
 const STATUS_COLORS = {
   active:   { dot: "bg-green-400",  text: "text-green-400",  border: "border-green-700/40" },
@@ -30,6 +30,7 @@ function AgentCard({ agent, onClick, onDelete }) {
   const c = STATUS_COLORS[agent.syncStatus] || STATUS_COLORS.offline;
   const b = agent.brainSummary || {};
   const hasBrain = (b.personsFound || 0) + (b.orgsFound || 0) + (b.piiFound || 0) > 0;
+  const isConnected = !!agent.commandChannelConnected;
   return (
     <div
       onClick={() => onClick?.(agent)}
@@ -45,6 +46,13 @@ function AgentCard({ agent, onClick, onDelete }) {
             <StatusDot status={agent.syncStatus} />
             <span className={`text-xs ${c.text}`}>{STATUS_LABELS[agent.syncStatus] || agent.syncStatus}</span>
           </div>
+          {/* Command channel indicator */}
+          <span
+            title={isConnected ? "מחובר לערוץ פקודות" : "ערוץ פקודות לא פעיל"}
+            className={`text-[9px] ${isConnected ? "text-green-400" : "text-slate-600"}`}
+          >
+            {isConnected ? <Wifi size={10} /> : <WifiOff size={10} />}
+          </span>
           <button
             onClick={(e) => { e.stopPropagation(); onDelete?.(agent); }}
             title="מחק סוכן"

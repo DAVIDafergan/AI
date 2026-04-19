@@ -177,14 +177,14 @@ function AgentIntelligencePanel({ agents = [] }) {
         <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-5 text-center space-y-2">
           <Brain className="w-8 h-8 text-slate-700 mx-auto" />
           <p className="text-sm text-slate-500">הסוכן טרם דיווח על ממצאי סריקה</p>
-          <p className="text-xs text-slate-600">הרץ את הסוכן עם הפרמטר <code className="text-cyan-500/70">--dir</code> כדי לאנדקס את הכונן הארגוני</p>
+          <p className="text-xs text-slate-600">הרץ את הסוכן עם הפרמטר <code className="text-cyan-500/70">--dir</code> כדי לאינדקס את הכונן הארגוני</p>
         </div>
       ) : (
         <>
           {/* Stats grid */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[
-              { icon: Cpu,          label: "מסמכים אינדקסו",     value: totals.docs.toLocaleString("he-IL"),    color: "text-cyan-400",   border: "border-cyan-500/20"   },
+              { icon: Cpu,          label: "מסמכים אוינדקסו",     value: totals.docs.toLocaleString("he-IL"),    color: "text-cyan-400",   border: "border-cyan-500/20"   },
               { icon: Building2,    label: "ארגונים / לקוחות",   value: totals.orgs,                            color: "text-purple-400", border: "border-purple-500/20" },
               { icon: Users,        label: "אנשים שזוהו",        value: totals.persons,                         color: "text-blue-400",   border: "border-blue-500/20"   },
               { icon: ShieldAlert,  label: "רשומות PII שנמצאו",  value: totals.pii,                             color: "text-red-400",    border: "border-red-500/20"    },

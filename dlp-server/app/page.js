@@ -155,7 +155,7 @@ function SetupWizard() {
         </div>
 
         <div>
-          <label className="block text-xs text-slate-300 mb-1">Step 2: Admin email</label>
+          <label className="block text-xs text-slate-300 mb-1">Step 2: Admin credentials (email)</label>
           <input
             type="email"
             value={adminEmail}
@@ -167,7 +167,7 @@ function SetupWizard() {
         </div>
 
         <div>
-          <label className="block text-xs text-slate-300 mb-1">Step 2b: Admin password</label>
+          <label className="block text-xs text-slate-300 mb-1">Step 2: Admin credentials (password)</label>
           <input
             type="password"
             value={adminPassword}

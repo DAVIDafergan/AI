@@ -101,7 +101,8 @@ export default function AgentDetailPanel({ agent, superAdminKey, onClose, onUpda
 
       const res = await fetch(`/api/agents/${agent._id}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json", "x-super-admin-key": superAdminKey },
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify(body),
       });
       const data = await res.json();
@@ -260,7 +261,7 @@ export default function AgentDetailPanel({ agent, superAdminKey, onClose, onUpda
                 try {
                   const res = await fetch(`/api/agents/${agent._id}`, {
                     method: "DELETE",
-                    headers: { "x-super-admin-key": superAdminKey },
+                    credentials: "include",
                   });
                   if (!res.ok) throw new Error((await res.json()).error);
                   onDeleted?.();

@@ -38,7 +38,7 @@ export default function LiveEventsStream({ superAdminKey }) {
       if (filters.severity) params.set("severity", filters.severity);
       if (filters.eventType) params.set("eventType", filters.eventType);
       const res = await fetch(`/api/tenant-events?${params}`, {
-        headers: { "x-super-admin-key": superAdminKey },
+        credentials: "include",
       });
       if (!res.ok) return;
       const data = await res.json();
@@ -50,7 +50,7 @@ export default function LiveEventsStream({ superAdminKey }) {
     fetchEvents();
     const iv = setInterval(fetchEvents, 3000);
     return () => clearInterval(iv);
-  }, [filters, superAdminKey]);
+  }, [filters]);
 
   // auto-scroll
   useEffect(() => {

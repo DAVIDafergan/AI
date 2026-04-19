@@ -178,6 +178,63 @@ The brain **stays on your machine** and is never uploaded. You can inspect it at
 
 ---
 
+## Local Testing with Mock Server
+
+A built-in mock server simulates the entire GhostLayer SaaS backend so you can
+test the agent locally without a real cloud account.
+
+### Start the mock server
+
+```bash
+node mock-server.js
+# or
+npm run mock-server
+```
+
+The mock server starts on **port 3333** by default.  Pass `--port <n>` to
+change it and `--verbose` for extra logging.
+
+### Connect the agent to the mock server
+
+```bash
+node index.js --api-key=test-key --dir=./sample-docs \
+              --saas-url=http://localhost:3333 --verbose
+```
+
+Or with the local API server:
+
+```bash
+SERVER_URL=http://localhost:3333 API_KEY=test-key LOCAL_PORT=4000 node api-server.js
+```
+
+### Mock server endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/agents/heartbeat` | Logs heartbeat telemetry |
+| `POST` | `/api/tenant-events` | Logs DLP block events |
+| `POST` | `/api/reports/scan` | Logs scan summary reports |
+| `GET`  | `/api/agents/command-channel` | SSE stream for remote commands |
+| `POST` | `/api/agents/command-result` | Logs command execution results |
+| `POST` | `/api/agents/send-command` | **Test helper** – push a command to a connected agent |
+| `GET`  | `/status` | Show connected agents and uptime |
+
+### Send a remote command to the agent
+
+```bash
+# Trigger a scan on all connected agents
+curl -X POST http://localhost:3333/api/agents/send-command \
+     -H "Content-Type: application/json" \
+     -d '{"action":"scan"}'
+
+# Trigger on a specific agent
+curl -X POST http://localhost:3333/api/agents/send-command \
+     -H "Content-Type: application/json" \
+     -d '{"agentId":"mock-agent-1","action":"get-logs"}'
+```
+
+---
+
 ## Server-Side Endpoint
 
 The agent POSTs to:

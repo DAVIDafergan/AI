@@ -325,19 +325,28 @@ export async function indexDocuments(files, options = {}) {
     // Skip expensive NER when the document shows no sensitive signals.
     const nerTarget = ner && hasAnySensitiveSignal(content) ? ner : null;
     const { persons, orgs } = await extractEntities(content, nerTarget, verbose);
+    const pii = extractPII(content);
     if (verbose) process.stdout.write(`\r[nlp] Indexing… ${idx + 1}/${files.length}`);
-    return { persons, orgs, terms: extractFinancialTerms(content) };
+    return { persons, orgs, terms: extractFinancialTerms(content), pii };
   });
 
   if (verbose) console.log();
 
   // Merge results sequentially after all concurrent work is done.
-  const allPersons = new Set();
-  const allOrgs    = new Set();
-  const termFreq   = {};
-  for (const { persons, orgs, terms } of rawResults) {
+  const allPersons     = new Set();
+  const allOrgs        = new Set();
+  const allPhones      = new Set();
+  const allEmails      = new Set();
+  const allCreditCards = new Set();
+  const allIds         = new Set();
+  const termFreq       = {};
+  for (const { persons, orgs, terms, pii } of rawResults) {
     persons.forEach((p) => allPersons.add(p));
     orgs.forEach((o) => allOrgs.add(o));
+    (pii.phone      ?? []).forEach((v) => allPhones.add(v.replace(/\D/g, "")));
+    (pii.email      ?? []).forEach((v) => allEmails.add(v.toLowerCase()));
+    (pii.creditCard ?? []).forEach((v) => allCreditCards.add(v.replace(/\D/g, "")));
+    (pii.israeliId  ?? []).forEach((v) => allIds.add(v.replace(/\D/g, "")));
     for (const term of terms) termFreq[term] = (termFreq[term] || 0) + 1;
   }
 
@@ -346,6 +355,12 @@ export async function indexDocuments(files, options = {}) {
     learnedOrgs:            [...allOrgs],
     financialTermFrequency: termFreq,
     documentCount:          files.length,
+    // Known PII values extracted from company documents — used for context-aware
+    // blocking so the agent only flags values it has actually seen in corporate data.
+    learnedPhones:          [...allPhones],
+    learnedEmails:          [...allEmails],
+    learnedCreditCards:     [...allCreditCards],
+    learnedIds:             [...allIds],
   };
 }
 

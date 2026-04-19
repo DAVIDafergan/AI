@@ -7,22 +7,23 @@
  *
  * Detection scenarios covered:
  *   • Safe (benign) text    → Bloom Filter fast-path → allow
- *   • Israeli mobile phone  → Tier 1 regex           → block / mask
- *   • Credit card number    → Tier 1 regex           → block / mask
- *   • E-mail address        → Tier 1 regex           → block / mask
- *   • AWS access key        → Tier 1 regex           → block / mask
- *   • 9-digit number (ID)   → Tier 1 regex           → block / mask
+ *   • Israeli mobile phone  → context-aware Tier 1 → allow (no brain context)
+ *   • Credit card number    → context-aware Tier 1 → allow (no brain context)
+ *   • E-mail address        → Tier 1 regex (hard block)  → block
+ *   • AWS access key        → Tier 1 regex (hard block)  → block
+ *   • 9-digit number (ID)   → context-aware Tier 1 → allow (no brain context)
  *   • Prompt injection      → LLM Security tier      → block
  *   • Jailbreak attempt     → LLM Security tier      → block
  *   • Empty body / bad JSON → validation             → 400
  *   • /api/health           → returns status "ok"
  *   • /api/behavior-profiles → returns profiles array
+ *   • /api/check-context    → brain-context lookup endpoint
  *
- * NOTE: Test cases are deliberately chosen so that the vector-similarity tier
- * (which requires the Xenova embedding model) is never reached:
- *   – safe text exits via the Bloom Filter fast-path (no pipeline at all)
- *   – PII texts trigger Tier 1 regex before the vector layer is consulted
- *   – injection texts are caught by the LLM Security tier first
+ * NOTE: PHONE, CREDIT_CARD, and ID patterns are now context-aware — they only
+ * block when the value has been confirmed by the corporate brain (i.e., the
+ * value was found in indexed company documents OR the text contains a known
+ * corporate person/org).  In a fresh test environment without a built brain
+ * these patterns pass through, falling to the semantic tier which finds nothing.
  */
 
 import { describe, it, before, after } from "node:test";
@@ -117,65 +118,60 @@ describe("Local Agent API – End-to-End", { timeout: 30_000 }, () => {
 
   // ── POST /api/check – PII detection ────────────────────────────────────────
 
-  describe("POST /api/check – Israeli mobile phone", () => {
-    it("blocks text containing 050-xxx-xxxx", async () => {
+  describe("POST /api/check – Israeli mobile phone (no brain context)", () => {
+    it("allows phone number without brain context (context-aware Tier 1)", async () => {
       const res = await post("/api/check", {
         text: "Please call me at 050-123-4567 tomorrow.",
         userEmail: "bob@corp.com",
       });
       assert.strictEqual(res.status, 200);
       const body = await res.json();
-      assert.strictEqual(body.blocked, true);
+      // Without a built brain, phone numbers are not blindly blocked –
+      // the agent can only confirm sensitivity when the value appears in
+      // indexed company documents or alongside a known corporate entity.
+      assert.strictEqual(body.blocked, false);
     });
 
-    it("response includes detectionTier field", async () => {
+    it("response includes reason field", async () => {
       const res = await post("/api/check", {
         text: "My phone: 052-987-6543",
         userEmail: "bob@corp.com",
       });
       const body = await res.json();
-      assert.ok(body.blocked);
-      assert.ok(typeof body.detectionTier === "string");
+      assert.ok(typeof body.reason === "string");
     });
 
-    it("blocked response includes maskedText", async () => {
+    it("response is well-formed JSON with action field", async () => {
       const res = await post("/api/check", {
         text: "Call 054-000-1111 for support",
         userEmail: "bob@corp.com",
       });
+      assert.strictEqual(res.status, 200);
       const body = await res.json();
-      assert.ok(body.blocked);
-      assert.ok(
-        body.maskedText !== undefined,
-        "maskedText should be present on a block result"
-      );
+      assert.ok(typeof body.action === "string");
     });
   });
 
-  describe("POST /api/check – credit card number", () => {
-    it("blocks a Visa card number (4111 1111 1111 1111)", async () => {
+  describe("POST /api/check – credit card number (no brain context)", () => {
+    it("allows Visa card number without brain context (context-aware Tier 1)", async () => {
       const res = await post("/api/check", {
         text: "My card is 4111 1111 1111 1111, expiry 12/25",
         userEmail: "carol@corp.com",
       });
       assert.strictEqual(res.status, 200);
       const body = await res.json();
-      assert.strictEqual(body.blocked, true);
+      // Without brain context, credit card numbers are not blindly blocked.
+      assert.strictEqual(body.blocked, false);
     });
 
-    it("masked text does not contain the raw card number", async () => {
-      const raw = "4111 1111 1111 1111";
+    it("response includes blocked and action fields", async () => {
       const res = await post("/api/check", {
-        text: `Charge card ${raw}`,
+        text: "Charge card 4111 1111 1111 1111",
         userEmail: "carol@corp.com",
       });
       const body = await res.json();
-      if (body.maskedText) {
-        assert.ok(
-          !body.maskedText.includes(raw),
-          "maskedText should not contain raw card number"
-        );
-      }
+      assert.ok(typeof body.blocked === "boolean");
+      assert.ok(typeof body.action === "string");
     });
   });
 
@@ -218,15 +214,16 @@ describe("Local Agent API – End-to-End", { timeout: 30_000 }, () => {
     });
   });
 
-  describe("POST /api/check – Israeli ID (9-digit number)", () => {
-    it("blocks 9-digit Israeli ID pattern", async () => {
+  describe("POST /api/check – Israeli ID (9-digit number, no brain context)", () => {
+    it("allows 9-digit number without brain context (context-aware Tier 1)", async () => {
       const res = await post("/api/check", {
         text: "My ID number is 123456789 please verify",
         userEmail: "frank@corp.com",
       });
       assert.strictEqual(res.status, 200);
       const body = await res.json();
-      assert.strictEqual(body.blocked, true);
+      // Without brain context, ID numbers are not blindly blocked.
+      assert.strictEqual(body.blocked, false);
     });
   });
 
@@ -303,14 +300,15 @@ describe("Local Agent API – End-to-End", { timeout: 30_000 }, () => {
   // ── POST /api/check-text (alias endpoint) ──────────────────────────────────
 
   describe("POST /api/check-text (alias)", () => {
-    it("blocks phone number (same behaviour as /api/check)", async () => {
+    it("allows phone number without brain context (same behaviour as /api/check)", async () => {
       const res = await post("/api/check-text", {
         text: "My number is 03-765-4321",
         userEmail: "grace@corp.com",
       });
       assert.strictEqual(res.status, 200);
       const body = await res.json();
-      assert.strictEqual(body.blocked, true);
+      // Context-aware: phone allowed without brain confirmation
+      assert.strictEqual(body.blocked, false);
     });
 
     it("allows safe text", async () => {
@@ -341,8 +339,9 @@ describe("Local Agent API – End-to-End", { timeout: 30_000 }, () => {
 
   describe("Response shape contracts", () => {
     it("blocked response always includes reason, blocked, action", async () => {
+      // Use a PASSWORD pattern (always hard-blocked) to guarantee a block
       const res = await post("/api/check", {
-        text: "card 4111 1111 1111 1111",
+        text: "api_key = AKIAIOSFODNN7EXAMPLE",
         userEmail: "h@corp.com",
       });
       const body = await res.json();
@@ -359,6 +358,62 @@ describe("Local Agent API – End-to-End", { timeout: 30_000 }, () => {
       const body = await res.json();
       assert.strictEqual(body.blocked, false);
       assert.strictEqual(body.action, "allow");
+    });
+  });
+
+  // ── POST /api/check-context ─────────────────────────────────────────────────
+
+  describe("POST /api/check-context", () => {
+    it("returns 200 with isSensitive:false for a phone number without brain", async () => {
+      const res = await post("/api/check-context", {
+        text: "Call me at 050-123-4567",
+        userEmail: "test@corp.com",
+      });
+      assert.strictEqual(res.status, 200);
+      const body = await res.json();
+      assert.strictEqual(typeof body.isSensitive, "boolean");
+      assert.strictEqual(body.brainReady, false);
+      assert.strictEqual(body.isSensitive, false);
+    });
+
+    it("returns isSensitive:true for a PASSWORD pattern (hard block)", async () => {
+      const res = await post("/api/check-context", {
+        text: "password: mySecret123",
+        userEmail: "test@corp.com",
+      });
+      assert.strictEqual(res.status, 200);
+      const body = await res.json();
+      assert.strictEqual(body.isSensitive, true);
+      assert.ok(body.confirmedTypes.includes("PASSWORD"));
+    });
+
+    it("returns isSensitive:true for an EMAIL-only pattern (hard block)", async () => {
+      const res = await post("/api/check-context", {
+        text: "Send invoice to client@acme.com",
+        userEmail: "test@corp.com",
+      });
+      assert.strictEqual(res.status, 200);
+      const body = await res.json();
+      assert.strictEqual(body.isSensitive, true);
+      assert.ok(body.confirmedTypes.includes("EMAIL"));
+    });
+
+    it("returns 400 for empty text", async () => {
+      const res = await post("/api/check-context", {
+        text: "",
+        userEmail: "test@corp.com",
+      });
+      assert.strictEqual(res.status, 400);
+    });
+
+    it("response includes brainReady and confirmedTypes fields", async () => {
+      const res = await post("/api/check-context", {
+        text: "hello world",
+        userEmail: "test@corp.com",
+      });
+      const body = await res.json();
+      assert.ok(typeof body.brainReady === "boolean");
+      assert.ok(Array.isArray(body.confirmedTypes));
     });
   });
 });

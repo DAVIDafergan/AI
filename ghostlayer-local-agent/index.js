@@ -28,7 +28,7 @@ import {
   saveBrain,
 } from "./nlp-engine.js";
 import { ingestDocuments }          from "./vector-store.js";
-import { startApiServer, warmCache } from "./api-server.js";
+import { startApiServer, warmCache, refreshBrain } from "./api-server.js";
 import { sendHeartbeat, startPeriodicTelemetry, sendScanReport } from "./cloud-sync.js";
 
 // ── CLI definition ────────────────────────────────────────────────────────────
@@ -345,6 +345,13 @@ async function runIndexingPipeline({ targetDir, verbose, opts, dryRun }) {
   console.log("   💾 Saving brain to .ghostlayer_brain.json (local only – never uploaded)…");
   await saveBrain(learnedIndex, scanResults);
   console.log("   ✅ Brain saved.");
+
+  // Reload brain data in the live API server so the running instance immediately
+  // uses the freshly indexed PII values and entities for context-aware detection.
+  if (!dryRun) {
+    await refreshBrain();
+    console.log("   🔄 API server brain data refreshed with updated context.");
+  }
   console.log();
 
   // ── Step 5/5: Cloud telemetry (dry-run skips this) ────────────────────────

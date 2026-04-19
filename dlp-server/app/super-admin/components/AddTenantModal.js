@@ -79,8 +79,8 @@ export default function AddTenantModal({ onClose, onCreated, superAdminKey }) {
   };
 
   const installAgentAutomatically = async () => {
-    if (!createdTenant?._id || !credentials?.apiKey) {
-      setError("יש ליצור דייר לפני התקנת הסוכן");
+    if (!credentials?.apiKey) {
+      setError("חסר API Key להתקנת סוכן");
       return;
     }
     if (!form.sshHost || !form.sshUser) {
@@ -106,7 +106,7 @@ export default function AddTenantModal({ onClose, onCreated, superAdminKey }) {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-super-admin-key": superAdminKey },
         body: JSON.stringify({
-          tenantId: createdTenant._id,
+          tenantId: createdTenant?._id,
           tenantApiKey: credentials.apiKey,
           sshHost: form.sshHost,
           sshPort: Number(form.sshPort || 22),

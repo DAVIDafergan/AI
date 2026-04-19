@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireSuperAdmin } from "../../../lib/superAdminAuth.js";
-import { connectMongo, Tenant, TenantEvent } from "../../../lib/db.js";
+import { connectMongo, Tenant, TenantEvent, isMongoConfigured } from "../../../lib/db.js";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -161,8 +161,8 @@ async function runControlAction({ tenantId, action }) {
 
 function validateProvisionRequest(body) {
   const { tenantId, sshHost, sshPort = 22, sshUser, installDir = "/opt/ghostlayer" } = body || {};
-  if (!tenantId || !sshHost || !sshUser) {
-    return { valid: false, error: "tenantId, sshHost and sshUser are required" };
+  if (!sshHost || !sshUser) {
+    return { valid: false, error: "sshHost and sshUser are required" };
   }
   if (!VALID_SSH_HOST_RE.test(sshHost)) {
     return { valid: false, error: "Invalid SSH host" };
@@ -219,9 +219,12 @@ export async function POST(request) {
       let ssh = null;
       let tenantId = validation.value.tenantId;
       let lastStep = "validation";
+      const mongoEnabled = isMongoConfigured();
 
       try {
-        await connectMongo();
+        if (mongoEnabled) {
+          await connectMongo();
+        }
         const {
           tenantId: inTenantId,
           sshHost,
@@ -237,31 +240,33 @@ export async function POST(request) {
         tenantId = inTenantId;
 
         if (!sshPassword && !sshPrivateKey) throw new Error("Provide either sshPassword or sshPrivateKey");
-
-        const tenant = await Tenant.findById(tenantId).lean();
-        if (!tenant) throw new Error("Tenant not found");
-        if (!tenant.apiKey) throw new Error("Tenant has no API key");
         if (!tenantApiKey) throw new Error("tenantApiKey is required for remote provisioning");
+        if (mongoEnabled && tenantId) {
+          const tenant = await Tenant.findById(tenantId).lean();
+          if (!tenant) throw new Error("Tenant not found");
+        }
 
         const serverUrl = process.env.GHOSTLAYER_SERVER_URL || process.env.DLP_SERVER_URL || new URL(request.url).origin;
         const remoteAgentUrl = `http://${sshHost}:4000`;
         const authMethod = sshPrivateKey ? "privateKey" : "password";
 
-        await Tenant.findByIdAndUpdate(tenantId, {
-          $set: {
-            "remoteInstall.sshHost": sshHost,
-            "remoteInstall.sshPort": Number(sshPort || 22),
-            "remoteInstall.sshUser": sshUser,
-            "remoteInstall.sshAuthMethod": authMethod,
-            ...(sshPassword ? { "remoteInstall.sshPassword": sshPassword } : {}),
-            ...(sshPrivateKey ? { "remoteInstall.sshPrivateKey": sshPrivateKey } : {}),
-            "remoteInstall.installDir": installDir,
-            "remoteInstall.status": "installing",
-            "remoteInstall.agentUrl": remoteAgentUrl,
-            "remoteInstall.lastAttemptAt": new Date(),
-            "remoteInstall.lastError": { step: "", error: "", timestamp: null },
-          },
-        });
+        if (mongoEnabled && tenantId) {
+          await Tenant.findByIdAndUpdate(tenantId, {
+            $set: {
+              "remoteInstall.sshHost": sshHost,
+              "remoteInstall.sshPort": Number(sshPort || 22),
+              "remoteInstall.sshUser": sshUser,
+              "remoteInstall.sshAuthMethod": authMethod,
+              ...(sshPassword ? { "remoteInstall.sshPassword": sshPassword } : {}),
+              ...(sshPrivateKey ? { "remoteInstall.sshPrivateKey": sshPrivateKey } : {}),
+              "remoteInstall.installDir": installDir,
+              "remoteInstall.status": "installing",
+              "remoteInstall.agentUrl": remoteAgentUrl,
+              "remoteInstall.lastAttemptAt": new Date(),
+              "remoteInstall.lastError": { step: "", error: "", timestamp: null },
+            },
+          });
+        }
 
         send("log", { step: "ssh_connect", level: "info", line: `Connecting to ${sshHost}:${sshPort}...` });
         lastStep = "ssh_connect";
@@ -297,20 +302,22 @@ export async function POST(request) {
           send("log", { step: item.step, level: "success", line: `✓ ${item.title} completed` });
         }
 
-        await Tenant.findByIdAndUpdate(tenantId, {
-          $set: {
-            agentUrl: remoteAgentUrl,
-            "remoteInstall.agentUrl": remoteAgentUrl,
-            "remoteInstall.pid": pid,
-            "remoteInstall.status": "online",
-            "remoteInstall.lastPing": new Date(),
-            "remoteInstall.lastError": { step: "", error: "", timestamp: null },
-          },
-        });
+        if (mongoEnabled && tenantId) {
+          await Tenant.findByIdAndUpdate(tenantId, {
+            $set: {
+              agentUrl: remoteAgentUrl,
+              "remoteInstall.agentUrl": remoteAgentUrl,
+              "remoteInstall.pid": pid,
+              "remoteInstall.status": "online",
+              "remoteInstall.lastPing": new Date(),
+              "remoteInstall.lastError": { step: "", error: "", timestamp: null },
+            },
+          });
+        }
 
         send("done", { success: true, agentUrl: remoteAgentUrl, pid });
       } catch (err) {
-        if (tenantId) {
+        if (mongoEnabled && tenantId) {
           const errorPayload = {
             eventType: "agent_provision_error",
             severity: "high",

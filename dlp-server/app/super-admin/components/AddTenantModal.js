@@ -80,7 +80,7 @@ export default function AddTenantModal({ onClose, onCreated, superAdminKey }) {
 
   const installAgentAutomatically = async () => {
     if (!credentials?.apiKey) {
-      setError("חסר API Key להתקנת סוכן");
+      setError("חסר API Key להתקנת סוכן — צור דייר חדש או טען מפתח תקין");
       return;
     }
     if (!form.sshHost || !form.sshUser) {

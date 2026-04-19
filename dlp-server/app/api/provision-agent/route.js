@@ -240,7 +240,7 @@ export async function POST(request) {
         tenantId = inTenantId;
 
         if (!sshPassword && !sshPrivateKey) throw new Error("Provide either sshPassword or sshPrivateKey");
-        if (!tenantApiKey) throw new Error("tenantApiKey is required for remote provisioning");
+        if (!tenantApiKey) throw new Error("tenantApiKey is required to configure the remote agent");
         if (mongoEnabled && tenantId) {
           const tenant = await Tenant.findById(tenantId).lean();
           if (!tenant) throw new Error("Tenant not found");

@@ -173,6 +173,46 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
     return true; // async
   }
+  // ── Proxy context check to /api/check-context ──────────────────────────────
+  if (message.type === "CHECK_CONTEXT") {
+    const { text, userEmail } = message;
+    resolveRuntimeScanConfig()
+      .then(({ agentUrl, apiKey }) => {
+        if (!agentUrl) {
+          sendResponse({ isSensitive: false, error: true, message: "Agent URL is not configured" });
+          return;
+        }
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+        fetch(`${agentUrl}/api/check-context`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(apiKey ? { "x-api-key": apiKey } : {}),
+          },
+          body: JSON.stringify({ text, userEmail }),
+          signal: controller.signal,
+        })
+          .then((res) => {
+            clearTimeout(timeout);
+            if (!res.ok) {
+              sendResponse({ isSensitive: false, error: true, errorCode: res.status });
+              return;
+            }
+            res.json().then(sendResponse).catch(() => {
+              sendResponse({ isSensitive: false, error: true });
+            });
+          })
+          .catch((err) => {
+            clearTimeout(timeout);
+            sendResponse({ isSensitive: false, error: true, message: err.message || "fetch failed" });
+          });
+      })
+      .catch((err) => {
+        sendResponse({ isSensitive: false, error: true, message: err.message || "config resolve failed" });
+      });
+    return true; // async
+  }
   // ── Proxy image OCR check ──────────────────────────────────────────────────
   if (message.type === "CHECK_IMAGE") {
     const { imageData, userEmail } = message;

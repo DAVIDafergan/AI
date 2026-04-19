@@ -231,11 +231,11 @@ function preflightScan(text) {
   const elapsed = (performance.now() - t0).toFixed(2);
   console.log(`[GhostLayer] Tier 1 took ${elapsed}ms – types: [${matchedTypes.join(", ")}]${tier1Matches.length ? `, exact: ${tier1Matches.length}` : ""}`);
 
-  // Separate "hard" types (checksum-validated, credentials, etc.) from "soft" types
-  // (PHONE, ACCOUNT) that may just be regular numbers typed by the user.
-  // Soft types alone should NOT block typing – they should be forwarded to the
-  // server/agent for contextual validation.
-  const SOFT_TYPES = new Set(["PHONE", "ACCOUNT"]);
+  // Separate "hard" types (email-format credentials) from "context-sensitive" types
+  // (PHONE, ACCOUNT, CREDIT_CARD, ID_NUMBER) that the local agent verifies against
+  // the corporate brain before deciding to block.  Soft types alone should NOT
+  // block typing – they are forwarded to the agent for contextual validation.
+  const SOFT_TYPES = new Set(["PHONE", "ACCOUNT", "CREDIT_CARD", "ID_NUMBER"]);
   const hardTypes = matchedTypes.filter((t) => !SOFT_TYPES.has(t));
   const softTypes = matchedTypes.filter((t) => SOFT_TYPES.has(t));
 

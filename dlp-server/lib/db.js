@@ -169,6 +169,18 @@ const AgentSchema = new mongoose.Schema(
       customPatterns:         [String],
     },
     deployedAt: { type: Date, default: Date.now },
+    // ── AI brain summary (populated on each agent-ping) ──
+    brainSummary: {
+      personsFound:     { type: Number, default: 0 },
+      orgsFound:        { type: Number, default: 0 },
+      piiFound:         { type: Number, default: 0 },
+      avgSensitivity:   { type: Number, default: 0 },
+      topOrgs:          { type: [String], default: [] },
+      topPersons:       { type: [String], default: [] },
+      highlySensitiveFiles: { type: Number, default: 0 },
+      sensitiveFiles:   { type: Number, default: 0 },
+      lastScan:         { type: Date },
+    },
   },
   { timestamps: { createdAt: false, updatedAt: "updatedAt" } }
 );

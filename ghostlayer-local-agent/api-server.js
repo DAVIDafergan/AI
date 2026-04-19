@@ -65,11 +65,104 @@ let _nerPipelinePromise = null;
 let _tenantApiKey = "";
 let _serverUrl    = "";
 
+// ── Brain PII context (loaded from .ghostlayer_brain.json) ──────────────────
+// Populated by loadBrainPii() at startup and refreshed after each indexing run.
+// Used by isPiiConfirmedSensitive() for context-aware Tier 1 detection so that
+// PHONE / CREDIT / ID patterns only block when the value was actually found in
+// indexed company documents.
+let _brainPhoneSet   = new Set();
+let _brainCreditSet  = new Set();
+let _brainIdSet      = new Set();
+let _brainPersonsSet = new Set();
+let _brainOrgsSet    = new Set();
+let _hasBrainData    = false;
+
 // ── Custom deny-list (fetched from SaaS; refreshed every 5 minutes) ──────────
 let _customKeywords      = [];   // [{ word, category, severity }]
 let _customKeywordsEtag  = "";   // for HTTP caching
 let _lastKeywordFetch    = 0;
 const KEYWORD_REFRESH_MS = 5 * 60 * 1000; // 5 minutes
+
+/**
+ * Load PII values and entity sets from the persisted brain file into memory.
+ * Silently no-ops when the brain file does not yet exist (first run).
+ * Called at startup (warmCache / startApiServer) and after each re-index.
+ */
+async function loadBrainPii() {
+  try {
+    const brain = await loadBrain();
+    if (!brain?.learnedIndex) return;
+    const idx = brain.learnedIndex;
+    _brainPhoneSet   = new Set((idx.learnedPhones      ?? []).filter(Boolean));
+    _brainCreditSet  = new Set((idx.learnedCreditCards  ?? []).filter(Boolean));
+    _brainIdSet      = new Set((idx.learnedIds          ?? []).filter(Boolean));
+    _brainPersonsSet = new Set((idx.learnedPersons      ?? []).map((p) => p.toLowerCase()));
+    _brainOrgsSet    = new Set((idx.learnedOrgs         ?? []).map((o) => o.toLowerCase()));
+    _hasBrainData    = _brainPhoneSet.size > 0 || _brainCreditSet.size > 0 ||
+                       _brainIdSet.size > 0    || _brainPersonsSet.size > 0 ||
+                       _brainOrgsSet.size > 0;
+  } catch {
+    // Brain file not yet available – context-aware checks will be skipped
+  }
+}
+
+/**
+ * Strip all non-digit characters from a value (used to normalise phone /
+ * credit-card / ID strings for Set lookup).
+ * @param {string} value
+ * @returns {string}
+ */
+function normalizePiiDigits(value) {
+  return value.replace(/\D/g, "");
+}
+
+/**
+ * Determine whether a Tier 1 regex match is confirmed as sensitive by the
+ * corporate AI brain context.
+ *
+ * Decision rules:
+ *   • EMAIL, PASSWORD, SSN → always sensitive (hard block, no brain needed).
+ *   • PHONE, CREDIT, ID, ACCOUNT with an empty brain → NOT sensitive; the text
+ *     falls through to the semantic/vector tier instead of being blocked blindly.
+ *   • PHONE, CREDIT, ID, ACCOUNT with a built brain → sensitive only when:
+ *       a) the digits-normalised value was extracted from a company document, OR
+ *       b) the surrounding text mentions a known corporate person or org —
+ *          indicating the PII appears alongside a real company entity.
+ *
+ * This ensures employees are never blocked for typing their own phone number,
+ * a personal credit card, or a random ID, while still catching exfiltration of
+ * data that is verifiably in the corporate corpus.
+ *
+ * @param {string} value   The raw matched value from the regex.
+ * @param {string} type    One of the TIER1_PATTERNS types.
+ * @param {string} text    The full text being scanned (for entity context).
+ * @returns {boolean}
+ */
+function isPiiConfirmedSensitive(value, type, text) {
+  // Always-sensitive: credential / identity patterns – no context check needed
+  if (type === "EMAIL" || type === "PASSWORD" || type === "SSN") return true;
+
+  // Without a built brain we cannot confirm corporate context → allow
+  if (!_hasBrainData) return false;
+
+  const digits = normalizePiiDigits(value);
+
+  // (a) Exact match against known PII values from indexed company documents
+  if ((type === "PHONE" || type === "ACCOUNT") && _brainPhoneSet.has(digits)) return true;
+  if (type === "CREDIT" && _brainCreditSet.has(digits)) return true;
+  if (type === "ID"     && _brainIdSet.has(digits))     return true;
+
+  // (b) A known corporate person or org appears in the same text
+  const lower = text.toLowerCase();
+  for (const person of _brainPersonsSet) {
+    if (person.length >= 3 && lower.includes(person)) return true;
+  }
+  for (const org of _brainOrgsSet) {
+    if (org.length >= 3 && lower.includes(org)) return true;
+  }
+
+  return false;
+}
 
 /**
  * Fetch (or refresh) the org's custom deny-list from the SaaS server.
@@ -468,8 +561,35 @@ export async function warmCache() {
     initBloomFilter();
   }
 
+  // Load brain PII data for context-aware Tier 1 detection
+  await loadBrainPii();
+
   // Pre-warm the intent classifier in the background (non-blocking)
   initIntentClassifier().catch(() => {});
+}
+
+/**
+ * Reload brain PII and entity data from the persisted brain file.
+ * Call this after the background indexing pipeline saves a new brain so the
+ * live API server immediately uses the updated corporate data for detection.
+ *
+ * @returns {Promise<void>}
+ */
+export async function refreshBrain() {
+  await loadBrainPii();
+  // Refresh Bloom Filter with updated brain entities
+  try {
+    const brain = await loadBrain();
+    const brainData = brain
+      ? {
+          learnedPersons: brain.learnedIndex?.learnedPersons ?? [],
+          learnedOrgs:    brain.learnedIndex?.learnedOrgs    ?? [],
+        }
+      : {};
+    initBloomFilter(brainData);
+  } catch {
+    // Non-fatal – keep using the existing Bloom Filter state
+  }
 }
 
 // ── Shared detection pipeline ─────────────────────────────────────────────────
@@ -616,14 +736,25 @@ async function runDetectionPipeline({ text, userEmail, source = "paste", verbose
   let detectedFromFragment = false;
 
   for (const scanText of scanTargets) {
-    // Tier 1: Regex
+    // Tier 1: Context-aware Regex Layer
+    // EMAIL, PASSWORD, SSN → hard blocks regardless of brain context.
+    // PHONE, CREDIT, ID, ACCOUNT → only block when confirmed by the AI brain:
+    //   (a) the exact digits-normalised value was extracted from company docs, OR
+    //   (b) the text mentions a known corporate person/org alongside the PII value.
+    // When no brain has been built yet, these types fall through to the vector tier.
     if (!tier1Match) {
-      for (const { re } of TIER1_PATTERNS) {
-        if (new RegExp(re.source, "i").test(scanText)) {
-          tier1Match = true;
-          if (scanText === fragmentWindowText && fragmentCount > 1) detectedFromFragment = true;
-          break;
+      for (const { type, re } of TIER1_PATTERNS) {
+        if (!new RegExp(re.source, "i").test(scanText)) continue;
+        const globalRe = new RegExp(re.source, "gi");
+        let m;
+        while ((m = globalRe.exec(scanText)) !== null) {
+          if (isPiiConfirmedSensitive(m[0], type, scanText)) {
+            tier1Match = true;
+            if (scanText === fragmentWindowText && fragmentCount > 1) detectedFromFragment = true;
+            break;
+          }
         }
+        if (tier1Match) break;
       }
     }
 
@@ -643,11 +774,17 @@ async function runDetectionPipeline({ text, userEmail, source = "paste", verbose
 
   // Tier 3: Vector Semantic Layer (only on normalised original – vectors are expensive)
   if (!tier1Match && !tier2Match) {
-    vectorMatches = await querySimilarity(normalized, {
-      topK:      3,
-      threshold: effectiveThreshold,
-      index:     _cachedIndex,
-    });
+    try {
+      vectorMatches = await querySimilarity(normalized, {
+        topK:      3,
+        threshold: effectiveThreshold,
+        index:     _cachedIndex,
+      });
+    } catch {
+      // Vector store (Qdrant) unavailable or not yet populated – treat as no matches
+      // and continue with the remaining detection tiers.
+      vectorMatches = [];
+    }
   }
 
   // Await intent classification result (started above in parallel)
@@ -826,6 +963,9 @@ export async function startApiServer(options = {}) {
   // Pre-load the vector index once
   _cachedIndex = await loadIndex();
 
+  // Load brain PII for context-aware Tier 1 detection
+  await loadBrainPii();
+
   if (verbose) {
     console.log(`[api-server] Vector index loaded: ${_cachedIndex.length} document(s)`);
   }
@@ -875,6 +1015,7 @@ export async function startApiServer(options = {}) {
       customKeywords:  _customKeywords.length,
       agentVersion:    AGENT_VERSION,
       bloomFilter:     getBloomFilterStats(),
+      brainReady:      _hasBrainData,
     });
   });
 
@@ -1035,6 +1176,68 @@ export async function startApiServer(options = {}) {
         blocked: failClosed,
         reason:  "Image check engine error – blocked for safety.",
       });
+    }
+  });
+
+  // ── Context-aware PII check endpoint ─────────────────────────────────────
+  // Lightweight alternative to /api/check that only queries the brain context
+  // without running the full detection pipeline (no vector search, no NER, no
+  // fragment memory).  Used by browser extensions to ask: "is this specific
+  // value something the company has flagged as sensitive?"
+  //
+  //  POST /api/check-context
+  //    Body:  { "text": string, "userEmail": string }
+  //  Response: {
+  //    isSensitive: boolean,
+  //    confirmedTypes: string[],
+  //    hasBrainEntity: boolean,
+  //    brainReady: boolean,
+  //    reason: string,
+  //  }
+  app.post("/api/check-context", async (req, res) => {
+    const text      = (req.body?.text      ?? "").trim();
+    const userEmail = (req.body?.userEmail ?? "").trim() || "unknown";
+
+    if (!text) {
+      return res.status(400).json({ isSensitive: false, reason: "No text provided." });
+    }
+
+    if (verbose) {
+      console.log(`[api-server] /api/check-context: ${text.length} char(s) for ${userEmail}`);
+    }
+
+    try {
+      const confirmedTypes = [];
+      for (const { type, re } of TIER1_PATTERNS) {
+        const globalRe = new RegExp(re.source, "gi");
+        let m;
+        while ((m = globalRe.exec(text)) !== null) {
+          if (isPiiConfirmedSensitive(m[0], type, text)) {
+            if (!confirmedTypes.includes(type)) confirmedTypes.push(type);
+            break;
+          }
+        }
+      }
+
+      const lower = text.toLowerCase();
+      const hasBrainEntity =
+        [..._brainPersonsSet].some((p) => p.length >= 3 && lower.includes(p)) ||
+        [..._brainOrgsSet].some((o) => o.length >= 3 && lower.includes(o));
+
+      const isSensitive = confirmedTypes.length > 0;
+
+      return res.json({
+        isSensitive,
+        confirmedTypes,
+        hasBrainEntity,
+        brainReady: _hasBrainData,
+        reason: isSensitive
+          ? `Confirmed company-sensitive data: ${confirmedTypes.join(", ")}`
+          : "No confirmed company-sensitive data found.",
+      });
+    } catch (err) {
+      console.error(`[api-server] /api/check-context error: ${err.message}`);
+      return res.status(500).json({ isSensitive: false, reason: "Context check error." });
     }
   });
 

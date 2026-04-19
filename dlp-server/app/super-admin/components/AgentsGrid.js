@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Cpu, LayoutGrid, List, RefreshCw, Trash2 } from "lucide-react";
+import { Cpu, LayoutGrid, List, RefreshCw, Trash2, Brain } from "lucide-react";
 
 const STATUS_COLORS = {
   active:   { dot: "bg-green-400",  text: "text-green-400",  border: "border-green-700/40" },
@@ -9,6 +9,14 @@ const STATUS_COLORS = {
   offline:  { dot: "bg-red-500",    text: "text-red-400",    border: "border-red-700/40"   },
   error:    { dot: "bg-red-500",    text: "text-red-400",    border: "border-red-700/40"   },
   paused:   { dot: "bg-yellow-400", text: "text-yellow-400", border: "border-yellow-700/40"},
+};
+
+const STATUS_LABELS = {
+  active:   "פעיל",
+  learning: "לומד",
+  offline:  "מנותק",
+  error:    "שגיאה",
+  paused:   "מושהה",
 };
 
 function StatusDot({ status }) {
@@ -20,6 +28,8 @@ function StatusDot({ status }) {
 
 function AgentCard({ agent, onClick, onDelete }) {
   const c = STATUS_COLORS[agent.syncStatus] || STATUS_COLORS.offline;
+  const b = agent.brainSummary || {};
+  const hasBrain = (b.personsFound || 0) + (b.orgsFound || 0) + (b.piiFound || 0) > 0;
   return (
     <div
       onClick={() => onClick?.(agent)}
@@ -33,7 +43,7 @@ function AgentCard({ agent, onClick, onDelete }) {
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1.5">
             <StatusDot status={agent.syncStatus} />
-            <span className={`text-xs ${c.text}`}>{agent.syncStatus}</span>
+            <span className={`text-xs ${c.text}`}>{STATUS_LABELS[agent.syncStatus] || agent.syncStatus}</span>
           </div>
           <button
             onClick={(e) => { e.stopPropagation(); onDelete?.(agent); }}
@@ -45,15 +55,51 @@ function AgentCard({ agent, onClick, onDelete }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-y-1 text-xs text-slate-500">
+      <div className="grid grid-cols-2 gap-y-1 text-xs text-slate-500 mb-3">
         <span>סריקות</span>  <span className="text-slate-300 font-mono text-right">{agent.metrics?.scansPerformed ?? 0}</span>
         <span>חסימות</span>  <span className="text-slate-300 font-mono text-right">{agent.metrics?.blocksExecuted ?? 0}</span>
         <span>מסמכים</span>  <span className="text-slate-300 font-mono text-right">{agent.metrics?.documentsIndexed ?? 0}</span>
         <span>תגובה</span>   <span className="text-slate-300 font-mono text-right">{agent.metrics?.avgResponseTime ?? 0}ms</span>
       </div>
 
+      {hasBrain ? (
+        <div className="border-t border-slate-800/60 pt-2 space-y-1 text-[10px]">
+          <div className="flex items-center gap-1 text-cyan-500/70 mb-1">
+            <Brain size={9} />
+            <span className="uppercase tracking-wider">ידע נרכש</span>
+          </div>
+          <div className="grid grid-cols-3 gap-1">
+            {b.orgsFound > 0 && (
+              <span className="bg-purple-500/10 border border-purple-500/25 text-purple-300 px-1.5 py-0.5 rounded text-center">
+                {b.orgsFound} ארגונים
+              </span>
+            )}
+            {b.personsFound > 0 && (
+              <span className="bg-blue-500/10 border border-blue-500/25 text-blue-300 px-1.5 py-0.5 rounded text-center">
+                {b.personsFound} אנשים
+              </span>
+            )}
+            {b.piiFound > 0 && (
+              <span className="bg-red-500/10 border border-red-500/25 text-red-300 px-1.5 py-0.5 rounded text-center">
+                {b.piiFound} PII
+              </span>
+            )}
+          </div>
+        </div>
+      ) : agent.syncStatus === "learning" ? (
+        <div className="border-t border-slate-800/60 pt-2 text-[10px] text-blue-400/70 flex items-center gap-1">
+          <Brain size={9} className="animate-pulse" />
+          <span>לומד את תוכן הכונן הארגוני...</span>
+        </div>
+      ) : (
+        <div className="border-t border-slate-800/60 pt-2 text-[10px] text-slate-600 flex items-center gap-1">
+          <Brain size={9} />
+          <span>טרם נסרקו מסמכים</span>
+        </div>
+      )}
+
       {agent.lastPing && (
-        <div className="mt-2 text-xs text-slate-600">
+        <div className="mt-2 text-[10px] text-slate-600">
           Ping: {new Date(agent.lastPing).toLocaleTimeString("he-IL")}
         </div>
       )}
@@ -68,7 +114,7 @@ function AgentRow({ agent, onClick, onDelete }) {
       <td onClick={() => onClick?.(agent)} className="cursor-pointer px-4 py-2.5 text-slate-200 text-sm">{agent.name}</td>
       <td onClick={() => onClick?.(agent)} className="cursor-pointer px-4 py-2.5">
         <span className={`inline-flex items-center gap-1.5 text-xs ${c.text}`}>
-          <StatusDot status={agent.syncStatus} /> {agent.syncStatus}
+          <StatusDot status={agent.syncStatus} /> {STATUS_LABELS[agent.syncStatus] || agent.syncStatus}
         </span>
       </td>
       <td onClick={() => onClick?.(agent)} className="cursor-pointer px-4 py-2.5 text-slate-400 font-mono text-xs">{agent.metrics?.scansPerformed ?? 0}</td>

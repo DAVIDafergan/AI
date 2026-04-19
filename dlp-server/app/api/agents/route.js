@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireSuperAdmin } from "../../../lib/superAdminAuth.js";
-import { connectMongo, Agent } from "../../../lib/db.js";
+import { connectMongo, Agent, Tenant } from "../../../lib/db.js";
 import { randomUUID } from "crypto";
 
 export const dynamic = "force-dynamic";
@@ -26,6 +26,11 @@ export async function GET(request) {
       }
       return { ...a, syncStatus: status };
     });
+
+    if (tenantId) {
+      const tenant = await Tenant.findById(tenantId).select("remoteInstall agentUrl").lean();
+      return NextResponse.json({ agents: enriched, remoteInstall: tenant?.remoteInstall || null });
+    }
 
     return NextResponse.json({ agents: enriched });
   } catch (err) {

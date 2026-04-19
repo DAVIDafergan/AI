@@ -16,6 +16,7 @@ const EVENT_TYPE_LABELS = {
   alert:            "התראה",
   agent_connect:    "חיבור סוכן",
   agent_disconnect: "ניתוק סוכן",
+  agent_provision_error: "שגיאת התקנת סוכן",
   config_change:    "שינוי הגדרות",
   user_action:      "פעולת משתמש",
 };

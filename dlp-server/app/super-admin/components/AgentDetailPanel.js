@@ -1,10 +1,87 @@
 "use client";
 
 import { useState } from "react";
-import { X, Cpu, RefreshCw, Pause, Settings, Activity, Loader2, Trash2 } from "lucide-react";
+import { X, Cpu, RefreshCw, Pause, Settings, Activity, Loader2, Trash2, Brain, Users, Building2, ShieldAlert, BarChart2 } from "lucide-react";
+
+function BrainSummaryPanel({ agent }) {
+  const b = agent.brainSummary || {};
+  const hasBrain = (b.personsFound || 0) + (b.orgsFound || 0) + (b.piiFound || 0) > 0 || (b.lastScan);
+
+  if (!hasBrain) {
+    return (
+      <div className="flex flex-col items-center justify-center py-10 gap-3 text-center">
+        <Brain size={32} className="text-slate-700" />
+        <p className="text-sm text-slate-500 font-medium">הסוכן טרם סרק מסמכים</p>
+        <p className="text-xs text-slate-600 max-w-[220px] leading-relaxed">
+          הסוכן ילמד את תוכן הכונן הארגוני בפעם הראשונה שיופעל עם הפרמטר <code className="text-cyan-500/70">--dir</code>.
+        </p>
+      </div>
+    );
+  }
+
+  const rows = [
+    { icon: Users,      label: "אנשים שזוהו",        value: b.personsFound   ?? 0, color: "text-blue-400"   },
+    { icon: Building2,  label: "ארגונים / לקוחות",   value: b.orgsFound      ?? 0, color: "text-purple-400" },
+    { icon: ShieldAlert,label: "רשומות PII",          value: b.piiFound       ?? 0, color: "text-red-400"    },
+    { icon: BarChart2,  label: "ציון רגישות ממוצע",  value: `${b.avgSensitivity ?? 0}%`, color: "text-yellow-400" },
+    { icon: Activity,   label: "קבצים רגישים מאוד",  value: b.highlySensitiveFiles ?? 0, color: "text-rose-400"   },
+    { icon: Activity,   label: "קבצים רגישים",       value: b.sensitiveFiles  ?? 0, color: "text-orange-400" },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <Brain size={14} className="text-cyan-400" />
+        <span className="text-xs text-slate-300 font-semibold">ממצאי למידת ה-AI</span>
+        {b.lastScan && (
+          <span className="text-[10px] text-slate-600 mr-auto">
+            סריקה אחרונה: {new Date(b.lastScan).toLocaleString("he-IL")}
+          </span>
+        )}
+      </div>
+
+      <div className="space-y-2">
+        {rows.map(({ icon: Icon, label, value, color }) => (
+          <div key={label} className="flex items-center justify-between py-1.5 border-b border-slate-800/60 text-sm">
+            <div className="flex items-center gap-2">
+              <Icon size={13} className={`${color} opacity-70`} />
+              <span className="text-slate-400">{label}</span>
+            </div>
+            <span className={`font-mono font-semibold ${color}`}>{value}</span>
+          </div>
+        ))}
+      </div>
+
+      {(b.topOrgs?.length > 0 || b.topPersons?.length > 0) && (
+        <div className="space-y-3 pt-1">
+          {b.topOrgs?.length > 0 && (
+            <div>
+              <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1.5">ארגונים / לקוחות שזוהו</p>
+              <div className="flex flex-wrap gap-1.5">
+                {b.topOrgs.slice(0, 10).map((org) => (
+                  <span key={org} className="bg-purple-500/10 border border-purple-500/30 text-purple-300 text-[10px] px-2 py-0.5 rounded-full">{org}</span>
+                ))}
+              </div>
+            </div>
+          )}
+          {b.topPersons?.length > 0 && (
+            <div>
+              <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1.5">אנשים שזוהו</p>
+              <div className="flex flex-wrap gap-1.5">
+                {b.topPersons.slice(0, 10).map((person) => (
+                  <span key={person} className="bg-blue-500/10 border border-blue-500/30 text-blue-300 text-[10px] px-2 py-0.5 rounded-full">{person}</span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function AgentDetailPanel({ agent, superAdminKey, onClose, onUpdated, onDeleted }) {
-  const [tab, setTab]         = useState("metrics");
+  const [tab, setTab]         = useState("brain");
   const [editForm, setEditForm] = useState(null);
   const [loading, setLoading]  = useState(false);
   const [msg, setMsg]          = useState("");
@@ -46,6 +123,14 @@ export default function AgentDetailPanel({ agent, superAdminKey, onClose, onUpda
     paused:   "text-yellow-400",
   };
 
+  const STATUS_LABEL = {
+    active:   "פעיל",
+    learning: "לומד",
+    offline:  "מנותק",
+    error:    "שגיאה",
+    paused:   "מושהה",
+  };
+
   return (
     <div className="fixed inset-y-0 right-0 z-50 w-96 bg-[#0d0d14] border-l border-cyan-900/30 shadow-2xl flex flex-col overflow-hidden">
       {/* Header */}
@@ -54,7 +139,7 @@ export default function AgentDetailPanel({ agent, superAdminKey, onClose, onUpda
           <Cpu size={16} className="text-purple-400" />
           <span className="text-sm font-semibold text-slate-200">{agent.name}</span>
           <span className={`text-xs ${STATUS_COLOR[agent.syncStatus] || "text-slate-400"}`}>
-            [{agent.syncStatus}]
+            [{STATUS_LABEL[agent.syncStatus] || agent.syncStatus}]
           </span>
         </div>
         <button onClick={onClose} className="text-slate-500 hover:text-slate-200 transition-colors">
@@ -64,7 +149,7 @@ export default function AgentDetailPanel({ agent, superAdminKey, onClose, onUpda
 
       {/* Tabs */}
       <div className="flex border-b border-slate-800">
-        {[["metrics","מדדים"], ["config","הגדרות"], ["actions","פעולות"]].map(([id, label]) => (
+        {[["brain","🧠 מה למד"],["metrics","מדדים"],["config","הגדרות"],["actions","פעולות"]].map(([id, label]) => (
           <button
             key={id}
             onClick={() => setTab(id)}
@@ -77,11 +162,13 @@ export default function AgentDetailPanel({ agent, superAdminKey, onClose, onUpda
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-5">
+        {tab === "brain" && <BrainSummaryPanel agent={agent} />}
+
         {tab === "metrics" && (
           <div className="space-y-3">
             <h3 className="text-xs text-slate-500 uppercase tracking-wider mb-2">מדדי ביצועים</h3>
             {[
-              ["מסמכים מאונדקסים", agent.metrics?.documentsIndexed ?? 0],
+              ["מסמכים מאינדקסים", agent.metrics?.documentsIndexed ?? 0],
               ["וקטורים שמורים",    agent.metrics?.vectorsStored ?? 0],
               ["סריקות שבוצעו",    agent.metrics?.scansPerformed ?? 0],
               ["חסימות שבוצעו",    agent.metrics?.blocksExecuted ?? 0],
@@ -199,3 +286,4 @@ export default function AgentDetailPanel({ agent, superAdminKey, onClose, onUpda
     </div>
   );
 }
+

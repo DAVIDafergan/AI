@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import {
   Building2, ArrowLeft, Cpu, Activity, Terminal, Copy, CheckCheck,
   Server, Users, Plus, Loader2, Link, Shield, Trash2, Save, Wifi,
+  Brain, CheckCircle2, Circle, AlertCircle, RefreshCw,
 } from "lucide-react";
 
 function formatNum(n) { return (n ?? 0).toLocaleString("he-IL"); }
@@ -355,8 +356,11 @@ export default function TenantDetailView({ tenant, superAdminKey, onBack }) {
   if (!tenant) return null;
 
   const connectedAgents = agents.filter((a) => a.syncStatus !== "offline").length;
+  const learningAgents  = agents.filter((a) => a.syncStatus === "learning").length;
+  const activeAgents    = agents.filter((a) => a.syncStatus === "active").length;
   const totalBlocks = agents.reduce((sum, a) => sum + (a.metrics?.blocksExecuted || 0), 0);
   const totalScans  = agents.reduce((sum, a) => sum + (a.metrics?.scansPerformed  || 0), 0);
+  const totalDocs   = agents.reduce((sum, a) => sum + (a.metrics?.documentsIndexed || 0), 0);
 
   const statusLabel = {
     active:    "פעיל",
@@ -365,20 +369,121 @@ export default function TenantDetailView({ tenant, superAdminKey, onBack }) {
     expired:   "פג תוקף",
   };
 
+  // Connection wizard steps
+  const wizardStep = agents.length === 0 ? 1
+    : connectedAgents === 0 ? 1
+    : learningAgents > 0    ? 2
+    : activeAgents > 0      ? 3
+    : 2;
+
+  const wizardSteps = [
+    {
+      num: 1,
+      label: "סוכן מחובר לשרת",
+      done: connectedAgents > 0,
+      active: wizardStep === 1,
+      desc: connectedAgents > 0
+        ? `${connectedAgents} סוכן${connectedAgents > 1 ? "ים" : ""} מחובר${connectedAgents > 1 ? "ים" : ""}`
+        : "הרץ את פקודת ההתקנה על שרת החברה",
+    },
+    {
+      num: 2,
+      label: "מנוע AI לומד",
+      done: activeAgents > 0,
+      active: wizardStep === 2,
+      desc: activeAgents > 0
+        ? `${totalDocs.toLocaleString("he-IL")} מסמכים אינדקסו`
+        : learningAgents > 0
+          ? "הסוכן סורק את הכונן הארגוני..."
+          : "ממתין לסריקה ראשונה",
+    },
+    {
+      num: 3,
+      label: "תוסף דפדפן פעיל",
+      done: activeUsers.length > 0,
+      active: wizardStep === 3,
+      desc: activeUsers.length > 0
+        ? `${activeUsers.length} עובד${activeUsers.length > 1 ? "ים" : ""} מוגנ${activeUsers.length > 1 ? "ים" : ""}`
+        : "פרוס את תוסף הדפדפן לעובדים",
+    },
+  ];
+
   return (
     <div className="space-y-4">
       {/* כותרת + חזרה */}
-      <div className="flex items-center gap-3">
-        <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-slate-400 hover:text-slate-200 transition-colors">
-          <ArrowLeft size={14} /> חזרה
-        </button>
-        <div className="flex items-center gap-2">
-          <Building2 size={16} className="text-cyan-400" />
-          <h2 className="text-base font-semibold text-slate-200">{tenant.name}</h2>
-          <span className={`inline-block px-2 py-0.5 rounded border text-xs ${STATUS_COLORS[tenant.status] || STATUS_COLORS.trial}`}>
-            {statusLabel[tenant.status] || tenant.status}
-          </span>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-slate-400 hover:text-slate-200 transition-colors">
+            <ArrowLeft size={14} /> חזרה
+          </button>
+          <div className="flex items-center gap-2">
+            <Building2 size={16} className="text-cyan-400" />
+            <h2 className="text-base font-semibold text-slate-200">{tenant.name}</h2>
+            <span className={`inline-block px-2 py-0.5 rounded border text-xs ${STATUS_COLORS[tenant.status] || STATUS_COLORS.trial}`}>
+              {statusLabel[tenant.status] || tenant.status}
+            </span>
+          </div>
         </div>
+        <button
+          onClick={fetchData}
+          disabled={loading}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-400 hover:text-cyan-300 hover:bg-slate-800 rounded-lg transition-colors"
+          title="רענן"
+        >
+          <RefreshCw size={13} className={loading ? "animate-spin" : ""} />
+          רענן
+        </button>
+      </div>
+
+      {/* Connection Wizard */}
+      <div className="bg-[#0d0d14] border border-slate-700/40 rounded-xl p-4">
+        <div className="flex items-center gap-2 mb-4">
+          <Shield size={14} className="text-cyan-400" />
+          <span className="text-sm font-semibold text-slate-200">סטטוס חיבור</span>
+          <span className="text-xs text-slate-600 mr-auto">3 שלבים לפעולה מלאה</span>
+        </div>
+        <div className="flex items-start gap-0">
+          {wizardSteps.map((step, idx) => (
+            <div key={step.num} className="flex-1 flex flex-col items-center relative">
+              {/* Connector line */}
+              {idx < wizardSteps.length - 1 && (
+                <div className={`absolute top-3.5 right-1/2 w-full h-0.5 -translate-y-1/2 ${step.done ? "bg-cyan-500/60" : "bg-slate-700/60"}`} style={{ zIndex: 0 }} />
+              )}
+              {/* Circle */}
+              <div className={`relative z-10 w-7 h-7 rounded-full border-2 flex items-center justify-center transition-all ${
+                step.done
+                  ? "bg-cyan-500/20 border-cyan-500/60"
+                  : step.active
+                    ? "bg-blue-500/20 border-blue-500/60 animate-pulse"
+                    : "bg-slate-800/60 border-slate-700/40"
+              }`}>
+                {step.done
+                  ? <CheckCircle2 size={14} className="text-cyan-400" />
+                  : step.active
+                    ? <Circle size={14} className="text-blue-400" />
+                    : <Circle size={14} className="text-slate-600" />
+                }
+              </div>
+              {/* Labels */}
+              <div className="mt-2 text-center px-1">
+                <p className={`text-[10px] font-semibold ${step.done ? "text-cyan-300" : step.active ? "text-blue-300" : "text-slate-500"}`}>
+                  {step.label}
+                </p>
+                <p className={`text-[9px] mt-0.5 ${step.done ? "text-slate-400" : step.active ? "text-slate-500" : "text-slate-600"}`}>
+                  {step.desc}
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+        {wizardStep === 1 && agents.length === 0 && (
+          <div className="mt-4 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2.5">
+            <p className="text-xs text-amber-300 font-medium flex items-center gap-2">
+              <AlertCircle size={13} />
+              סוכן לא מחובר — פתח את &quot;הוראות התקנה&quot; למטה והרץ את הפקודה על שרת החברה
+            </p>
+          </div>
+        )}
       </div>
 
       {/* נתוני שימוש */}
@@ -395,6 +500,7 @@ export default function TenantDetailView({ tenant, superAdminKey, onBack }) {
           </div>
         ))}
       </div>
+
       {/* משתמשי תוסף פעילים */}
       <div className="bg-[#0d0d14] border border-slate-700/40 rounded-xl p-4">
         <div className="flex items-center justify-between mb-3">
@@ -440,7 +546,7 @@ export default function TenantDetailView({ tenant, superAdminKey, onBack }) {
         onAgentProvisioned={fetchData}
       />
 
-      {/* רשימת סוכנים */}
+      {/* רשימת סוכנים עם AI brain summary */}
       <div className="bg-[#0d0d14] border border-slate-700/40 rounded-xl p-4">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
@@ -452,13 +558,18 @@ export default function TenantDetailView({ tenant, superAdminKey, onBack }) {
         {loading ? (
           <p className="text-xs text-slate-600">טוען...</p>
         ) : agents.length === 0 ? (
-          <p className="text-xs text-slate-600">אין סוכנים פרוסים עדיין — השתמש בהוראות החיבור למעלה</p>
+          <div className="flex flex-col items-center py-6 gap-2">
+            <Cpu size={24} className="text-slate-700" />
+            <p className="text-xs text-slate-600 text-center">אין סוכנים פרוסים עדיין<br />השתמש בהוראות החיבור למעלה להפעלת הסוכן הראשון</p>
+          </div>
         ) : (
-          <div className="space-y-2">
+          <div className="space-y-3">
             {agents.map((a) => {
               const st = SYNC_STATUS_LABELS[a.syncStatus] || { label: a.syncStatus, cls: "text-slate-400" };
+              const b = a.brainSummary || {};
+              const hasBrain = (b.personsFound || 0) + (b.orgsFound || 0) + (b.piiFound || 0) > 0;
               return (
-                <div key={a._id} className="bg-slate-900/40 rounded-lg p-3 space-y-1">
+                <div key={a._id} className="bg-slate-900/40 rounded-lg p-3 space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-slate-200 font-medium">{a.name}</span>
                     <div className="flex items-center gap-2">
@@ -478,6 +589,59 @@ export default function TenantDetailView({ tenant, superAdminKey, onBack }) {
                     <span>חסימות: <span className="text-slate-400">{formatNum(a.metrics?.blocksExecuted)}</span></span>
                     <span>תגובה:  <span className="text-slate-400">{a.metrics?.avgResponseTime ?? 0}ms</span></span>
                   </div>
+
+                  {/* AI Brain Summary inline */}
+                  {hasBrain ? (
+                    <div className="border-t border-slate-800/60 pt-2">
+                      <div className="flex items-center gap-1.5 mb-1.5">
+                        <Brain size={10} className="text-cyan-400/70" />
+                        <span className="text-[10px] text-cyan-400/70 uppercase tracking-wider">ידע AI נרכש</span>
+                        {b.lastScan && (
+                          <span className="text-[9px] text-slate-600 mr-auto">
+                            {new Date(b.lastScan).toLocaleString("he-IL")}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap gap-1.5 text-[10px]">
+                        {b.orgsFound > 0 && (
+                          <span className="bg-purple-500/10 border border-purple-500/25 text-purple-300 px-2 py-0.5 rounded-full">
+                            {b.orgsFound} ארגונים / לקוחות
+                          </span>
+                        )}
+                        {b.personsFound > 0 && (
+                          <span className="bg-blue-500/10 border border-blue-500/25 text-blue-300 px-2 py-0.5 rounded-full">
+                            {b.personsFound} אנשים
+                          </span>
+                        )}
+                        {b.piiFound > 0 && (
+                          <span className="bg-red-500/10 border border-red-500/25 text-red-300 px-2 py-0.5 rounded-full">
+                            {b.piiFound} רשומות PII
+                          </span>
+                        )}
+                        {b.avgSensitivity > 0 && (
+                          <span className="bg-yellow-500/10 border border-yellow-500/25 text-yellow-300 px-2 py-0.5 rounded-full">
+                            רגישות ממוצעת {b.avgSensitivity}%
+                          </span>
+                        )}
+                      </div>
+                      {b.topOrgs?.length > 0 && (
+                        <div className="mt-1.5 text-[9px] text-slate-500">
+                          ארגונים: {b.topOrgs.slice(0, 5).join(" · ")}
+                        </div>
+                      )}
+                    </div>
+                  ) : a.syncStatus === "learning" ? (
+                    <div className="border-t border-slate-800/60 pt-2 flex items-center gap-1.5 text-[10px] text-blue-400/70">
+                      <Brain size={10} className="animate-pulse" />
+                      <span>הסוכן לומד את תוכן הכונן — נתונים יופיעו בסיום הסריקה הראשונה</span>
+                    </div>
+                  ) : (
+                    <div className="border-t border-slate-800/60 pt-2 flex items-center gap-1.5 text-[10px] text-slate-600">
+                      <Brain size={10} />
+                      <span>טרם נסרקו מסמכים</span>
+                    </div>
+                  )}
+
                   {a.lastPing && (
                     <div className="text-[10px] text-slate-700">
                       פינג אחרון: {new Date(a.lastPing).toLocaleString("he-IL")}
@@ -566,3 +730,4 @@ export default function TenantDetailView({ tenant, superAdminKey, onBack }) {
     </div>
   );
 }
+

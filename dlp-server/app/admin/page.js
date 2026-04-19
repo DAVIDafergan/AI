@@ -14,7 +14,7 @@ import {
   Activity, Users, Zap, Lock, Eye, ChevronRight, Shield,
   Terminal, AlertCircle, Wifi, RefreshCw, UserCheck, Replace,
   TrendingUp, Clock, Filter, Search, ChevronDown, ChevronUp,
-  AlertTriangle, X, LogOut,
+  AlertTriangle, X, LogOut, Building2, ShieldAlert,
 } from "lucide-react";
 import ActiveUsersPanel from "./components/ActiveUsersPanel";
 import CustomKeywordsManager from "./components/CustomKeywordsManager";
@@ -106,6 +106,136 @@ function MetricCard({ icon: Icon, label, value, sub, color = "text-cyan-400", bo
         <p className={clsx("text-lg font-bold mt-0.5", color)}>{value}</p>
         {sub && <p className="text-xs text-slate-600 mt-0.5 truncate">{sub}</p>}
       </div>
+    </div>
+  );
+}
+
+function AgentIntelligencePanel({ agents = [] }) {
+  const connected = agents.filter((a) => a.syncStatus !== "offline");
+  const active    = agents.filter((a) => a.syncStatus === "active");
+  const learning  = agents.filter((a) => a.syncStatus === "learning");
+
+  // Aggregate brain summaries across all agents
+  const totals = agents.reduce(
+    (acc, a) => {
+      const b = a.brainSummary || {};
+      return {
+        persons:  acc.persons  + (b.personsFound || 0),
+        orgs:     acc.orgs     + (b.orgsFound    || 0),
+        pii:      acc.pii      + (b.piiFound     || 0),
+        docs:     acc.docs     + (a.metrics?.documentsIndexed || 0),
+        highSens: acc.highSens + (b.highlySensitiveFiles || 0),
+      };
+    },
+    { persons: 0, orgs: 0, pii: 0, docs: 0, highSens: 0 }
+  );
+
+  const allTopOrgs = [...new Set(
+    agents.flatMap((a) => a.brainSummary?.topOrgs || [])
+  )].slice(0, 12);
+
+  const allTopPersons = [...new Set(
+    agents.flatMap((a) => a.brainSummary?.topPersons || [])
+  )].slice(0, 12);
+
+  const hasBrain = totals.persons + totals.orgs + totals.pii > 0;
+  const isLearning = learning.length > 0 && !hasBrain;
+
+  if (agents.length === 0) return null;
+
+  return (
+    <div className="bg-slate-900/40 border border-cyan-500/15 rounded-2xl p-6 space-y-5">
+      <div className="flex items-center gap-3">
+        <div className="p-2.5 bg-cyan-500/10 rounded-xl border border-cyan-500/20">
+          <Brain className="w-6 h-6 text-cyan-400" />
+        </div>
+        <div>
+          <h2 className="text-lg font-bold text-white">מה הסוכן למד על הארגון</h2>
+          <p className="text-sm text-slate-400">ממצאי מנוע ה-AI המקומי — אינדוקס מסמכים ומידע רגיש</p>
+        </div>
+        <div className="mr-auto flex items-center gap-2">
+          {active.length > 0
+            ? <><span className="relative flex h-2.5 w-2.5"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"/><span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-cyan-400"/></span><span className="text-xs text-cyan-400 font-medium">מנוע AI פעיל</span></>
+            : isLearning
+              ? <><span className="relative flex h-2.5 w-2.5"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"/><span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-blue-400"/></span><span className="text-xs text-blue-400 font-medium">לומד...</span></>
+              : <span className="text-xs text-slate-500">ממתין לסריקה</span>
+          }
+        </div>
+      </div>
+
+      {isLearning ? (
+        <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-5 flex items-center gap-4">
+          <Brain className="w-8 h-8 text-blue-400 animate-pulse shrink-0" />
+          <div>
+            <p className="text-sm font-semibold text-blue-300">הסוכן סורק את הכונן הארגוני...</p>
+            <p className="text-xs text-slate-400 mt-1">
+              מנוע ה-AI המקומי לומד את תוכן המסמכים. הנתונים יופיעו כאן בסיום הסריקה הראשונה.
+            </p>
+          </div>
+        </div>
+      ) : !hasBrain ? (
+        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-5 text-center space-y-2">
+          <Brain className="w-8 h-8 text-slate-700 mx-auto" />
+          <p className="text-sm text-slate-500">הסוכן טרם דיווח על ממצאי סריקה</p>
+          <p className="text-xs text-slate-600">הרץ את הסוכן עם הפרמטר <code className="text-cyan-500/70">--dir</code> כדי לאנדקס את הכונן הארגוני</p>
+        </div>
+      ) : (
+        <>
+          {/* Stats grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {[
+              { icon: Cpu,          label: "מסמכים אינדקסו",     value: totals.docs.toLocaleString("he-IL"),    color: "text-cyan-400",   border: "border-cyan-500/20"   },
+              { icon: Building2,    label: "ארגונים / לקוחות",   value: totals.orgs,                            color: "text-purple-400", border: "border-purple-500/20" },
+              { icon: Users,        label: "אנשים שזוהו",        value: totals.persons,                         color: "text-blue-400",   border: "border-blue-500/20"   },
+              { icon: ShieldAlert,  label: "רשומות PII שנמצאו",  value: totals.pii,                             color: "text-red-400",    border: "border-red-500/20"    },
+            ].map(({ icon: Icon, label, value, color, border }) => (
+              <MetricCard key={label} icon={Icon} label={label} value={value} color={color} border={border} />
+            ))}
+          </div>
+
+          {/* Highly sensitive indicator */}
+          {totals.highSens > 0 && (
+            <div className="bg-red-500/10 border border-red-500/25 rounded-xl px-4 py-3 flex items-center gap-3">
+              <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+              <p className="text-sm text-red-300">
+                <strong>{totals.highSens}</strong> קבצים עם רמת רגישות גבוהה מאוד זוהו בכונן הארגוני
+              </p>
+            </div>
+          )}
+
+          {/* Discovered orgs */}
+          {allTopOrgs.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                <Building2 className="w-3 h-3" /> ארגונים ולקוחות שזוהו בתוכן
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {allTopOrgs.map((org) => (
+                  <span key={org} className="bg-purple-500/10 border border-purple-500/25 text-purple-300 text-xs px-3 py-1 rounded-full">
+                    {org}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Discovered persons */}
+          {allTopPersons.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                <Users className="w-3 h-3" /> אנשים שזוהו בתוכן
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {allTopPersons.map((person) => (
+                  <span key={person} className="bg-blue-500/10 border border-blue-500/25 text-blue-300 text-xs px-3 py-1 rounded-full">
+                    {person}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -1122,6 +1252,10 @@ export default function CommandCenterDashboard() {
         </div>
 
         <KpiStrip stats={data?.stats} />
+
+        {(data?.agents?.length ?? 0) > 0 && (
+          <AgentIntelligencePanel agents={data.agents} />
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
           {[

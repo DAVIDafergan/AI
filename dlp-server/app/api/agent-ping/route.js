@@ -7,7 +7,7 @@ export async function POST(request) {
   try {
     await connectMongo();
     const body = await request.json();
-    const { agentKey, metrics = {}, ip } = body;
+    const { agentKey, metrics = {}, ip, brainSummary } = body;
 
     if (!agentKey) {
       return NextResponse.json({ error: "agentKey is required" }, { status: 400 });
@@ -21,9 +21,21 @@ export async function POST(request) {
     }
     if (metrics.lastScanAt) metricsUpdate["metrics.lastScanAt"] = new Date(metrics.lastScanAt);
 
+    // Persist brain summary when the agent reports NLP scan results
+    const brainUpdate = {};
+    if (brainSummary && typeof brainSummary === "object") {
+      const numFields = ["personsFound","orgsFound","piiFound","avgSensitivity","highlySensitiveFiles","sensitiveFiles"];
+      for (const field of numFields) {
+        if (brainSummary[field] !== undefined) brainUpdate[`brainSummary.${field}`] = Number(brainSummary[field]) || 0;
+      }
+      if (Array.isArray(brainSummary.topOrgs))    brainUpdate["brainSummary.topOrgs"]    = brainSummary.topOrgs.slice(0, 20);
+      if (Array.isArray(brainSummary.topPersons)) brainUpdate["brainSummary.topPersons"] = brainSummary.topPersons.slice(0, 20);
+      brainUpdate["brainSummary.lastScan"] = now;
+    }
+
     const agent = await Agent.findOneAndUpdate(
       { agentKey },
-      { $set: { lastPing: now, lastPingIp: ip || null, ...metricsUpdate } },
+      { $set: { lastPing: now, lastPingIp: ip || null, ...metricsUpdate, ...brainUpdate } },
       { new: true }
     ).lean();
 

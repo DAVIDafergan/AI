@@ -7,7 +7,10 @@ const toISO = (d) => (d instanceof Date ? d.toISOString() : null);
 export default async function DashboardPage() {
   let clients = [];
   try {
-    await connectToDB();
+    const conn = await connectToDB();
+    if (!conn) {
+      return <DashboardClient initialClients={clients} />;
+    }
     const raw = await Tenant.find({}).lean();
     // Serialize MongoDB documents so they are safe to pass to a Client Component
     clients = raw.map((c) => ({

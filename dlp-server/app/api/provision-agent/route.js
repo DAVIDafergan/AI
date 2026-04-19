@@ -5,9 +5,46 @@ import { connectMongo, Tenant, TenantEvent } from "../../../lib/db.js";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const VALID_HOST_RE = /^[a-zA-Z0-9.\-]+$/;
 const VALID_USER_RE = /^[a-zA-Z0-9._-]+$/;
-const VALID_DIR_RE = /^\/[a-zA-Z0-9._\-/]*$/;
+const VALID_SSH_HOST_RE = /^[a-zA-Z0-9._-]+$/;
+const VALID_INSTALL_DIR_RE = /^\/[a-zA-Z0-9/_-]+$/;
+
+const PROVISION_COMMANDS = [
+  {
+    step: "check_node",
+    title: "Check Node.js",
+    command:
+      "node --version || (sudo -n apt-get update && sudo -n apt-get install -y nodejs npm && node --version)",
+  },
+  { step: "create_install_dir", title: "Create install directory", command: 'mkdir -p "$INSTALL_DIR"' },
+  {
+    step: "download_agent",
+    title: "Download agent",
+    command: 'cd "$INSTALL_DIR" && curl -sSL "$SERVER_URL/api/download-agent" | tar -xz',
+  },
+  { step: "npm_install", title: "Install dependencies", command: 'cd "$INSTALL_DIR" && npm install --production' },
+  {
+    step: "write_config",
+    title: "Write config",
+    command: 'cd "$INSTALL_DIR" && printf "DLP_SERVER_URL=%s\\nDLP_API_KEY=%s\\nNODE_ENV=production\\n" "$SERVER_URL" "$API_KEY" > .env',
+  },
+  {
+    step: "start_service",
+    title: "Start background service",
+    command: 'cd "$INSTALL_DIR" && nohup npm run start > agent.log 2>&1 & echo $! > agent.pid; cat agent.pid',
+  },
+  {
+    step: "verify_health",
+    title: "Verify agent health",
+    command: "sleep 3 && curl -s http://localhost:4000/api/health",
+  },
+];
+
+const CONTROL_COMMANDS = {
+  restart:
+    'cd "$INSTALL_DIR" && if [ -f agent.pid ]; then kill $(cat agent.pid) >/dev/null 2>&1 || true; fi && nohup npm run start > agent.log 2>&1 & echo $! > agent.pid; cat agent.pid',
+  logs: 'cd "$INSTALL_DIR" && (test -f agent.log && tail -n 100 agent.log || echo "agent.log not found")',
+};
 
 let CachedSSHClient = null;
 async function getSshClientClass() {
@@ -15,10 +52,6 @@ async function getSshClientClass() {
   const ssh2 = await import("ssh2");
   CachedSSHClient = ssh2.Client;
   return CachedSSHClient;
-}
-
-function shellEscape(value) {
-  return `'${String(value).replace(/'/g, `'\"'\"'`)}'`;
 }
 
 function sseEvent(name, payload) {
@@ -50,11 +83,11 @@ async function connectSsh({ host, port, username, password, privateKey }) {
   });
 }
 
-function runCommand(client, step, command, onLog) {
+function runCommand(client, step, command, onLog, env = {}) {
   return new Promise((resolve, reject) => {
     let stdout = "";
     let stderr = "";
-    client.exec(command, { pty: true }, (err, stream) => { // lgtm[js/command-line-injection]
+    client.exec(command, { pty: true, env }, (err, stream) => {
       if (err) return reject(new Error(`Failed to start command: ${err.message}`));
       stream.on("data", (chunk) => {
         stdout += chunk.toString("utf8");
@@ -87,6 +120,9 @@ async function runControlAction({ tenantId, action }) {
   if (!remote.sshHost || !remote.sshUser) {
     return { status: 400, body: { success: false, error: "Missing saved SSH connection details" } };
   }
+  if (!CONTROL_COMMANDS[action]) {
+    return { status: 400, body: { success: false, error: "Unsupported action" } };
+  }
 
   const client = await connectSsh({
     host: remote.sshHost,
@@ -97,10 +133,10 @@ async function runControlAction({ tenantId, action }) {
   });
 
   try {
-    const installDir = shellEscape(remote.installDir || "/opt/ghostlayer");
+    const command = CONTROL_COMMANDS[action];
+    const env = { INSTALL_DIR: String(remote.installDir || "/opt/ghostlayer") };
     if (action === "restart") {
-      const cmd = `cd ${installDir} && if [ -f agent.pid ]; then kill $(cat agent.pid) >/dev/null 2>&1 || true; fi && nohup npm run start > agent.log 2>&1 & echo $! > agent.pid && cat agent.pid`;
-      const result = await runCommand(client, "restart", cmd, () => {});
+      const result = await runCommand(client, "restart", command, () => {}, env);
       const pid = (result.stdout || "").trim().split(/\r?\n/).pop() || "";
       await Tenant.findByIdAndUpdate(tenantId, {
         $set: {
@@ -113,8 +149,7 @@ async function runControlAction({ tenantId, action }) {
     }
 
     if (action === "logs") {
-      const cmd = `cd ${installDir} && (test -f agent.log && tail -n 100 agent.log || echo "agent.log not found")`;
-      const result = await runCommand(client, "logs", cmd, () => {});
+      const result = await runCommand(client, "logs", command, () => {}, env);
       return { status: 200, body: { success: true, logs: result.stdout || "" } };
     }
 
@@ -122,6 +157,36 @@ async function runControlAction({ tenantId, action }) {
   } finally {
     client.end();
   }
+}
+
+function validateProvisionRequest(body) {
+  const { tenantId, sshHost, sshPort = 22, sshUser, installDir = "/opt/ghostlayer" } = body || {};
+  if (!tenantId || !sshHost || !sshUser) {
+    return { valid: false, error: "tenantId, sshHost and sshUser are required" };
+  }
+  if (!VALID_SSH_HOST_RE.test(sshHost)) {
+    return { valid: false, error: "Invalid SSH host" };
+  }
+  const parsedPort = Number(sshPort);
+  if (!Number.isInteger(parsedPort) || parsedPort < 1 || parsedPort > 65535) {
+    return { valid: false, error: "Invalid SSH port" };
+  }
+  if (!VALID_USER_RE.test(sshUser)) {
+    return { valid: false, error: "Invalid SSH username" };
+  }
+  if (!VALID_INSTALL_DIR_RE.test(installDir)) {
+    return { valid: false, error: "Invalid install directory" };
+  }
+  return {
+    valid: true,
+    value: {
+      tenantId,
+      sshHost,
+      sshPort: parsedPort,
+      sshUser,
+      installDir,
+    },
+  };
 }
 
 export async function POST(request) {
@@ -142,12 +207,17 @@ export async function POST(request) {
     return NextResponse.json({ success: false, error: err.message || "Unauthorized" }, { status: 401 });
   }
 
+  const validation = validateProvisionRequest(body);
+  if (!validation.valid) {
+    return NextResponse.json({ success: false, error: validation.error }, { status: 400 });
+  }
+
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
       const send = (event, payload) => controller.enqueue(encoder.encode(sseEvent(event, payload)));
       let ssh = null;
-      let tenantId = body?.tenantId;
+      let tenantId = validation.value.tenantId;
       let lastStep = "validation";
 
       try {
@@ -157,17 +227,15 @@ export async function POST(request) {
           sshHost,
           sshPort = 22,
           sshUser,
+          installDir = "/opt/ghostlayer",
+        } = validation.value;
+        const {
           sshPassword,
           sshPrivateKey,
-          installDir = "/opt/ghostlayer",
           tenantApiKey,
         } = body || {};
         tenantId = inTenantId;
 
-        if (!tenantId || !sshHost || !sshUser) throw new Error("tenantId, sshHost and sshUser are required");
-        if (!VALID_HOST_RE.test(sshHost)) throw new Error("Invalid SSH host");
-        if (!VALID_USER_RE.test(sshUser)) throw new Error("Invalid SSH username");
-        if (!VALID_DIR_RE.test(installDir)) throw new Error("Invalid install directory");
         if (!sshPassword && !sshPrivateKey) throw new Error("Provide either sshPassword or sshPrivateKey");
 
         const tenant = await Tenant.findById(tenantId).lean();
@@ -206,44 +274,22 @@ export async function POST(request) {
         });
         send("log", { step: "ssh_connect", level: "success", line: "✓ SSH connection established" });
 
-        const escapedDir = shellEscape(installDir);
-        const escapedServerUrl = shellEscape(serverUrl);
-        const steps = [
-          {
-            step: "check_node",
-            title: "Check Node.js",
-            command: "node --version || (sudo -n apt-get update && sudo -n apt-get install -y nodejs npm && node --version)",
-          },
-          { step: "create_install_dir", title: "Create install directory", command: `mkdir -p ${escapedDir}` },
-          {
-            step: "download_agent",
-            title: "Download agent",
-            command: `cd ${escapedDir} && curl -sSL ${escapedServerUrl}/api/download-agent | tar -xz`,
-          },
-          { step: "npm_install", title: "Install dependencies", command: `cd ${escapedDir} && npm install --production` },
-          {
-            step: "write_config",
-            title: "Write config",
-            command: `cd ${escapedDir} && printf 'DLP_SERVER_URL=%s\\nDLP_API_KEY=%s\\nNODE_ENV=production\\n' ${shellEscape(serverUrl)} ${shellEscape(tenantApiKey)} > .env`,
-          },
-          {
-            step: "start_service",
-            title: "Start background service",
-            command: `cd ${escapedDir} && nohup npm run start > agent.log 2>&1 & echo $! > agent.pid && cat agent.pid`,
-          },
-          {
-            step: "verify_health",
-            title: "Verify agent health",
-            command: "sleep 3 && curl -s http://localhost:4000/api/health",
-          },
-        ];
+        const commandEnv = {
+          INSTALL_DIR: installDir,
+          SERVER_URL: serverUrl,
+          API_KEY: tenantApiKey,
+        };
 
         let pid = "";
-        for (const item of steps) {
+        for (const item of PROVISION_COMMANDS) {
           lastStep = item.title;
           send("log", { step: item.step, level: "info", line: `▶ ${item.title}` });
-          const result = await runCommand(ssh, item.step, item.command, (lineEvent) =>
-            send("log", { step: lineEvent.step, level: lineEvent.type === "stderr" ? "error" : "info", line: lineEvent.line })
+          const result = await runCommand(
+            ssh,
+            item.step,
+            item.command,
+            (lineEvent) => send("log", { step: lineEvent.step, level: lineEvent.type === "stderr" ? "error" : "info", line: lineEvent.line }),
+            commandEnv
           );
           if (item.step === "start_service") {
             pid = (result.stdout || "").trim().split(/\r?\n/).pop() || "";

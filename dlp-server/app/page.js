@@ -88,6 +88,14 @@ function LoginCard() {
   );
 }
 
+function LoadingCard() {
+  return (
+    <div className="bg-slate-800/60 backdrop-blur-sm border border-slate-700/60 rounded-2xl p-8 shadow-2xl shadow-black/50 text-center">
+      <p className="text-slate-300 text-sm">Checking setup status...</p>
+    </div>
+  );
+}
+
 function SetupWizard() {
   const [mongoUri, setMongoUri] = useState("");
   const [adminEmail, setAdminEmail] = useState("admin@example.com");
@@ -159,7 +167,7 @@ function SetupWizard() {
         </div>
 
         <div>
-          <label className="block text-xs text-slate-300 mb-1">Step 2: Admin password</label>
+          <label className="block text-xs text-slate-300 mb-1">Step 2b: Admin password</label>
           <input
             type="password"
             value={adminPassword}
@@ -215,7 +223,9 @@ export default function LoginPage() {
         <div className="absolute top-1/4 right-1/4 w-96 h-96 bg-cyan-500/5 rounded-full blur-3xl" />
         <div className="absolute bottom-1/4 left-1/4 w-96 h-96 bg-blue-500/5 rounded-full blur-3xl" />
       </div>
-      <div className="relative w-full max-w-lg">{loading ? <LoginCard /> : localMode ? <SetupWizard /> : <LoginCard />}</div>
+      <div className="relative w-full max-w-lg">
+        {loading ? <LoadingCard /> : localMode ? <SetupWizard /> : <LoginCard />}
+      </div>
     </div>
   );
 }

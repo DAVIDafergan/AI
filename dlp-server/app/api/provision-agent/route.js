@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireSuperAdmin } from "../../../lib/superAdminAuth.js";
-import { connectMongo, Tenant, TenantEvent, isMongoConfigured } from "../../../lib/db.js";
+import { connectMongo, Tenant, TenantEvent, hashApiKey, isMongoConfigured } from "../../../lib/db.js";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -244,6 +244,11 @@ export async function POST(request) {
         if (mongoEnabled && tenantId) {
           const tenant = await Tenant.findById(tenantId).lean();
           if (!tenant) throw new Error("Tenant not found");
+          if (!tenant.apiKey) throw new Error("Tenant has no API key");
+          const hashedTenantApiKey = hashApiKey(tenantApiKey);
+          if (tenant.apiKey !== hashedTenantApiKey) {
+            throw new Error("Invalid tenant API key for tenant");
+          }
         }
 
         const serverUrl = process.env.GHOSTLAYER_SERVER_URL || process.env.DLP_SERVER_URL || new URL(request.url).origin;

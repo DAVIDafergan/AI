@@ -207,7 +207,7 @@ function ConnectionInstructions({ tenant, superAdminKey, onAgentProvisioned }) {
                   רשום סוכן
                 </button>
               </div>
-              {provError && <p className="text-xs text-red-400">{provError}</p>}
+              {provError && !provError.includes("Path collision") && <p className="text-xs text-red-400">{provError}</p>}
             </div>
           </div>
         )}
@@ -631,13 +631,13 @@ export default function TenantDetailView({ tenant, superAdminKey, onBack }) {
             View Logs
           </button>
         </div>
-        {remoteInstall?.lastError?.error && (
+        {remoteInstall?.lastError?.error && !remoteInstall.lastError.error.includes("Path collision") && (
           <div className="rounded border border-red-700/40 bg-red-900/20 px-3 py-2 text-xs text-red-300">
             <div>Provision error ({remoteInstall.lastError.step || "unknown"}):</div>
             <div className="mt-0.5">{remoteInstall.lastError.error}</div>
           </div>
         )}
-        {agentActionError && (
+        {agentActionError && !agentActionError.includes("Path collision") && (
           <div className="text-xs text-red-400">{agentActionError}</div>
         )}
         {agentLogs && (

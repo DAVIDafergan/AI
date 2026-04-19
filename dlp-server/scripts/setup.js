@@ -14,7 +14,7 @@ function randomSecret(bytes = 32) {
 }
 
 function randomPassword() {
-  return randomSecret(16).slice(0, 20);
+  return randomSecret(10);
 }
 
 function parseEnv(content) {

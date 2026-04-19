@@ -104,6 +104,23 @@ function SetupWizard() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
+  async function waitForSetupReload(maxAttempts = 12) {
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      try {
+        const res = await fetch("/api/setup", { cache: "no-store" });
+        const data = await res.json();
+        if (data?.localMode === false) {
+          window.location.reload();
+          return;
+        }
+      } catch {
+        // Keep polling.
+      }
+    }
+    window.location.reload();
+  }
+
   async function completeSetup(e) {
     e.preventDefault();
     setError("");
@@ -118,7 +135,7 @@ function SetupWizard() {
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Setup failed");
       setMessage("Setup complete. Applying configuration and restarting...");
-      setTimeout(() => window.location.reload(), 2500);
+      waitForSetupReload();
     } catch (err) {
       setError(err.message);
     } finally {
@@ -155,7 +172,8 @@ function SetupWizard() {
         </div>
 
         <div>
-          <label className="block text-xs text-slate-300 mb-1">Step 2: Admin credentials (email)</label>
+          <p className="block text-xs text-slate-300 mb-1">Step 2: Set admin credentials</p>
+          <label className="block text-xs text-slate-400 mb-1">Admin email</label>
           <input
             type="email"
             value={adminEmail}
@@ -167,7 +185,7 @@ function SetupWizard() {
         </div>
 
         <div>
-          <label className="block text-xs text-slate-300 mb-1">Step 2: Admin credentials (password)</label>
+          <label className="block text-xs text-slate-400 mb-1">Admin password</label>
           <input
             type="password"
             value={adminPassword}

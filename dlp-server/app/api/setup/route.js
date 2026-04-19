@@ -67,7 +67,7 @@ function withDefaults(env) {
     NODE_ENV: env.NODE_ENV || "development",
     MONGODB_URI: env.MONGODB_URI || MONGO_PLACEHOLDER,
     SUPER_ADMIN_USERNAME: env.SUPER_ADMIN_USERNAME || "admin@example.com",
-    SUPER_ADMIN_PASSWORD: env.SUPER_ADMIN_PASSWORD || randomSecret(16).slice(0, 20),
+    SUPER_ADMIN_PASSWORD: env.SUPER_ADMIN_PASSWORD || randomSecret(10),
     JWT_SECRET: env.JWT_SECRET || randomSecret(),
     SUPER_ADMIN_KEY: env.SUPER_ADMIN_KEY || randomSecret(),
     API_KEY_HMAC_SECRET: env.API_KEY_HMAC_SECRET || randomSecret(),

@@ -5,7 +5,12 @@ import path from "path";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const agentDir = path.resolve(process.cwd(), "../ghostlayer-local-agent");
+  const configuredAgentDir = process.env.GHOSTLAYER_AGENT_SOURCE_DIR;
+  const defaultAgentDir = path.resolve(process.cwd(), "../ghostlayer-local-agent");
+  const agentDir = configuredAgentDir ? path.resolve(configuredAgentDir) : defaultAgentDir;
+  if (configuredAgentDir && path.basename(agentDir) !== "ghostlayer-local-agent") {
+    return new Response("Invalid configured agent source directory", { status: 400 });
+  }
   try {
     await access(agentDir);
   } catch {

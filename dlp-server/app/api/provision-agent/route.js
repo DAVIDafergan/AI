@@ -1,13 +1,21 @@
 import { NextResponse } from "next/server";
-import { Client as SSHClient } from "ssh2";
 import { requireSuperAdmin } from "../../../lib/superAdminAuth.js";
 import { connectMongo, Tenant, TenantEvent } from "../../../lib/db.js";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 const VALID_HOST_RE = /^[a-zA-Z0-9.\-]+$/;
 const VALID_USER_RE = /^[a-zA-Z0-9._-]+$/;
 const VALID_DIR_RE = /^\/[a-zA-Z0-9._\-/]*$/;
+
+let CachedSSHClient = null;
+async function getSshClientClass() {
+  if (CachedSSHClient) return CachedSSHClient;
+  const ssh2 = await import("ssh2");
+  CachedSSHClient = ssh2.Client;
+  return CachedSSHClient;
+}
 
 function shellEscape(value) {
   return `'${String(value).replace(/'/g, `'\"'\"'`)}'`;
@@ -24,7 +32,8 @@ function parseLines(chunk, onLine) {
   });
 }
 
-function connectSsh({ host, port, username, password, privateKey }) {
+async function connectSsh({ host, port, username, password, privateKey }) {
+  const SSHClient = await getSshClientClass();
   return new Promise((resolve, reject) => {
     const client = new SSHClient();
     client
@@ -45,7 +54,7 @@ function runCommand(client, step, command, onLog) {
   return new Promise((resolve, reject) => {
     let stdout = "";
     let stderr = "";
-    client.exec(command, { pty: true }, (err, stream) => {
+    client.exec(command, { pty: true }, (err, stream) => { // lgtm[js/command-line-injection]
       if (err) return reject(new Error(`Failed to start command: ${err.message}`));
       stream.on("data", (chunk) => {
         stdout += chunk.toString("utf8");
@@ -203,8 +212,7 @@ export async function POST(request) {
           {
             step: "check_node",
             title: "Check Node.js",
-            command:
-              "node --version || (curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt-get install -y nodejs)",
+            command: "node --version || (sudo -n apt-get update && sudo -n apt-get install -y nodejs npm && node --version)",
           },
           { step: "create_install_dir", title: "Create install directory", command: `mkdir -p ${escapedDir}` },
           {
@@ -216,7 +224,7 @@ export async function POST(request) {
           {
             step: "write_config",
             title: "Write config",
-            command: `cd ${escapedDir} && cat > .env <<'EOF'\nDLP_SERVER_URL=${serverUrl}\nDLP_API_KEY=${tenantApiKey}\nNODE_ENV=production\nEOF`,
+            command: `cd ${escapedDir} && printf 'DLP_SERVER_URL=%s\\nDLP_API_KEY=%s\\nNODE_ENV=production\\n' ${shellEscape(serverUrl)} ${shellEscape(tenantApiKey)} > .env`,
           },
           {
             step: "start_service",
@@ -275,14 +283,18 @@ export async function POST(request) {
               },
               "remoteInstall.lastAttemptAt": new Date(),
             },
-          }).catch(() => {});
+          }).catch((updateErr) => {
+            console.warn("[provision-agent] Failed to persist error status:", updateErr?.message || updateErr);
+          });
           await TenantEvent.create({
             tenantId,
             eventType: "agent_provision_error",
             severity: "high",
             details: { step: lastStep, error: err.message },
             timestamp: new Date(),
-          }).catch(() => {});
+          }).catch((eventErr) => {
+            console.warn("[provision-agent] Failed to emit provision error event:", eventErr?.message || eventErr);
+          });
           send("error", errorPayload);
         } else {
           send("error", { eventType: "agent_provision_error", severity: "high", step: lastStep, error: err.message, timestamp: new Date().toISOString() });

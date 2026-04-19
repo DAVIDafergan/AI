@@ -397,8 +397,8 @@ export default function TenantDetailView({ tenant, superAdminKey, onBack }) {
 
   useEffect(() => {
     if (!tenant?._id) return;
-    const iv = setInterval(() => { refreshAgentStatus(); }, 10000);
-    return () => clearInterval(iv);
+    const statusPollInterval = setInterval(() => { refreshAgentStatus(); }, 10000);
+    return () => clearInterval(statusPollInterval);
   }, [tenant, refreshAgentStatus]);
 
   if (!tenant) return null;
@@ -455,6 +455,7 @@ export default function TenantDetailView({ tenant, superAdminKey, onBack }) {
         : "פרוס את תוסף הדפדפן לעובדים",
     },
   ];
+  const isAgentOnline = agents.some((a) => a.syncStatus !== "offline") || remoteInstall?.status === "online";
 
   return (
     <div className="space-y-4">
@@ -602,8 +603,8 @@ export default function TenantDetailView({ tenant, superAdminKey, onBack }) {
             <span className="text-sm text-slate-300 font-medium">סוכן</span>
           </div>
           <div className="flex items-center gap-2 text-xs">
-            <span className={`inline-block w-2 h-2 rounded-full ${agents.some((a) => a.syncStatus !== "offline") || remoteInstall?.status === "online" ? "bg-green-400" : "bg-red-400"}`} />
-            <span className="text-slate-400">{agents.some((a) => a.syncStatus !== "offline") || remoteInstall?.status === "online" ? "online" : "offline"}</span>
+            <span className={`inline-block w-2 h-2 rounded-full ${isAgentOnline ? "bg-green-400" : "bg-red-400"}`} />
+            <span className="text-slate-400">{isAgentOnline ? "online" : "offline"}</span>
           </div>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-slate-400">

@@ -3,7 +3,7 @@
   "version": "3.0.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "node scripts/setup.js && next dev",
     "build": "next build",
     "start": "next start",
     "shield": "node desktop-shield.js",

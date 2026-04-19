@@ -66,17 +66,35 @@ export function _test_getApiKeyLookupCandidates(key) {
 // concurrent requests share a single connection pool rather than spawning a new
 // one on every invocation.
 const _global = globalThis;
+let warnedLocalMode = false;
+
+function getMongoUri() {
+  const value = process.env.MONGODB_URI;
+  if (!value || !value.trim()) return null;
+  const trimmed = value.trim();
+  if (trimmed.includes("<") || trimmed.includes("your-")) return null;
+  return trimmed;
+}
+
+function warnLocalMode() {
+  if (warnedLocalMode) return;
+  warnedLocalMode = true;
+  console.warn("[GhostLayer] Running without MongoDB – data will not persist");
+}
+
+export function isMongoConfigured() {
+  return Boolean(getMongoUri());
+}
 
 // Disable buffering globally – operations will throw immediately if there is no
 // active connection instead of silently queuing and timing out after 10 s.
 mongoose.set("bufferCommands", false);
 
 export async function connectMongo() {
-  if (!process.env.MONGODB_URI) {
-    throw new Error(
-      "[connectMongo] MONGODB_URI environment variable is not set. " +
-        "Please configure it before starting the server."
-    );
+  const uri = getMongoUri();
+  if (!uri) {
+    warnLocalMode();
+    return null;
   }
 
   // Reuse an in-flight or resolved connection promise when one already exists.
@@ -92,7 +110,7 @@ export async function connectMongo() {
   }
 
   _global._mongooseConnectionPromise = mongoose
-    .connect(process.env.MONGODB_URI)
+    .connect(uri)
     .catch((err) => {
       // Clear the cache so the next call retries instead of getting a rejected
       // promise forever.

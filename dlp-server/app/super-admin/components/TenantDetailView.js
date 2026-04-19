@@ -30,6 +30,7 @@ const EVENT_LABELS = {
   alert:            "התראה",
   agent_connect:    "חיבור סוכן",
   agent_disconnect: "ניתוק סוכן",
+  agent_provision_error: "שגיאת התקנת סוכן",
   config_change:    "שינוי הגדרות",
   user_action:      "פעולת משתמש",
 };
@@ -287,6 +288,10 @@ export default function TenantDetailView({ tenant, superAdminKey, onBack }) {
   const [agents, setAgents]           = useState([]);
   const [events, setEvents]           = useState([]);
   const [loading, setLoading]         = useState(true);
+  const [remoteInstall, setRemoteInstall] = useState(tenant?.remoteInstall || null);
+  const [agentActionLoading, setAgentActionLoading] = useState("");
+  const [agentActionError, setAgentActionError] = useState("");
+  const [agentLogs, setAgentLogs] = useState("");
   const [activeUsers, setActiveUsers] = useState([]);
   const [serverUrlEdit, setServerUrlEdit] = useState(tenant?.serverUrl || "");
   const [agentUrlEdit, setAgentUrlEdit] = useState(tenant?.agentUrl || "");
@@ -308,7 +313,11 @@ export default function TenantDetailView({ tenant, superAdminKey, onBack }) {
           headers: { "x-super-admin-key": superAdminKey },
         }),
       ]);
-      if (agentsRes.ok) setAgents((await agentsRes.json()).agents || []);
+      if (agentsRes.ok) {
+        const agentsData = await agentsRes.json();
+        setAgents(agentsData.agents || []);
+        setRemoteInstall(agentsData.remoteInstall || null);
+      }
       if (eventsRes.ok) setEvents((await eventsRes.json()).events || []);
       if (usersRes.ok)  setActiveUsers((await usersRes.json()).users  || []);
     } finally {
@@ -351,7 +360,46 @@ export default function TenantDetailView({ tenant, superAdminKey, onBack }) {
     }
   };
 
+  const refreshAgentStatus = useCallback(async () => {
+    if (!tenant?._id) return;
+    try {
+      const res = await fetch(`/api/agents?tenantId=${tenant._id}`, {
+        headers: { "x-super-admin-key": superAdminKey },
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      setAgents(data.agents || []);
+      setRemoteInstall(data.remoteInstall || null);
+    } catch {}
+  }, [tenant, superAdminKey]);
+
+  const runAgentAction = async (action) => {
+    setAgentActionError("");
+    setAgentActionLoading(action);
+    try {
+      const res = await fetch("/api/provision-agent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-super-admin-key": superAdminKey },
+        body: JSON.stringify({ action, tenantId: tenant._id }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || "שגיאה");
+      if (action === "logs") setAgentLogs(data.logs || "");
+      await refreshAgentStatus();
+    } catch (e) {
+      setAgentActionError(e.message);
+    } finally {
+      setAgentActionLoading("");
+    }
+  };
+
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  useEffect(() => {
+    if (!tenant?._id) return;
+    const iv = setInterval(() => { refreshAgentStatus(); }, 10000);
+    return () => clearInterval(iv);
+  }, [tenant, refreshAgentStatus]);
 
   if (!tenant) return null;
 
@@ -546,6 +594,58 @@ export default function TenantDetailView({ tenant, superAdminKey, onBack }) {
         onAgentProvisioned={fetchData}
       />
 
+      {/* סטטוס סוכן */}
+      <div className="bg-[#0d0d14] border border-slate-700/40 rounded-xl p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Server size={14} className="text-cyan-400" />
+            <span className="text-sm text-slate-300 font-medium">סוכן</span>
+          </div>
+          <div className="flex items-center gap-2 text-xs">
+            <span className={`inline-block w-2 h-2 rounded-full ${agents.some((a) => a.syncStatus !== "offline") || remoteInstall?.status === "online" ? "bg-green-400" : "bg-red-400"}`} />
+            <span className="text-slate-400">{agents.some((a) => a.syncStatus !== "offline") || remoteInstall?.status === "online" ? "online" : "offline"}</span>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-slate-400">
+          <div>Last ping: <span className="text-slate-200">{agents[0]?.lastPing ? new Date(agents[0].lastPing).toLocaleString("he-IL") : "—"}</span></div>
+          <div>Install dir: <span className="text-slate-200 font-mono">{remoteInstall?.installDir || "—"}</span></div>
+          <div>API endpoint: <span className="text-slate-200 font-mono">{remoteInstall?.agentUrl || tenant.agentUrl || "—"}</span></div>
+          <div>Last attempt: <span className="text-slate-200">{remoteInstall?.lastAttemptAt ? new Date(remoteInstall.lastAttemptAt).toLocaleString("he-IL") : "—"}</span></div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => runAgentAction("restart")}
+            disabled={agentActionLoading === "restart"}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-600/40 rounded text-xs text-cyan-300 disabled:opacity-40 transition-colors"
+          >
+            {agentActionLoading === "restart" ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
+            Restart Agent
+          </button>
+          <button
+            onClick={() => runAgentAction("logs")}
+            disabled={agentActionLoading === "logs"}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-700/40 hover:bg-slate-700/60 border border-slate-600/40 rounded text-xs text-slate-200 disabled:opacity-40 transition-colors"
+          >
+            {agentActionLoading === "logs" ? <Loader2 size={11} className="animate-spin" /> : <Terminal size={11} />}
+            View Logs
+          </button>
+        </div>
+        {remoteInstall?.lastError?.error && (
+          <div className="rounded border border-red-700/40 bg-red-900/20 px-3 py-2 text-xs text-red-300">
+            <div>Provision error ({remoteInstall.lastError.step || "unknown"}):</div>
+            <div className="mt-0.5">{remoteInstall.lastError.error}</div>
+          </div>
+        )}
+        {agentActionError && (
+          <div className="text-xs text-red-400">{agentActionError}</div>
+        )}
+        {agentLogs && (
+          <div className="max-h-48 overflow-y-auto rounded border border-slate-700/50 bg-[#09090f] p-2 text-[11px] text-slate-300 font-mono whitespace-pre-wrap">
+            {agentLogs}
+          </div>
+        )}
+      </div>
+
       {/* רשימת סוכנים עם AI brain summary */}
       <div className="bg-[#0d0d14] border border-slate-700/40 rounded-xl p-4">
         <div className="flex items-center justify-between mb-3">
@@ -730,4 +830,3 @@ export default function TenantDetailView({ tenant, superAdminKey, onBack }) {
     </div>
   );
 }
-

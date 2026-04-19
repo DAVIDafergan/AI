@@ -78,8 +78,8 @@ function ConnectionInstructions({ tenant, superAdminKey, onAgentProvisioned }) {
     try {
       const res = await fetch("/api/provision", {
         method: "POST",
-        headers: { "Content-Type": "application/json" }, credentials: "include",
-        body: JSON.stringify({ tenantId: tenant._id, name: provName.trim(), environment: "production" }),
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
@@ -331,8 +331,8 @@ export default function TenantDetailView({ tenant, superAdminKey, onBack }) {
     try {
       const res = await fetch(`/api/tenants/${tenant._id}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" }, credentials: "include",
-        body: JSON.stringify({ serverUrl: serverUrlEdit, agentUrl: agentUrlEdit }),
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
       });
       if (!res.ok) throw new Error((await res.json()).error || "שגיאה");
       setUrlSaveMsg("✓ נשמר");
@@ -379,7 +379,8 @@ export default function TenantDetailView({ tenant, superAdminKey, onBack }) {
     try {
       const res = await fetch("/api/provision-agent", {
         method: "POST",
-        headers: { "Content-Type": "application/json" }, credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ action, tenantId: tenant._id }),
       });
       const data = await res.json();

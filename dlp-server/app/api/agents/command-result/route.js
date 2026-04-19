@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { connectMongo, Agent, findTenantByApiKey } from "../../../lib/db.js";
+import { connectMongo, Agent, findTenantByApiKey } from "../../../../lib/db.js";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";

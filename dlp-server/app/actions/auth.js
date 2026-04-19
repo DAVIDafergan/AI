@@ -5,8 +5,8 @@ import { redirect } from "next/navigation";
 import { timingSafeEqual } from "node:crypto";
 import { createSuperAdminSessionToken } from "../../lib/superAdminSession.js";
 
-const SUPER_ADMIN_USERNAME = process.env.SUPER_ADMIN_USERNAME;
 const SUPER_ADMIN_PASSWORD = process.env.SUPER_ADMIN_PASSWORD;
+const SUPER_ADMIN_USERNAME = process.env.SUPER_ADMIN_USERNAME || "admin";
 const COOKIE_NAME = "super_admin_auth";
 const SESSION_DURATION_SECONDS = 60 * 60 * 8; // 8 hours
 const MAX_COMPARE_BYTES = 256;
@@ -28,7 +28,7 @@ function safeStringEquals(left, right) {
 }
 
 export async function loginAction(formData) {
-  if (!SUPER_ADMIN_USERNAME || !SUPER_ADMIN_PASSWORD) {
+  if (!SUPER_ADMIN_PASSWORD) {
     return { error: "Super admin credentials are not configured" };
   }
 
@@ -37,15 +37,11 @@ export async function loginAction(formData) {
     return { error: "Authentication is not configured (JWT_SECRET missing)" };
   }
 
-  const username = formData.get("username");
   const password = formData.get("password");
 
-  if (
-    safeStringEquals(username, SUPER_ADMIN_USERNAME) &&
-    safeStringEquals(password, SUPER_ADMIN_PASSWORD)
-  ) {
+  if (safeStringEquals(password, SUPER_ADMIN_PASSWORD)) {
     const token = await createSuperAdminSessionToken({
-      username: String(username),
+      username: SUPER_ADMIN_USERNAME,
       secret: jwtSecret,
       expiresInSeconds: SESSION_DURATION_SECONDS,
     });
@@ -61,7 +57,7 @@ export async function loginAction(formData) {
     redirect("/dashboard");
   }
 
-  return { error: "פרטי התחברות שגויים" };
+  return { error: "סיסמה שגויה" };
 }
 
 export async function logoutAction() {

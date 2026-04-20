@@ -253,6 +253,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
     return true; // async
   }
+  // ── Proxy agent-config fetch to avoid CORS in content scripts ──────────────
+  if (message.type === "FETCH_AGENT_CONFIG") {
+    const { apiKey } = message;
+    fetchDashboardAgentConfig(apiKey)
+      .then(sendResponse)
+      .catch((err) => sendResponse({ error: true, message: err.message || "fetch failed" }));
+    return true; // async
+  }
   // ── Proxy lookup for synthetic vault tokens ──
   if (message.type === "LOOKUP_SYNTHETIC") {
     const { syntheticValue, apiUrl } = message;

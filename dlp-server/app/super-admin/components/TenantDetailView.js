@@ -333,6 +333,7 @@ export default function TenantDetailView({ tenant, superAdminKey, onBack }) {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
+        body: JSON.stringify({ serverUrl: serverUrlEdit, agentUrl: agentUrlEdit }),
       });
       if (!res.ok) throw new Error((await res.json()).error || "שגיאה");
       setUrlSaveMsg("✓ נשמר");

@@ -7,7 +7,6 @@
    ═══════════════════════════════════════════════════════════════ */
 
 
-const DASHBOARD_AGENT_CONFIG_URL = "https://ai-production-ffa9.up.railway.app/api/agent-config";
 const DEFAULT_LOCAL_AGENT_URL    = "http://localhost:4000";
 const CONFIG_SYNC_MIN_INTERVAL_MS = 30_000;
 const DLP_PREFIX                 = "🛡️ DLP Shield:";
@@ -327,13 +326,19 @@ async function fetchConfig({ force = false } = {}) {
       const snapshot = await readLocalConfigSnapshot();
       const requestApiKey = snapshot.lastKnownGoodApiKey || snapshot.tenantApiKey || "";
 
-      const res = await fetch(DASHBOARD_AGENT_CONFIG_URL, {
-        cache: "no-store",
-        headers: requestApiKey ? { "x-api-key": requestApiKey } : undefined,
+      const data = await new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage({ type: "FETCH_AGENT_CONFIG", apiKey: requestApiKey }, (response) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+            return;
+          }
+          if (response?.error) {
+            reject(new Error(response.message || "agent-config fetch failed"));
+            return;
+          }
+          resolve(response);
+        });
       });
-      if (!res.ok) throw new Error(`agent-config HTTP ${res.status}`);
-
-      const data = await res.json();
       const agentUrlFromApi = normalizeUrlValue(data?.agentUrl);
       const apiKeyFromApi = typeof data?.apiKey === "string" ? data.apiKey.trim() : "";
       const policiesFromApi = Array.isArray(data?.policies) ? data.policies : [];

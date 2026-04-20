@@ -71,6 +71,7 @@ let _serverUrl    = "";
 // PHONE / CREDIT / ID patterns only block when the value was actually found in
 // indexed company documents.
 let _brainPhoneSet   = new Set();
+let _brainEmailSet   = new Set();
 let _brainCreditSet  = new Set();
 let _brainIdSet      = new Set();
 let _brainPersonsSet = new Set();
@@ -94,11 +95,12 @@ async function loadBrainPii() {
     if (!brain?.learnedIndex) return;
     const idx = brain.learnedIndex;
     _brainPhoneSet   = new Set((idx.learnedPhones      ?? []).filter(Boolean));
+    _brainEmailSet   = new Set((idx.learnedEmails      ?? []).filter(Boolean).map((e) => String(e).toLowerCase()));
     _brainCreditSet  = new Set((idx.learnedCreditCards  ?? []).filter(Boolean));
     _brainIdSet      = new Set((idx.learnedIds          ?? []).filter(Boolean));
     _brainPersonsSet = new Set((idx.learnedPersons      ?? []).map((p) => p.toLowerCase()));
     _brainOrgsSet    = new Set((idx.learnedOrgs         ?? []).map((o) => o.toLowerCase()));
-    _hasBrainData    = _brainPhoneSet.size > 0 || _brainCreditSet.size > 0 ||
+    _hasBrainData    = _brainPhoneSet.size > 0 || _brainEmailSet.size > 0 || _brainCreditSet.size > 0 ||
                        _brainIdSet.size > 0    || _brainPersonsSet.size > 0 ||
                        _brainOrgsSet.size > 0;
   } catch {
@@ -121,11 +123,12 @@ function normalizePiiDigits(value) {
  * corporate AI brain context.
  *
  * Decision rules:
- *   • EMAIL, PASSWORD, SSN → always sensitive (hard block, no brain needed).
- *   • PHONE, CREDIT, ID, ACCOUNT with an empty brain → NOT sensitive; the text
+ *   • PASSWORD, SSN → always sensitive (hard block, no brain needed).
+ *   • EMAIL, PHONE, CREDIT, ID, ACCOUNT with an empty brain → NOT sensitive; the text
  *     falls through to the semantic/vector tier instead of being blocked blindly.
- *   • PHONE, CREDIT, ID, ACCOUNT with a built brain → sensitive only when:
- *       a) the digits-normalised value was extracted from a company document, OR
+ *   • EMAIL, PHONE, CREDIT, ID, ACCOUNT with a built brain → sensitive only when:
+ *       a) the exact value (for EMAIL) or digits-normalised value (for PHONE/CREDIT/ID/ACCOUNT)
+ *          was extracted from a company document, OR
  *       b) the surrounding text mentions a known corporate person or org —
  *          indicating the PII appears alongside a real company entity.
  *
@@ -140,19 +143,21 @@ function normalizePiiDigits(value) {
  */
 function isPiiConfirmedSensitive(value, type, text) {
   // Always-sensitive: credential / identity patterns – no context check needed
-  if (type === "EMAIL" || type === "PASSWORD" || type === "SSN") return true;
+  if (type === "PASSWORD" || type === "SSN") return true;
 
   // Without a built brain we cannot confirm corporate context → allow
   if (!_hasBrainData) return false;
 
-  const digits = normalizePiiDigits(value);
+  // (a) Exact match against known email values from indexed company documents
+  if (type === "EMAIL" && _brainEmailSet.has(String(value).toLowerCase())) return true;
 
-  // (a) Exact match against known PII values from indexed company documents
+  // (b) Exact match against known numeric PII values from indexed company documents
+  const digits = normalizePiiDigits(value);
   if ((type === "PHONE" || type === "ACCOUNT") && _brainPhoneSet.has(digits)) return true;
   if (type === "CREDIT" && _brainCreditSet.has(digits)) return true;
   if (type === "ID"     && _brainIdSet.has(digits))     return true;
 
-  // (b) A known corporate person or org appears in the same text
+  // (c) A known corporate person or org appears in the same text
   const lower = text.toLowerCase();
   for (const person of _brainPersonsSet) {
     if (person.length >= 3 && lower.includes(person)) return true;
@@ -737,9 +742,10 @@ async function runDetectionPipeline({ text, userEmail, source = "paste", verbose
 
   for (const scanText of scanTargets) {
     // Tier 1: Context-aware Regex Layer
-    // EMAIL, PASSWORD, SSN → hard blocks regardless of brain context.
-    // PHONE, CREDIT, ID, ACCOUNT → only block when confirmed by the AI brain:
-    //   (a) the exact digits-normalised value was extracted from company docs, OR
+    // PASSWORD, SSN → hard blocks regardless of brain context.
+    // EMAIL, PHONE, CREDIT, ID, ACCOUNT → only block when confirmed by the AI brain:
+    //   (a) the exact value (EMAIL) or digits-normalised value (PHONE/CREDIT/ID/ACCOUNT)
+    //       was extracted from company docs, OR
     //   (b) the text mentions a known corporate person/org alongside the PII value.
     // When no brain has been built yet, these types fall through to the vector tier.
     if (!tier1Match) {

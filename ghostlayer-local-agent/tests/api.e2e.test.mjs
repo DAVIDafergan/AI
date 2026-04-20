@@ -176,6 +176,17 @@ describe("Local Agent API – End-to-End", { timeout: 30_000 }, () => {
   });
 
   describe("POST /api/check – email address", () => {
+    it("allows plain email without brain context", async () => {
+      const res = await post("/api/check", {
+        text: "Send the update to user@example.com",
+        userEmail: "dave@corp.com",
+      });
+      assert.strictEqual(res.status, 200);
+      const body = await res.json();
+      assert.strictEqual(body.blocked, false);
+      assert.strictEqual(body.action, "allow");
+    });
+
     it("blocks text with 'token:' followed by an email-format credential", async () => {
       // The PASSWORD tier-1 regex catches 'token: xxx' patterns.
       // Email detection in the local agent runs on the normalized (leet-decoded)
@@ -387,15 +398,15 @@ describe("Local Agent API – End-to-End", { timeout: 30_000 }, () => {
       assert.ok(body.confirmedTypes.includes("PASSWORD"));
     });
 
-    it("returns isSensitive:true for an EMAIL-only pattern (hard block)", async () => {
+    it("returns isSensitive:false for an EMAIL-only pattern without brain context", async () => {
       const res = await post("/api/check-context", {
         text: "Send invoice to client@acme.com",
         userEmail: "test@corp.com",
       });
       assert.strictEqual(res.status, 200);
       const body = await res.json();
-      assert.strictEqual(body.isSensitive, true);
-      assert.ok(body.confirmedTypes.includes("EMAIL"));
+      assert.strictEqual(body.isSensitive, false);
+      assert.strictEqual(body.confirmedTypes.includes("EMAIL"), false);
     });
 
     it("returns 400 for empty text", async () => {

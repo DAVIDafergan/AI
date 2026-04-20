@@ -333,11 +333,10 @@ const AuditLogSchema = new mongoose.Schema(
 );
 
 // Prevent modification after creation via pre-save hook
-AuditLogSchema.pre("save", function (next) {
+AuditLogSchema.pre("save", function () {
   if (!this.isNew) {
-    return next(new Error("AuditLog records are immutable and cannot be modified."));
+    throw new Error("AuditLog records are immutable and cannot be modified.");
   }
-  next();
 });
 
 AuditLogSchema.index({ tenantId: 1, timestamp: -1 });
